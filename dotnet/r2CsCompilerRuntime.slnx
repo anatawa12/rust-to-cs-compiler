@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="r2CsRuntime/r2CsRuntime.csproj" />
+  <Project Path="r2CsRuntime.Tests/r2CsRuntime.Tests.csproj" />
+</Solution>
