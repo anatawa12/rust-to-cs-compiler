@@ -80,6 +80,7 @@ fn transpile_inputs_and_run_dotnet_tests() {
         "tests/inputs/nested_structs.rs",
         "tests/inputs/references.rs",
         "tests/inputs/pattern_match.rs",
+        "tests/inputs/calculator.rs",
     ];
     for rel in &inputs {
         let input = root.join(rel);
