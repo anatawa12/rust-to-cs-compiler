@@ -193,6 +193,12 @@ offset = stack address
 Box<T>
 ```
 
+> **Note**: `async fn` 内のローカル変数は、コンパイラが生成する async state machine（ヒープオブジェクト）に
+> 格納されるため、実態はスタック上に存在しない。
+> stack borrow 解析では `async fn` のローカルを「スタック変数ではない」として扱い、
+> `await` を跨ぐ判定とは独立して stack borrow に分類しないこと。
+> これらの変数への参照は heap borrow として `Box<T>` 経由で扱う。
+
 ---
 
 # Raw pointer
@@ -231,26 +237,14 @@ with_addr
 
 # struct / enum
 
-Rust
+Rust `struct` は C# `struct` にマップする。
 
-```
-struct
-enum
-```
-
-↓
-
-C#
-
-```
-struct
-```
-
-を基本とする。
+Rust `enum` は後述の class hierarchy にマップする（`struct` ではない）。
 
 ただし以下の型は **ヒープオブジェクトとして実装される**
 
 ```
+enum
 closure environment
 async state machine
 dyn trait object
@@ -273,11 +267,12 @@ enum E {
 C#
 
 ```
-abstract class E
+// #nullable enable が前提。Rust enum は null にならないため非 null 参照として扱う。
+abstract class e_E
 
-class A : E
+class e_E_A : e_E
 
-class B : E {
+class e_E_B : e_E {
     X
 }
 ```
@@ -287,6 +282,10 @@ pattern match
 ```
 switch / is
 ```
+
+> **Note**: Rust の enum は値型だが、C# では参照型 (class) にマップされる。
+> 生成コードは `#nullable enable` のもとで動作し、enum 変数は常に非 null であることを前提とする。
+> null が紛れ込まないよう、コンストラクタ以外で null を代入しない。
 
 ---
 
@@ -335,6 +334,11 @@ Dropは finally で実行。
 
 Drop中のpanicは **多重unwindとして扱う（abortは再現しない）**。
 
+> **Note**: C# では `finally` ブロック内でさらに例外を `throw` すると、元の例外が破棄される。
+> Rust の「二重 panic → abort」とは異なり、C# では後発の例外が伝播する。
+> この挙動の差異は意図的な非再現事項とする。
+> Drop 中に panic が発生した場合、後発の `PanicException` が伝播し、元の例外は失われる。
+
 ---
 
 # Trait
@@ -350,7 +354,7 @@ trait Foo
 C#
 
 ```
-interface IFoo<TSelf>
+interface t_Foo<TSelf> where TSelf : t_Foo<TSelf>
 ```
 
 Self
@@ -360,6 +364,9 @@ TSelf
 ```
 
 で表現。
+
+> **Note**: `where TSelf : t_Foo<TSelf>` 制約（F-bounded polymorphism）を必ず付ける。
+> これにより `t_Foo<ConcreteType>` として使用する際に型安全性が保たれる。
 
 ---
 
@@ -394,8 +401,10 @@ impl Foo for A
 C#
 
 ```
-class A : IFoo<A>
+struct s_A : t_Foo<s_A>
 ```
+
+（命名規則に従い `s_` prefix が struct、`t_` prefix が trait interface）
 
 ---
 
@@ -460,6 +469,19 @@ closure drop時
 ```
 Drop(captured_places)
 ```
+
+## Closure と Fn/FnMut/FnOnce トレイト
+
+closure クラスは、対応する `Fn` / `FnMut` / `FnOnce` の trait interface を実装する。
+
+| Rust trait | C# interface        | 制約                                      |
+|------------|---------------------|-------------------------------------------|
+| `FnOnce`   | `t_FnOnce<Args, R>` | `Call(Args) -> R`（一度だけ呼び出し可能） |
+| `FnMut`    | `t_FnMut<Args, R>`  | `CallMut(ref self, Args) -> R`            |
+| `Fn`       | `t_Fn<Args, R>`     | `CallRef(in self, Args) -> R`             |
+
+`Fn : FnMut : FnOnce` の継承関係を C# interface 継承で表現する。
+具体的には `t_Fn<Args,R> : t_FnMut<Args,R> : t_FnOnce<Args,R>`。
 
 ---
 
@@ -592,13 +614,14 @@ Instant → Stopwatch
 THIRベース
 独自move/drop解析
 Ref<T> = (object?, offset)
-stack borrow = absolute pointer
-panic → exception
-enum → class hierarchy
-trait → interface<TSelf>
-closure → class
+stack borrow = absolute pointer (async fn内ローカルはheap扱い)
+panic → exception (二重panic時は後発例外が伝播)
+enum → class hierarchy (非null, #nullable enable)
+trait → interface<TSelf> where TSelf : t_Trait<TSelf>
+closure → class (Fn/FnMut/FnOnce interface実装)
 struct → struct
 raw pointer → Ref<T>
+module → mod_ prefix partial class
 ```
 
 ---
@@ -640,7 +663,7 @@ struct S_A : T_Static {
 
 名前の被りを処理するため以下のように名前を変更する
 
-- modules ⇒ replaced with partial class with `m_` prefix
+- modules ⇒ replaced with partial class with `mod_` prefix
 - structs ⇒ struct with `s_` prefix
 - structs for trait static memers ⇒ `S_` prefix (at same module)
 - non-dyn trait interfaces ⇒ interface with `t_` prefix
@@ -652,6 +675,8 @@ struct S_A : T_Static {
 - fields => `f_` prefix
 - associated functions => `m_` prefix
 - local variables => `l_${name}_index`
+
+> **Note**: modules には `mod_` prefix を使用する（旧設計では `m_` だったが、associated functions の `m_` prefix と衝突するため変更）。
 
 また、すべてのメンバーはpublicとして再実装される。()
 
