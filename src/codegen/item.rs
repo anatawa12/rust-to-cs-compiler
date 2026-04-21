@@ -259,10 +259,6 @@ fn compile_module(tcx: TyCtxt<'_>, module_id: rustc_hir::def_id::LocalModDefId, 
                 w.write_line("}");
             }
             ItemKind::Impl(impl_block) => {
-                // Skip trait impls for now; only handle inherent impls.
-                if impl_block.of_trait.is_some() {
-                    continue;
-                }
                 w.write_line("");
                 compile_impl(tcx, item_id.owner_id.def_id, &impl_block, w);
             }
@@ -280,6 +276,10 @@ fn compile_module(tcx: TyCtxt<'_>, module_id: rustc_hir::def_id::LocalModDefId, 
             }
             // use / extern crate — no C# equivalent needed.
             ItemKind::Use(..) | ItemKind::ExternCrate(..) => {}
+            // Trait definitions — emit as a comment for now.
+            ItemKind::Trait(_, _, _, _, ident, _, _, _) => {
+                w.write_line(&format!("// trait {}", ident.name.as_str()));
+            }
             _ => {}
         }
     }

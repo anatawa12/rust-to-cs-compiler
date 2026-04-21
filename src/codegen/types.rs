@@ -148,7 +148,9 @@ pub fn def_id_to_cs_path(tcx: TyCtxt<'_>, def_id: rustc_hir::def_id::DefId) -> S
     let path = tcx.def_path(def_id);
     let data = &path.data;
 
-    for (i, seg) in data.iter().enumerate() {
+    let mut i = 0;
+    while i < data.len() {
+        let seg = &data[i];
         let is_last = i + 1 == data.len();
         match &seg.data {
             DefPathData::TypeNs(sym) => {
@@ -168,14 +170,68 @@ pub fn def_id_to_cs_path(tcx: TyCtxt<'_>, def_id: rustc_hir::def_id::DefId) -> S
             DefPathData::MacroNs(sym) => {
                 segments.push(sym.to_string());
             }
-            DefPathData::Impl | DefPathData::CrateRoot => {
-                // Impl blocks and the crate root don't add segments.
+            DefPathData::Impl => {
+                // For inherent/trait impl methods, include the implementing type name.
+                // Look up the impl's `self` type to find the struct name.
+                if let Some(impl_def_id) = find_impl_def_id(tcx, def_id, i) {
+                    let self_ty = tcx.type_of(impl_def_id).skip_binder();
+                    use rustc_middle::ty::TyKind;
+                    if let TyKind::Adt(adt_def, _) = self_ty.kind() {
+                        let adt_path = tcx.def_path(adt_def.did());
+                        if let Some(last) = adt_path.data.last() {
+                            if let DefPathData::TypeNs(sym) = &last.data {
+                                segments.push(naming::struct_name(sym.as_str()));
+                            }
+                        }
+                    }
+                }
+                // Skip the Impl segment itself.
+            }
+            DefPathData::CrateRoot => {
+                // Already added.
             }
             _ => {}
         }
+        i += 1;
     }
 
     format!("global::{}", segments.join("."))
+}
+
+/// Walk the def_id's ancestor chain to find the impl block def_id that corresponds
+/// to the `Impl` segment at `impl_seg_idx` in the def path.
+fn find_impl_def_id(
+    tcx: TyCtxt<'_>,
+    def_id: rustc_hir::def_id::DefId,
+    impl_seg_idx: usize,
+) -> Option<rustc_hir::def_id::DefId> {
+    use rustc_hir::definitions::DefPathData;
+    // Walk ancestors of def_id until we find one whose def path has length == impl_seg_idx + 1
+    // (i.e. the impl block itself).
+    let path = tcx.def_path(def_id);
+    if impl_seg_idx >= path.data.len() {
+        return None;
+    }
+    // The def at impl_seg_idx is the Impl block — we need to find its DefId.
+    // Reconstruct by walking tcx.parent().
+    let mut cur = def_id;
+    let target_len = impl_seg_idx + 1; // path length for the impl block
+    loop {
+        let cur_path = tcx.def_path(cur);
+        if cur_path.data.len() == target_len {
+            if matches!(cur_path.data.last().map(|s| &s.data), Some(DefPathData::Impl)) {
+                return Some(cur);
+            }
+        }
+        if cur_path.data.is_empty() {
+            break;
+        }
+        match tcx.opt_parent(cur) {
+            Some(parent) => cur = parent,
+            None => break,
+        }
+    }
+    None
 }
 
 // ── primitive helpers ─────────────────────────────────────────────────────

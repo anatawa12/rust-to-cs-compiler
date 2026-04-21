@@ -576,9 +576,20 @@ fn const_cs<'tcx>(tcx: TyCtxt<'tcx>, c: &rustc_middle::mir::Const<'tcx>) -> Stri
                     // Function items are zero-sized values identified by their type.
                     use rustc_middle::ty::TyKind;
                     match ty.kind() {
-                        TyKind::FnDef(def_id, _substs) => {
+                        TyKind::FnDef(def_id, substs) => {
+                            // Resolve the concrete instance (handles trait method dispatch).
+                            let instance = rustc_middle::ty::Instance::try_resolve(
+                                tcx,
+                                rustc_middle::ty::TypingEnv::fully_monomorphized(),
+                                *def_id,
+                                substs,
+                            );
+                            let resolved_def_id = match instance {
+                                Ok(Some(inst)) => inst.def.def_id(),
+                                _ => *def_id,
+                            };
                             // Emit the fully-qualified C# method reference.
-                            crate::codegen::types::def_id_to_cs_path(tcx, *def_id)
+                            crate::codegen::types::def_id_to_cs_path(tcx, resolved_def_id)
                         }
                         _ => "default".into(),
                     }
