@@ -120,12 +120,23 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
             }
             TerminatorKind::SwitchInt { discr, targets } => {
                 let disc_cs = self.operand_cs(discr);
+                let disc_ty = discr.ty(self.body, self.tcx);
                 let arms: Vec<_> = targets.iter().collect();
-                if arms.len() == 1 {
-                    // bool-like: true branch vs otherwise.
-                    let (val, true_bb) = arms[0];
-                    let false_bb = targets.otherwise();
-                    w.write_line(&format!("if (({disc_cs}) == {val})"));
+
+                // Check if this is a bool branch (single arm, discriminant is bool).
+                let is_bool = matches!(disc_ty.kind(), rustc_middle::ty::TyKind::Bool);
+
+                if is_bool && arms.len() == 1 {
+                    let (val, branch_bb) = arms[0];
+                    let other_bb = targets.otherwise();
+                    // val == 0 means "if false goto branch; else goto other"
+                    // val == 1 means "if true goto branch; else goto other"
+                    let (true_bb, false_bb) = if val == 0 {
+                        (other_bb, branch_bb)
+                    } else {
+                        (branch_bb, other_bb)
+                    };
+                    w.write_line(&format!("if ({disc_cs})"));
                     w.write_line("{");
                     w.indent();
                     w.write_line(&format!("goto {};", bb_label(true_bb)));
@@ -135,6 +146,22 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
                     w.write_line("{");
                     w.indent();
                     w.write_line(&format!("goto {};", bb_label(false_bb)));
+                    w.dedent();
+                    w.write_line("}");
+                } else if arms.len() == 1 {
+                    // Single arm on a non-bool (e.g. byte discriminant with one case).
+                    let (val, branch_bb) = arms[0];
+                    let other_bb = targets.otherwise();
+                    w.write_line(&format!("if (({disc_cs}) == {val})"));
+                    w.write_line("{");
+                    w.indent();
+                    w.write_line(&format!("goto {};", bb_label(branch_bb)));
+                    w.dedent();
+                    w.write_line("}");
+                    w.write_line("else");
+                    w.write_line("{");
+                    w.indent();
+                    w.write_line(&format!("goto {};", bb_label(other_bb)));
                     w.dedent();
                     w.write_line("}");
                 } else {
@@ -382,7 +409,7 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
     fn operand_cs(&self, op: &Operand<'tcx>) -> String {
         match op {
             Operand::Copy(place) | Operand::Move(place) => self.place_cs(place),
-            Operand::Constant(c) => const_cs(&c.const_),
+            Operand::Constant(c) => const_cs(self.tcx, &c.const_),
             Operand::RuntimeChecks(_) => {
                 // RuntimeChecks is a compile-time flag (overflow/UB checks).
                 // In C# we represent it as a bool literal.
@@ -406,7 +433,7 @@ fn bb_label(bb: BasicBlock) -> String {
     format!("_bb{}", bb.index())
 }
 
-fn const_cs(c: &rustc_middle::mir::Const<'_>) -> String {
+fn const_cs<'tcx>(tcx: TyCtxt<'tcx>, c: &rustc_middle::mir::Const<'tcx>) -> String {
     use rustc_middle::mir::Const;
     match c {
         Const::Val(val, ty) => {
@@ -443,7 +470,17 @@ fn const_cs(c: &rustc_middle::mir::Const<'_>) -> String {
                         Scalar::Ptr(_, _) => "/* ptr const */default".into(),
                     }
                 }
-                ConstValue::ZeroSized => "default".into(),
+                ConstValue::ZeroSized => {
+                    // Function items are zero-sized values identified by their type.
+                    use rustc_middle::ty::TyKind;
+                    match ty.kind() {
+                        TyKind::FnDef(def_id, _substs) => {
+                            // Emit the fully-qualified C# method reference.
+                            crate::codegen::types::def_id_to_cs_path(tcx, *def_id)
+                        }
+                        _ => "default".into(),
+                    }
+                }
                 _ => "/* const */default".into(),
             }
         }
