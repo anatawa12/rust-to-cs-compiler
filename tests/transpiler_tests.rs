@@ -76,6 +76,7 @@ fn transpile_inputs_and_run_dotnet_tests() {
         "tests/inputs/generics.rs",
         "tests/inputs/complex_enums.rs",
         "tests/inputs/loops.rs",
+        "tests/inputs/floats.rs",
     ];
     for rel in &inputs {
         let input = root.join(rel);
