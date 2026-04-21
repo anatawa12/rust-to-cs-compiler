@@ -457,6 +457,25 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
                     .unwrap_or_else(|| "object /* unknown */".into());
                 format!("({ty_str}){op_cs}")
             }
+            Rvalue::Repeat(operand, count) => {
+                // `[expr; N]` — emit a runtime array fill.
+                let val = self.operand_cs(operand);
+                let n = count.try_to_target_usize(self.tcx).unwrap_or(0);
+                format!("global::r2CsRuntime.Intrinsics.Repeat({val}, {n})")
+            }
+            Rvalue::RawPtr(_, place) => {
+                // Raw pointer — unsafe in C#. Emit the place address for now.
+                let p = self.place_cs(place);
+                format!("/* raw ptr */{p}")
+            }
+            Rvalue::ThreadLocalRef(def_id) => {
+                // Thread-local static — emit a reference to the static field.
+                crate::codegen::types::def_id_to_cs_path(self.tcx, *def_id)
+            }
+            Rvalue::WrapUnsafeBinder(operand, _) => {
+                // Unsafe binder — pass through the inner value.
+                self.operand_cs(operand)
+            }
             _ => format!("/* rvalue */default"),
         }
     }
