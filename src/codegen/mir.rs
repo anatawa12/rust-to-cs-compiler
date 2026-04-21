@@ -31,8 +31,30 @@ pub fn compile_mir_body<'tcx>(
     body: &Body<'tcx>,
     w: &mut CsWriter,
 ) {
-    let ctx = MirCtx { tcx, body };
+    // Collect locals whose address is taken (appear in Rvalue::Ref).
+    let boxed_locals = collect_borrowed_locals(body);
+    let ctx = MirCtx { tcx, body, boxed_locals };
     ctx.compile(w);
+}
+
+/// Collect locals that appear as the place in `Rvalue::Ref(...)`.
+/// These need to be boxed as `Var<T>` to support proper reference semantics.
+fn collect_borrowed_locals(body: &Body<'_>) -> std::collections::HashSet<usize> {
+    let mut borrowed: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    for bb_data in body.basic_blocks.iter() {
+        for stmt in &bb_data.statements {
+            if let StatementKind::Assign(assign) = &stmt.kind {
+                let (_, rvalue) = assign.as_ref();
+                if let Rvalue::Ref(_, _, place) = rvalue {
+                    // Only box simple locals (no projections for now).
+                    if place.projection.is_empty() {
+                        borrowed.insert(place.local.index());
+                    }
+                }
+            }
+        }
+    }
+    borrowed
 }
 
 // ── Internal context ──────────────────────────────────────────────────────
@@ -40,18 +62,44 @@ pub fn compile_mir_body<'tcx>(
 struct MirCtx<'a, 'tcx> {
     tcx:  TyCtxt<'tcx>,
     body: &'a Body<'tcx>,
+    /// Locals boxed as `Var<T>` (address was taken).
+    boxed_locals: std::collections::HashSet<usize>,
 }
 
 impl<'a, 'tcx> MirCtx<'a, 'tcx> {
     fn compile(&self, w: &mut CsWriter) {
         // Declare all non-parameter, non-return locals.
         self.emit_local_decls(w);
+        // For parameters that are borrowed, emit Var<T> copies at function entry.
+        self.emit_borrowed_param_boxes(w);
 
         // Emit basic blocks.
         let bbs = self.body.basic_blocks.indices();
         for bb in bbs {
             let data = &self.body.basic_blocks[bb];
             self.compile_bb(bb, data, w);
+        }
+    }
+
+    /// For each parameter whose address is taken, emit a `Var<T>` local with a copy of the param.
+    /// These are named `_N_var` to distinguish from the original param.
+    fn emit_borrowed_param_boxes(&self, w: &mut CsWriter) {
+        let arg_count = self.body.arg_count;
+        for (local, decl) in self.body.local_decls.iter_enumerated() {
+            let idx = local.index();
+            if idx < 1 || idx > arg_count {
+                continue; // not a param
+            }
+            if !self.boxed_locals.contains(&idx) {
+                continue; // param not borrowed
+            }
+            let inner_ty = ty_to_cs(self.tcx, decl.ty)
+                .unwrap_or_else(|| "object /* unknown */".into());
+            let local_name = local_cs_name(local);
+            // Declare a Var<T> that boxes the param value.
+            w.write_line(&format!(
+                "var {local_name}_var = new global::r2CsRuntime.Var<{inner_ty}>() {{ f_value = {local_name} }};"
+            ));
         }
     }
 
@@ -63,10 +111,19 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
             if idx >= 1 && idx <= arg_count {
                 continue; // params already in signature
             }
-            let ty_str = ty_to_cs(self.tcx, decl.ty)
-                .unwrap_or_else(|| "object /* unknown */".into());
-            w.write_line(&format!("{ty_str} {local_name} = default;",
-                local_name = local_cs_name(local)));
+            let local_name = local_cs_name(local);
+            if self.boxed_locals.contains(&idx) {
+                // This local's address is taken; box it as Var<T>.
+                let inner_ty = ty_to_cs(self.tcx, decl.ty)
+                    .unwrap_or_else(|| "object /* unknown */".into());
+                w.write_line(&format!(
+                    "var {local_name} = new global::r2CsRuntime.Var<{inner_ty}>();"
+                ));
+            } else {
+                let ty_str = ty_to_cs(self.tcx, decl.ty)
+                    .unwrap_or_else(|| "object /* unknown */".into());
+                w.write_line(&format!("{ty_str} {local_name} = default;"));
+            }
         }
     }
 
@@ -266,7 +323,20 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
     // ── Place / Rvalue / Operand → C# strings ────────────────────────────
 
     fn place_cs(&self, place: &Place<'tcx>) -> String {
-        let mut s = local_cs_name(place.local);
+        let local_idx = place.local.index();
+        let arg_count = self.body.arg_count;
+        let is_param = local_idx >= 1 && local_idx <= arg_count;
+        let mut s = if self.boxed_locals.contains(&local_idx) {
+            if is_param {
+                // Boxed parameter: access through the `_N_var.f_value` copy.
+                format!("{}_var.f_value", local_cs_name(place.local))
+            } else {
+                // Boxed non-param local: access through f_value.
+                format!("{}.f_value", local_cs_name(place.local))
+            }
+        } else {
+            local_cs_name(place.local)
+        };
         // Track the accumulated type so we can name struct fields correctly.
         let mut cur_ty = self.body.local_decls[place.local].ty;
         // Track which enum variant is active (set by Downcast projections).
@@ -359,8 +429,24 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
         match rv {
             Rvalue::Use(op) => self.operand_cs(op),
             Rvalue::Ref(_, _, place) => {
-                // In C# we represent borrows as their place directly.
-                self.place_cs(place)
+                // Create a Ref<T> from the place.
+                let local_idx = place.local.index();
+                let arg_count = self.body.arg_count;
+                let is_param = local_idx >= 1 && local_idx <= arg_count;
+                if place.projection.is_empty() && self.boxed_locals.contains(&local_idx) {
+                    // Boxed local or param: create a Ref<T> from the Var<T>.
+                    let local_name = local_cs_name(place.local);
+                    let var_name = if is_param {
+                        format!("{local_name}_var")
+                    } else {
+                        local_name
+                    };
+                    format!("global::r2CsRuntime.RefHelper.FromVar({var_name})")
+                } else {
+                    // Struct field or complex place: emit the place directly.
+                    // (Full heap-ref support requires owner tracking — TODO.)
+                    self.place_cs(place)
+                }
             }
             Rvalue::BinaryOp(op, operands) => {
                 let (lhs, rhs) = operands.as_ref();
