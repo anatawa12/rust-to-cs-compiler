@@ -215,23 +215,30 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
         let mut s = local_cs_name(place.local);
         // Track the accumulated type so we can name struct fields correctly.
         let mut cur_ty = self.body.local_decls[place.local].ty;
+        // Track which enum variant is active (set by Downcast projections).
+        let mut cur_variant_idx: Option<rustc_abi::VariantIdx> = None;
+
         for proj in place.projection.iter() {
             match proj {
                 PlaceElem::Deref => {
                     // Ref<T> indirection — transparent in C# representation.
                     s = format!("(*{s})");
-                    // Unwrap reference/pointer for type tracking.
                     use rustc_middle::ty::TyKind;
                     cur_ty = match cur_ty.kind() {
                         TyKind::Ref(_, inner, _) | TyKind::RawPtr(inner, _) => *inner,
                         _ => cur_ty,
                     };
+                    cur_variant_idx = None;
                 }
                 PlaceElem::Field(field_idx, field_ty) => {
                     use rustc_middle::ty::TyKind;
                     let name = match cur_ty.kind() {
                         TyKind::Adt(adt_def, _) => {
-                            let variant = adt_def.variant(rustc_abi::VariantIdx::ZERO);
+                            // Use the active variant (from a preceding Downcast),
+                            // or fall back to variant 0 for structs.
+                            let v_idx = cur_variant_idx
+                                .unwrap_or(rustc_abi::VariantIdx::ZERO);
+                            let variant = adt_def.variant(v_idx);
                             if field_idx.index() < variant.fields.len() {
                                 crate::codegen::naming::field_name(
                                     variant.fields[field_idx].name.as_str()
@@ -250,6 +257,7 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
                     };
                     s = format!("{s}.{name}");
                     cur_ty = field_ty;
+                    cur_variant_idx = None;
                 }
                 PlaceElem::Index(local) => {
                     s = format!("{s}[{}]", local_cs_name(local));
@@ -258,20 +266,28 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
                         TyKind::Array(inner, _) | TyKind::Slice(inner) => *inner,
                         _ => cur_ty,
                     };
+                    cur_variant_idx = None;
                 }
                 PlaceElem::ConstantIndex { offset, .. } => {
                     s = format!("{s}[{offset}]");
+                    cur_variant_idx = None;
                 }
-                PlaceElem::Downcast(name, variant_idx) => {
-                    // Downcast selects a variant; in C# we add a cast comment.
-                    if let Some(sym) = name {
-                        s = format!("/* as {sym} */{s}");
-                    } else {
-                        s = format!("/* downcast {} */{s}", variant_idx.index());
+                PlaceElem::Downcast(_, variant_idx) => {
+                    // Downcast selects a variant; emit access to the payload field.
+                    use rustc_middle::ty::TyKind;
+                    if let TyKind::Adt(adt_def, _) = cur_ty.kind() {
+                        let variant = &adt_def.variant(variant_idx);
+                        if !variant.fields.is_empty() {
+                            let vname = variant.name.as_str();
+                            s = format!("{s}.f_{vname}");
+                        }
+                        // Record which variant is active for subsequent Field projections.
+                        cur_variant_idx = Some(variant_idx);
                     }
                 }
                 _ => {
                     s = format!("{s} /* proj */");
+                    cur_variant_idx = None;
                 }
             }
         }
@@ -354,7 +370,9 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
                 }
             }
             Rvalue::Discriminant(place) => {
-                format!("/* discriminant */{}", self.place_cs(place))
+                // Access the discriminant field on the enum struct.
+                let p = self.place_cs(place);
+                format!("{p}.f_discriminant")
             }
             Rvalue::CopyForDeref(place) => self.place_cs(place),
             _ => format!("/* rvalue */default"),
@@ -393,14 +411,34 @@ fn const_cs(c: &rustc_middle::mir::Const<'_>) -> String {
     match c {
         Const::Val(val, ty) => {
             use rustc_middle::mir::ConstValue;
+            use rustc_middle::ty::TyKind;
             match val {
                 ConstValue::Scalar(scalar) => {
                     use rustc_middle::mir::interpret::Scalar;
                     match scalar {
                         Scalar::Int(si) => {
-                            // Extract the raw bit pattern.
                             let bits = si.to_bits(si.size());
-                            format!("{bits}")
+                            // Interpret the bits according to the Ty.
+                            match ty.kind() {
+                                TyKind::Float(rustc_middle::ty::FloatTy::F32) => {
+                                    let v = f32::from_bits(bits as u32);
+                                    format!("{v}f")
+                                }
+                                TyKind::Float(rustc_middle::ty::FloatTy::F64) => {
+                                    let v = f64::from_bits(bits as u64);
+                                    format!("{v}")
+                                }
+                                TyKind::Bool => {
+                                    if bits == 0 { "false".into() } else { "true".into() }
+                                }
+                                TyKind::Char => {
+                                    let ch = char::from_u32(bits as u32)
+                                        .map(|c| format!("'{c}'"))
+                                        .unwrap_or_else(|| format!("(char){bits}"));
+                                    ch
+                                }
+                                _ => format!("{bits}"),
+                            }
                         }
                         Scalar::Ptr(_, _) => "/* ptr const */default".into(),
                     }

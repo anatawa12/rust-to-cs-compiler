@@ -122,6 +122,86 @@ pub fn compile_struct(
     w.write_line("}");
 }
 
+/// Compile an enum definition.
+///
+/// Strategy: an enum is represented as a tagged union (a C# struct containing
+/// a discriminant field plus one payload field per variant that carries data).
+///
+/// ```csharp
+/// public struct s_MyEnum {
+///     public byte f_discriminant;
+///     // variant payloads (only one active at a time)
+///     public s_MyEnum_Variant_A f_variant_A;
+///     public s_MyEnum_Variant_B f_variant_B;
+///
+///     // Variant payload structs:
+///     public struct s_MyEnum_Variant_A { public int f_field0; }
+/// }
+/// ```
+pub fn compile_enum(
+    tcx: TyCtxt<'_>,
+    def_id: rustc_hir::def_id::LocalDefId,
+    enum_name: &str,
+    w: &mut CsWriter,
+) {
+    let cs_name = naming::struct_name(enum_name);
+    let adt_def = tcx.adt_def(def_id);
+
+    w.write_line(&format!("public struct {cs_name}"));
+    w.write_line("{");
+    w.indent();
+
+    // Discriminant field.
+    w.write_line("public byte f_discriminant;");
+
+    // One payload struct + field per variant that has fields.
+    for (idx, variant) in adt_def.variants().iter().enumerate() {
+        let variant_name = variant.name.as_str();
+        let payload_ty   = format!("{cs_name}_{variant_name}");
+        let field_name   = format!("f_{variant_name}");
+
+        if variant.fields.is_empty() {
+            // Unit variant — no payload.
+            continue;
+        }
+
+        w.write_line(&format!("public {payload_ty} {field_name};"));
+    }
+
+    // Emit payload structs for variants with fields.
+    for variant in adt_def.variants().iter() {
+        if variant.fields.is_empty() {
+            continue;
+        }
+        let variant_name = variant.name.as_str();
+        let payload_ty   = format!("{cs_name}_{variant_name}");
+
+        w.write_line("");
+        w.write_line(&format!("public struct {payload_ty}"));
+        w.write_line("{");
+        w.indent();
+        for field in variant.fields.iter() {
+            let field_ty = tcx.type_of(field.did).skip_binder();
+            let ty_str   = ty_to_cs(tcx, field_ty)
+                .unwrap_or_else(|| "object /* unknown */".into());
+            let f_name   = naming::field_name(field.name.as_str());
+            w.write_line(&format!("public {ty_str} {f_name};"));
+        }
+        w.dedent();
+        w.write_line("}");
+    }
+
+    // Emit discriminant constants.
+    w.write_line("");
+    for (idx, variant) in adt_def.variants().iter().enumerate() {
+        let variant_name = variant.name.as_str();
+        w.write_line(&format!("public const byte k_{variant_name} = {idx};"));
+    }
+
+    w.dedent();
+    w.write_line("}");
+}
+
 /// Compile all local free items in the crate, wrapped in a `mod_<crate>` class.
 pub fn compile_crate(tcx: TyCtxt<'_>, w: &mut CsWriter) {
     let crate_name = tcx.crate_name(rustc_hir::def_id::LOCAL_CRATE);
@@ -156,6 +236,10 @@ fn compile_module(tcx: TyCtxt<'_>, module_id: rustc_hir::def_id::LocalModDefId, 
             ItemKind::Struct(ident, _, _) => {
                 w.write_line("");
                 compile_struct(tcx, item_id.owner_id.def_id, ident.name.as_str(), w);
+            }
+            ItemKind::Enum(ident, _, _) => {
+                w.write_line("");
+                compile_enum(tcx, item_id.owner_id.def_id, ident.name.as_str(), w);
             }
             ItemKind::Mod(ident, _) => {
                 w.write_line("");
