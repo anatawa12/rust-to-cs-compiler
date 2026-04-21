@@ -365,12 +365,20 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
             Rvalue::UnaryOp(op, operand) => {
                 let a = self.operand_cs(operand);
                 use rustc_middle::mir::UnOp;
-                let op_str = match op {
-                    UnOp::Not => "!",
-                    UnOp::Neg => "-",
-                    UnOp::PtrMetadata => return format!("/* PtrMetadata */{a}"),
-                };
-                format!("({op_str}{a})")
+                match op {
+                    UnOp::Not => {
+                        // In Rust, `!` means logical NOT for bool, bitwise NOT for integers.
+                        // In C#, `!` is only logical NOT; bitwise NOT is `~`.
+                        let ty = operand.ty(self.body, self.tcx);
+                        if ty.is_bool() {
+                            format!("(!{a})")
+                        } else {
+                            format!("(~{a})")
+                        }
+                    }
+                    UnOp::Neg => format!("(-{a})"),
+                    UnOp::PtrMetadata => format!("/* PtrMetadata */{a}"),
+                }
             }
             Rvalue::Aggregate(kind, fields) => {
                 use rustc_middle::mir::AggregateKind;
