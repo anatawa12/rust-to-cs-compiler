@@ -24,7 +24,8 @@ dotnet build dotnet/r2CsCompilerRuntime.slnx
 dotnet test dotnet/r2CsCompilerRuntime.slnx
 ```
 
-Expected output: **52 tests, 0 failures**.
+Expected output: **96 tests, 0 failures** (52 runtime tests + 44 compiler output
+tests).
 
 ---
 
@@ -45,52 +46,66 @@ nightly toolchain (`nightly-2026-04-20`) together with `rustc-dev`.
 cargo test
 ```
 
-Expected output: **24 tests, 0 failures**.
+Expected output: **1 integration test + 24 unit tests, 0 failures**.
 
-### Run the transpiler on a Rust source file
-
-The transpiler acts as a `rustc` wrapper — it accepts the same flags rustc does
-and writes the generated C# to **stdout**.  You need to point the dynamic
-linker at rustc's own libraries:
-
-```sh
-# One-time helper (adjust if your sysroot path differs):
-export LD_LIBRARY_PATH="$(rustc --print sysroot)/lib"
-
-# Transpile a file:
-./target/debug/rust-to-cs-compiler <path/to/input.rs> --edition 2021
-```
-
-Example:
-
-```sh
-cat > /tmp/hello.rs << 'EOF'
-fn greet(name: &str) -> String {
-    format!("Hello, {}!", name)
-}
-fn main() {}
-EOF
-
-./target/debug/rust-to-cs-compiler /tmp/hello.rs --edition 2021
-```
-
-The generated C# is printed to stdout.  Rustc diagnostics (warnings, errors)
-are printed to stderr.
-
-### Suppress rustc dead-code warnings during testing
-
-Pass `--allow dead_code` to suppress the usual "function is never used"
-warnings that appear when transpiling isolated files:
-
-```sh
-./target/debug/rust-to-cs-compiler /tmp/hello.rs --edition 2021 \
-  -A dead_code 2>/dev/null
-```
+The integration test (`tests/transpiler_tests.rs`) automatically:
+1. Runs the transpiler on every file in `tests/inputs/`.
+2. Writes the generated C# to `dotnet/r2CsCompilerTests/Generated/`.
+3. Runs `dotnet test dotnet/r2CsCompilerTests/` to verify the generated code
+   compiles and produces correct results.
 
 ---
 
-## Running both suites at once
+## Run the transpiler manually
+
+The transpiler acts as a `rustc` wrapper and accepts the same flags.
+
+### Write output to a file
+
+Set the `R2CS_OUTPUT_DIR` environment variable to a directory.  The output file
+is named `<crate_name>.cs` inside that directory.
+
+```sh
+export LD_LIBRARY_PATH="$(rustc --print sysroot)/lib"
+export R2CS_OUTPUT_DIR=/tmp/my_output
+
+mkdir -p "$R2CS_OUTPUT_DIR"
+./target/debug/rust-to-cs-compiler path/to/input.rs --edition 2021
+# → writes /tmp/my_output/<crate_name>.cs
+```
+
+### Write output to stdout (fallback)
+
+Omit `R2CS_OUTPUT_DIR` and the generated C# is printed to stdout:
+
+```sh
+export LD_LIBRARY_PATH="$(rustc --print sysroot)/lib"
+./target/debug/rust-to-cs-compiler path/to/input.rs --edition 2021
+```
+
+### Transpile one of the test inputs
+
+```sh
+export LD_LIBRARY_PATH="$(rustc --print sysroot)/lib"
+export R2CS_OUTPUT_DIR=/tmp/r2cs_out
+mkdir -p "$R2CS_OUTPUT_DIR"
+
+./target/debug/rust-to-cs-compiler tests/inputs/arithmetic.rs \
+    --edition 2021 --crate-type lib -A dead_code
+
+cat "$R2CS_OUTPUT_DIR/arithmetic.cs"
+```
+
+### Suppress rustc dead-code warnings
+
+Pass `-A dead_code` to suppress "function/struct is never used" warnings when
+transpiling isolated files.
+
+---
+
+## Running everything at once
 
 ```sh
 cargo test && dotnet test dotnet/r2CsCompilerRuntime.slnx
 ```
+
