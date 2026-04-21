@@ -359,7 +359,7 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
                         let variant = &adt_def.variant(*variant_idx);
                         let ty_str = crate::codegen::types::def_id_to_cs_path(self.tcx, *def_id);
                         let mut field_inits = Vec::new();
-                        for (i, (field, op)) in variant.fields.iter().zip(fields.iter()).enumerate() {
+                        for (field, op) in variant.fields.iter().zip(fields.iter()) {
                             let f_name = crate::codegen::naming::field_name(field.name.as_str());
                             let val = self.operand_cs(op);
                             field_inits.push(format!("{f_name} = {val}"));

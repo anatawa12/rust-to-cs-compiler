@@ -30,18 +30,21 @@ pub fn struct_name(rust_name: &str) -> String {
 
 /// Name of the empty vtable struct for a specific trait impl.
 /// e.g. `S_Display_for_s_Point` for `impl Display for Point`.
+#[allow(dead_code)]
 pub fn vtable_struct_name(trait_name: &str, impl_type_name: &str) -> String {
     format!("S_{trait_name}_for_{impl_type_name}")
 }
 
 /// Convert a Rust trait name to the C# non-dyn trait interface name.
 /// Used for `t_Foo<TSelf>` interfaces.
+#[allow(dead_code)]
 pub fn trait_iface_name(rust_name: &str) -> String {
     format!("t_{rust_name}")
 }
 
 /// Convert a Rust trait name to the C# trait-static-member interface name.
 /// Used for vtable dispatch (`T_Foo` interface implemented by `S_Foo_for_*`).
+#[allow(dead_code)]
 pub fn trait_static_iface_name(rust_name: &str) -> String {
     format!("T_{rust_name}")
 }
@@ -52,6 +55,7 @@ pub fn generic_param_name(rust_name: &str) -> String {
 }
 
 /// Convert a Rust associated type name to a C# generic parameter name.
+#[allow(dead_code)]
 pub fn assoc_type_param_name(rust_name: &str) -> String {
     format!("A_{rust_name}")
 }
@@ -73,6 +77,7 @@ pub fn local_name(rust_name: &str, index: usize) -> String {
 }
 
 /// The `TSelf` generic parameter used in all trait interfaces.
+#[allow(dead_code)]
 pub const SELF_PARAM: &str = "Self";
 
 #[cfg(test)]

@@ -58,29 +58,34 @@ impl CsWriter {
     }
 
     /// Write an empty line (just a newline).
+    #[allow(dead_code)]
     pub fn blank_line(&mut self) {
         self.output.push('\n');
         self.at_line_start = true;
     }
 
     /// Write `{` on its own line and increase indentation.
+    #[allow(dead_code)]
     pub fn open_brace(&mut self) {
         self.write_line("{");
         self.indent();
     }
 
     /// Decrease indentation and write `}` on its own line.
+    #[allow(dead_code)]
     pub fn close_brace(&mut self) {
         self.dedent();
         self.write_line("}");
     }
 
     /// Write a single-line comment.
+    #[allow(dead_code)]
     pub fn write_comment(&mut self, comment: &str) {
         self.write_line(&format!("// {comment}"));
     }
 
     /// Write a `/// <summary>…</summary>` XML-doc comment.
+    #[allow(dead_code)]
     pub fn write_xml_doc(&mut self, summary: &str) {
         self.write_line("/// <summary>");
         for line in summary.lines() {
@@ -95,6 +100,7 @@ impl CsWriter {
     }
 
     /// Return the current output as a `&str` without consuming the writer.
+    #[allow(dead_code)]
     pub fn as_str(&self) -> &str {
         &self.output
     }

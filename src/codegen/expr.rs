@@ -1,9 +1,15 @@
-/// THIR expression and statement → C# code generation.
-///
-/// The entry point is [`compile_expr`].  Each THIR [`ExprKind`] variant
-/// maps to a C# expression string.  Statements are handled by
-/// [`compile_block`] which emits full C# statements (with semicolons and
-/// newlines) via a [`CsWriter`].
+// THIR expression and statement → C# code generation.
+//
+// The entry point is [`compile_expr`].  Each THIR [`ExprKind`] variant
+// maps to a C# expression string.  Statements are handled by
+// [`compile_block`] which emits full C# statements (with semicolons and
+// newlines) via a [`CsWriter`].
+//
+// Note: this module is currently not called because THIR is stolen before
+// `after_analysis`.  It is kept for future use when THIR access is available.
+// See `docs/mir-vs-thir.md`.
+
+#![allow(dead_code)]
 
 use rustc_middle::mir::BinOp;
 use rustc_middle::thir::{

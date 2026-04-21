@@ -155,7 +155,7 @@ pub fn compile_enum(
     w.write_line("public byte f_discriminant;");
 
     // One payload struct + field per variant that has fields.
-    for (idx, variant) in adt_def.variants().iter().enumerate() {
+    for variant in adt_def.variants().iter() {
         let variant_name = variant.name.as_str();
         let payload_ty   = format!("{cs_name}_{variant_name}");
         let field_name   = format!("f_{variant_name}");
