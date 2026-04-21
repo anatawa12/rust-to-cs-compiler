@@ -255,7 +255,119 @@ fn compile_module(tcx: TyCtxt<'_>, module_id: rustc_hir::def_id::LocalModDefId, 
                 w.dedent();
                 w.write_line("}");
             }
+            ItemKind::Impl(impl_block) => {
+                // Skip trait impls for now; only handle inherent impls.
+                if impl_block.of_trait.is_some() {
+                    continue;
+                }
+                w.write_line("");
+                compile_impl(tcx, item_id.owner_id.def_id, &impl_block, w);
+            }
             _ => {}
         }
     }
+}
+
+/// Compile an inherent `impl` block.
+///
+/// Methods are emitted as `static` functions inside the type's `partial struct`.
+fn compile_impl<'hir>(
+    tcx: TyCtxt<'_>,
+    _impl_def_id: rustc_hir::def_id::LocalDefId,
+    impl_block: &rustc_hir::Impl<'hir>,
+    w: &mut CsWriter,
+) {
+    // Determine the C# class name from the self type.
+    let self_ty_name = {
+        use rustc_hir::TyKind;
+        match impl_block.self_ty.kind {
+            TyKind::Path(rustc_hir::QPath::Resolved(_, path)) => {
+                if let Some(def_id) = path.res.opt_def_id() {
+                    crate::codegen::types::def_id_to_cs_path(tcx, def_id)
+                        .split('.')
+                        .last()
+                        .unwrap_or("Impl")
+                        .to_string()
+                } else {
+                    "Impl".to_string()
+                }
+            }
+            _ => "Impl".to_string(),
+        }
+    };
+
+    w.write_line(&format!("public partial struct {self_ty_name}"));
+    w.write_line("{");
+    w.indent();
+
+    for impl_item_id in impl_block.items {
+        let impl_item = tcx.hir_impl_item(*impl_item_id);
+        if let rustc_hir::ImplItemKind::Fn(_, _) = impl_item.kind {
+            let method_name = impl_item.ident.name.as_str();
+            w.write_line("");
+            compile_method(tcx, impl_item_id.owner_id.def_id, method_name, w);
+        }
+    }
+
+    w.dedent();
+    w.write_line("}");
+}
+
+/// Compile a single method from an inherent impl.
+fn compile_method(
+    tcx: TyCtxt<'_>,
+    def_id: rustc_hir::def_id::LocalDefId,
+    method_name: &str,
+    w: &mut CsWriter,
+) {
+    let cs_name = naming::method_name(method_name);
+
+    let body = tcx.optimized_mir(def_id.to_def_id());
+    let fn_sig = tcx.fn_sig(def_id).skip_binder().skip_binder();
+    let param_tys = fn_sig.inputs();
+    let ret_ty = fn_sig.output();
+
+    let ret_str = ty_to_cs(tcx, ret_ty)
+        .unwrap_or_else(|| "object /* unknown */".into());
+
+    let debug_names: std::collections::HashMap<usize, String> = body
+        .var_debug_info
+        .iter()
+        .filter_map(|dbg| {
+            if let rustc_middle::mir::VarDebugInfoContents::Place(p) = &dbg.value {
+                if p.projection.is_empty() {
+                    let idx = p.local.index();
+                    if idx >= 1 && idx <= body.arg_count {
+                        return Some((idx, dbg.name.to_string()));
+                    }
+                }
+            }
+            None
+        })
+        .collect();
+
+    let params: Vec<String> = param_tys
+        .iter()
+        .enumerate()
+        .map(|(i, &ty)| {
+            let ty_str = ty_to_cs(tcx, ty)
+                .unwrap_or_else(|| "object /* unknown */".into());
+            let local_idx = i + 1;
+            if let Some(src_name) = debug_names.get(&local_idx) {
+                format!("{ty_str} _{local_idx} /* {src_name} */")
+            } else {
+                format!("{ty_str} _{local_idx}")
+            }
+        })
+        .collect();
+
+    w.write_line(&format!(
+        "public static {ret_str} {cs_name}({})",
+        params.join(", ")
+    ));
+    w.write_line("{");
+    w.indent();
+    compile_mir_body(tcx, body, w);
+    w.dedent();
+    w.write_line("}");
 }
