@@ -97,6 +97,12 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
                 let rhs = self.rvalue_cs(rvalue);
                 w.write_line(&format!("{lhs} = {rhs};"));
             }
+            StatementKind::SetDiscriminant { place, variant_index } => {
+                // Set the discriminant field on the enum struct.
+                let p = self.place_cs(place);
+                let disc = variant_index.index();
+                w.write_line(&format!("{p}.f_discriminant = {disc};"));
+            }
             // StorageLive/Dead are hints to the optimizer; no C# equivalent.
             StatementKind::StorageLive(_) | StatementKind::StorageDead(_) => {}
             // Nop, FakeRead, etc. — ignore.
