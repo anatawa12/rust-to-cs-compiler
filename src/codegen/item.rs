@@ -106,7 +106,8 @@ pub fn compile_struct(
     let adt_def = tcx.adt_def(def_id);
     let variant = adt_def.non_enum_variant();
 
-    w.write_line(&format!("public struct {cs_name}"));
+    // Always emit `partial` so that an `impl` block extension can be added later.
+    w.write_line(&format!("public partial struct {cs_name}"));
     w.write_line("{");
     w.indent();
 
@@ -147,7 +148,7 @@ pub fn compile_enum(
     let cs_name = naming::struct_name(enum_name);
     let adt_def = tcx.adt_def(def_id);
 
-    w.write_line(&format!("public struct {cs_name}"));
+    w.write_line(&format!("public partial struct {cs_name}"));
     w.write_line("{");
     w.indent();
 
