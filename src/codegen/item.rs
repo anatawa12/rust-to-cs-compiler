@@ -226,7 +226,7 @@ pub fn compile_crate(tcx: TyCtxt<'_>, w: &mut CsWriter) {
 fn compile_module(tcx: TyCtxt<'_>, module_id: rustc_hir::def_id::LocalModDefId, w: &mut CsWriter) {
     let mod_items = tcx.hir_module_items(module_id);
 
-    // Emit free items (fns, structs, enums, …).
+    // Emit free items (fns, structs, enums, consts, statics, …).
     for item_id in mod_items.free_items() {
         let item = tcx.hir_item(item_id);
         match item.kind {
@@ -264,6 +264,20 @@ fn compile_module(tcx: TyCtxt<'_>, module_id: rustc_hir::def_id::LocalModDefId, 
                 w.write_line("");
                 compile_impl(tcx, item_id.owner_id.def_id, &impl_block, w);
             }
+            ItemKind::Const(ident, _, _, _) => {
+                w.write_line("");
+                compile_const(tcx, item_id.owner_id.def_id, ident.name.as_str(), w);
+            }
+            ItemKind::Static(_, ident, _, _) => {
+                w.write_line("");
+                compile_static(tcx, item_id.owner_id.def_id, ident.name.as_str(), w);
+            }
+            ItemKind::TyAlias(ident, _, _) => {
+                w.write_line("");
+                compile_type_alias(tcx, item_id.owner_id.def_id, ident.name.as_str(), w);
+            }
+            // use / extern crate — no C# equivalent needed.
+            ItemKind::Use(..) | ItemKind::ExternCrate(..) => {}
             _ => {}
         }
     }
@@ -371,4 +385,101 @@ fn compile_method(
     compile_mir_body(tcx, body, w);
     w.dedent();
     w.write_line("}");
+}
+
+/// Compile a `const` item.
+///
+/// The constant value is evaluated at compile time by rustc; we read it from
+/// the MIR `promoted` or via `eval_static_initializer`.  For simplicity we
+/// emit a `static readonly` C# field with the value from MIR.
+fn compile_const(
+    tcx: TyCtxt<'_>,
+    def_id: rustc_hir::def_id::LocalDefId,
+    const_name: &str,
+    w: &mut CsWriter,
+) {
+    let cs_name = format!("k_{const_name}");
+    let ty = tcx.type_of(def_id).skip_binder();
+    let ty_str = ty_to_cs(tcx, ty).unwrap_or_else(|| "object /* unknown */".into());
+
+    // Evaluate the constant and emit its C# representation.
+    let val_str = eval_const_to_cs(tcx, def_id.to_def_id());
+    w.write_line(&format!("public static readonly {ty_str} {cs_name} = {val_str};"));
+}
+
+/// Compile a `static` item.
+fn compile_static(
+    tcx: TyCtxt<'_>,
+    def_id: rustc_hir::def_id::LocalDefId,
+    static_name: &str,
+    w: &mut CsWriter,
+) {
+    let cs_name = format!("s_{static_name}");
+    let ty = tcx.type_of(def_id).skip_binder();
+    let ty_str = ty_to_cs(tcx, ty).unwrap_or_else(|| "object /* unknown */".into());
+    let val_str = eval_const_to_cs(tcx, def_id.to_def_id());
+    w.write_line(&format!("public static {ty_str} {cs_name} = {val_str};"));
+}
+
+/// Compile a `type` alias.
+fn compile_type_alias(
+    tcx: TyCtxt<'_>,
+    def_id: rustc_hir::def_id::LocalDefId,
+    alias_name: &str,
+    w: &mut CsWriter,
+) {
+    // C# does not have a direct equivalent of `type Foo = Bar`.
+    // Emit a comment documenting the alias.
+    let aliased = tcx.type_of(def_id).skip_binder();
+    let aliased_str = ty_to_cs(tcx, aliased).unwrap_or_else(|| "/* unknown */".into());
+    w.write_line(&format!("// type alias: {alias_name} = {aliased_str}"));
+}
+
+/// Evaluate a constant / static initializer and return a C# literal string.
+fn eval_const_to_cs(tcx: TyCtxt<'_>, def_id: rustc_hir::def_id::DefId) -> String {
+    use rustc_middle::mir::interpret::{ErrorHandled, GlobalAlloc};
+
+    // Try to evaluate the constant.
+    let instance = rustc_middle::ty::Instance::mono(tcx, def_id);
+    let result = tcx.const_eval_instance(
+        rustc_middle::ty::TypingEnv::fully_monomorphized(),
+        instance,
+        rustc_span::DUMMY_SP,
+    );
+
+    match result {
+        Ok(val) => {
+            use rustc_middle::mir::ConstValue;
+            use rustc_middle::mir::interpret::{GlobalAlloc, Scalar};
+            match val {
+                ConstValue::Scalar(scalar) => {
+                    match scalar {
+                        Scalar::Int(si) => {
+                            let bits = si.to_bits(si.size());
+                            format!("{bits}")
+                        }
+                        Scalar::Ptr(ptr, _) => {
+                            match tcx.global_alloc(ptr.provenance.alloc_id()) {
+                                GlobalAlloc::Memory(alloc) => {
+                                    let bytes = alloc.inner().inspect_with_uninit_and_ptr_outside_interpreter(
+                                        0..alloc.inner().len()
+                                    );
+                                    if let Ok(s) = std::str::from_utf8(bytes) {
+                                        return format!("\"{}\"", s.escape_default());
+                                    }
+                                    "/* ptr */default".into()
+                                }
+                                _ => "/* ptr */default".into(),
+                            }
+                        }
+                    }
+                }
+                _ => "default".into(),
+            }
+        }
+        Err(rustc_middle::mir::interpret::ErrorHandled::Reported(_, _))
+        | Err(rustc_middle::mir::interpret::ErrorHandled::TooGeneric(_)) => {
+            "/* unevaluated */default".into()
+        }
+    }
 }

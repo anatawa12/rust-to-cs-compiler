@@ -489,6 +489,25 @@ fn const_cs<'tcx>(tcx: TyCtxt<'tcx>, c: &rustc_middle::mir::Const<'tcx>) -> Stri
                                         .unwrap_or_else(|| format!("(char){bits}"));
                                     ch
                                 }
+                                // Signed integers: reinterpret bit pattern as signed.
+                                TyKind::Int(k) => {
+                                    use rustc_middle::ty::IntTy;
+                                    let signed: i128 = match k {
+                                        IntTy::I8    => (bits as i8)   as i128,
+                                        IntTy::I16   => (bits as i16)  as i128,
+                                        IntTy::I32   => (bits as i32)  as i128,
+                                        IntTy::I64   => (bits as i64)  as i128,
+                                        IntTy::I128  => bits as i128,
+                                        IntTy::Isize => (bits as i64)  as i128, // assume 64-bit
+                                    };
+                                    // Use cast to avoid C# out-of-range literal warnings.
+                                    let cs_ty = crate::codegen::types::int_ty_cs(k);
+                                    if signed < i32::MIN as i128 || signed > i32::MAX as i128 {
+                                        format!("({cs_ty}){signed}L")
+                                    } else {
+                                        format!("{signed}")
+                                    }
+                                }
                                 _ => format!("{bits}"),
                             }
                         }

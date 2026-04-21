@@ -173,6 +173,11 @@ pub fn def_id_to_cs_path(tcx: TyCtxt<'_>, def_id: rustc_hir::def_id::DefId) -> S
 
 // ── primitive helpers ─────────────────────────────────────────────────────
 
+/// Public helper so `mir.rs` can format a signed-int cast in constants.
+pub fn int_ty_cs(k: &ty::IntTy) -> String {
+    int_ty(k)
+}
+
 fn int_ty(k: &ty::IntTy) -> String {
     use ty::IntTy::*;
     match k {

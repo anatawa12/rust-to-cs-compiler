@@ -51,8 +51,8 @@ public static partial class mod_arithmetic
         global::System.Diagnostics.Debug.Assert((_3) == false);
         goto _bb1;
         _bb1: ;
-        _4 = (_2 == 4294967295);
-        _5 = (_1 == 2147483648);
+        _4 = (_2 == -1);
+        _5 = (_1 == -2147483648);
         _6 = (_4 & _5);
         global::System.Diagnostics.Debug.Assert((_6) == false);
         goto _bb2;
@@ -72,8 +72,8 @@ public static partial class mod_arithmetic
         global::System.Diagnostics.Debug.Assert((_3) == false);
         goto _bb1;
         _bb1: ;
-        _4 = (_2 == 4294967295);
-        _5 = (_1 == 2147483648);
+        _4 = (_2 == -1);
+        _5 = (_1 == -2147483648);
         _6 = (_4 & _5);
         global::System.Diagnostics.Debug.Assert((_6) == false);
         goto _bb2;
@@ -143,7 +143,7 @@ public static partial class mod_arithmetic
             goto _bb3;
         }
         _bb1: ;
-        _3 = (_1 == 2147483648);
+        _3 = (_1 == -2147483648);
         global::System.Diagnostics.Debug.Assert((_3) == false);
         goto _bb2;
         _bb2: ;
@@ -257,8 +257,8 @@ public static partial class mod_arithmetic
         global::System.Diagnostics.Debug.Assert((_3) == false);
         goto _bb1;
         _bb1: ;
-        _4 = (2 == 4294967295);
-        _5 = (_1 == 2147483648);
+        _4 = (2 == -1);
+        _5 = (_1 == -2147483648);
         _6 = (_4 & _5);
         global::System.Diagnostics.Debug.Assert((_6) == false);
         goto _bb2;
