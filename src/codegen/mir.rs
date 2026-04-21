@@ -93,6 +93,27 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
         match &stmt.kind {
             StatementKind::Assign(assign) => {
                 let (place, rvalue) = assign.as_ref();
+                // Detect a deref-write pattern (writing through a Ref<T>).
+                // When the place's last projection is a Deref, we need to use
+                // Ref<T>.Set(value) rather than (*ref) = value.
+                let last_proj = place.projection.last();
+                if matches!(last_proj, Some(PlaceElem::Deref)) {
+                    // Build the Ref<T> place (without the final Deref).
+                    use rustc_middle::ty::TyKind;
+                    let base_place = rustc_middle::mir::Place {
+                        local: place.local,
+                        projection: self.tcx.mk_place_elems(
+                            &place.projection[..place.projection.len() - 1]
+                        ),
+                    };
+                    let base_ty = base_place.ty(self.body, self.tcx).ty;
+                    if matches!(base_ty.kind(), TyKind::Ref(..) | TyKind::RawPtr(..)) {
+                        let ref_expr = self.place_cs(&base_place);
+                        let rhs = self.rvalue_cs(rvalue);
+                        w.write_line(&format!("{ref_expr}.Set({rhs});"));
+                        return;
+                    }
+                }
                 let lhs = self.place_cs(place);
                 let rhs = self.rvalue_cs(rvalue);
                 w.write_line(&format!("{lhs} = {rhs};"));
@@ -254,13 +275,20 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
         for proj in place.projection.iter() {
             match proj {
                 PlaceElem::Deref => {
-                    // Ref<T> indirection — transparent in C# representation.
-                    s = format!("(*{s})");
+                    // Ref<T> indirection — use .Get() for read access.
                     use rustc_middle::ty::TyKind;
-                    cur_ty = match cur_ty.kind() {
-                        TyKind::Ref(_, inner, _) | TyKind::RawPtr(inner, _) => *inner,
-                        _ => cur_ty,
+                    let (new_ty, is_ref) = match cur_ty.kind() {
+                        TyKind::Ref(_, inner, _) => (*inner, true),
+                        TyKind::RawPtr(inner, _) => (*inner, false),
+                        _ => (cur_ty, false),
                     };
+                    if is_ref {
+                        s = format!("{s}.Get()");
+                    } else {
+                        // Raw pointer: emit unsafe deref (will need unsafe block in real code).
+                        s = format!("(*{s})");
+                    }
+                    cur_ty = new_ty;
                     cur_variant_idx = None;
                 }
                 PlaceElem::Field(field_idx, field_ty) => {
