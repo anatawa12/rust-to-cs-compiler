@@ -1,1 +1,3 @@
 /target
+mir_dump/
+*.mir
