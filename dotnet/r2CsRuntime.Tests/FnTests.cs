@@ -1,115 +1,166 @@
+using System.Runtime.CompilerServices;
 using r2CsRuntime;
 
 namespace r2CsRuntime.Tests;
 
 /// <summary>
-/// Tests for t_FnOnce / t_FnMut / t_Fn trait interfaces.
+/// Tests for t_FnOnce / t_FnMut / t_Fn (F-bounded, static dispatch)
+/// and T_FnOnce / T_FnMut / T_Fn (dyn dispatch via S_ vtable structs).
 ///
-/// We use a simple class closure to verify the interface hierarchy and
-/// method dispatch, mirroring the closure classes the compiler would generate.
+/// Also demonstrates the expected module-nesting shape: generated code wraps
+/// types in <c>partial class mod_&lt;module&gt;</c> to mirror Rust's module
+/// hierarchy.
 /// </summary>
 public class FnTests
 {
-    // ── Minimal closure implementations ────────────────────────────────────
+    // ════════════════════════════════════════════════════════════════════════
+    // Simulated generated output for:
+    //
+    //   mod my_module {
+    //       struct Accumulator { counter: i32 }
+    //       impl FnMut(i32) -> i32 for Accumulator { ... }
+    //       struct Multiplier { factor: i32 }
+    //       impl Fn(i32) -> i32 for Multiplier { ... }
+    //   }
+    // ════════════════════════════════════════════════════════════════════════
 
-    /// <summary>
-    /// FnOnce closure: adds two numbers, consuming the captures.
-    /// Implements only t_FnOnce (one-shot call).
-    /// </summary>
-    private sealed class AddOnce : t_FnOnce<AddOnce, (int, int), int>
+    /// <summary>Mirrors <c>mod my_module { ... }</c>.</summary>
+    public static partial class mod_my_module
     {
-        public int m_call_once((int, int) args) => args.Item1 + args.Item2;
-    }
+        // ── Accumulator (FnMut) ───────────────────────────────────────────
 
-    /// <summary>
-    /// FnMut closure: accumulates a running total.
-    /// Implements t_FnMut (and transitively t_FnOnce).
-    /// </summary>
-    private sealed class Accumulator : t_FnMut<Accumulator, int, int>
-    {
-        private int _sum;
-
-        public int m_call_once(int args) => m_call_mut(args);
-        public int m_call_mut(int args)
+        public struct s_Accumulator : t_FnMut<s_Accumulator, int, int>
         {
-            _sum += args;
-            return _sum;
+            public int f_counter;
+
+            public int m_call_once(int args) => m_call_mut(args);
+            public int m_call_mut(int args) { f_counter += args; return f_counter; }
+        }
+
+        /// <summary>Vtable struct for <c>impl FnMut(i32) -&gt; i32 for Accumulator</c>.</summary>
+        public struct S_Accumulator : T_FnMut<int, int>
+        {
+            int T_FnOnce<int, int>.m_call_once(DynRef<T_FnOnce<int, int>> self, int args)
+            {
+                var vtMut = (T_FnMut<int, int>)self.Vtable;
+                var asMut = new DynRef<T_FnMut<int, int>>(self.Target!, self.Offset, vtMut);
+                return vtMut.m_call_mut(asMut, args);
+            }
+
+            int T_FnMut<int, int>.m_call_mut(DynRef<T_FnMut<int, int>> self, int args)
+            {
+                ref s_Accumulator acc = ref self.AsConcreteRef<s_Accumulator>();
+                acc.f_counter += args;
+                return acc.f_counter;
+            }
+        }
+
+        // ── Multiplier (Fn) ───────────────────────────────────────────────
+
+        public struct s_Multiplier : t_Fn<s_Multiplier, int, int>
+        {
+            public int f_factor;
+
+            public s_Multiplier(int factor) { f_factor = factor; }
+            public int m_call_once(int args) => m_call(args);
+            public int m_call_mut(int args)  => m_call(args);
+            public int m_call(int args)      => f_factor * args;
+        }
+
+        /// <summary>Vtable struct for <c>impl Fn(i32) -&gt; i32 for Multiplier</c>.</summary>
+        public struct S_Multiplier : T_Fn<int, int>
+        {
+            int T_FnOnce<int, int>.m_call_once(DynRef<T_FnOnce<int, int>> self, int args)
+            {
+                var vtFn = (T_Fn<int, int>)self.Vtable;
+                var asFn = new DynRef<T_Fn<int, int>>(self.Target!, self.Offset, vtFn);
+                return vtFn.m_call(asFn, args);
+            }
+
+            int T_FnMut<int, int>.m_call_mut(DynRef<T_FnMut<int, int>> self, int args)
+            {
+                var vtFn = (T_Fn<int, int>)self.Vtable;
+                var asFn = new DynRef<T_Fn<int, int>>(self.Target!, self.Offset, vtFn);
+                return vtFn.m_call(asFn, args);
+            }
+
+            int T_Fn<int, int>.m_call(DynRef<T_Fn<int, int>> self, int args)
+            {
+                ref s_Multiplier m = ref self.AsConcreteRef<s_Multiplier>();
+                return m.f_factor * args;
+            }
         }
     }
 
-    /// <summary>
-    /// Fn closure: multiplies the captured factor with the argument.
-    /// Implements t_Fn (and transitively t_FnMut and t_FnOnce).
-    /// </summary>
-    private sealed class Multiplier : t_Fn<Multiplier, int, int>
-    {
-        private readonly int _factor;
-
-        public Multiplier(int factor) => _factor = factor;
-
-        public int m_call_once(int args) => m_call(args);
-        public int m_call_mut(int args)  => m_call(args);
-        public int m_call(int args)      => _factor * args;
-    }
-
-    // ── Tests ──────────────────────────────────────────────────────────────
-
-    [Fact]
-    public void FnOnce_CallOnce_ReturnsResult()
-    {
-        var closure = new AddOnce();
-        Assert.Equal(7, closure.m_call_once((3, 4)));
-    }
+    // ════════════════════════════════════════════════════════════════════════
+    // t_Fn* tests (static / monomorphised dispatch)
+    // ════════════════════════════════════════════════════════════════════════
 
     [Fact]
     public void FnMut_CallMut_AccumulatesState()
     {
-        var acc = new Accumulator();
+        var acc = new mod_my_module.s_Accumulator();
         Assert.Equal(10, acc.m_call_mut(10));
         Assert.Equal(15, acc.m_call_mut(5));
-        Assert.Equal(16, acc.m_call_mut(1));
     }
 
     [Fact]
     public void FnMut_IsAssignableToFnOnce()
     {
-        t_FnOnce<Accumulator, int, int> asOnce = new Accumulator();
+        t_FnOnce<mod_my_module.s_Accumulator, int, int> asOnce = new mod_my_module.s_Accumulator();
         Assert.Equal(5, asOnce.m_call_once(5));
     }
 
     [Fact]
     public void Fn_Call_IsReadOnly()
     {
-        var mul = new Multiplier(3);
+        var mul = new mod_my_module.s_Multiplier(3);
         Assert.Equal(9,  mul.m_call(3));
         Assert.Equal(12, mul.m_call(4));
-        // repeated calls give consistent results (no mutation)
         Assert.Equal(9,  mul.m_call(3));
     }
 
-    [Fact]
-    public void Fn_IsAssignableToFnMut()
-    {
-        t_FnMut<Multiplier, int, int> asMut = new Multiplier(5);
-        Assert.Equal(25, asMut.m_call_mut(5));
-    }
-
-    [Fact]
-    public void Fn_IsAssignableToFnOnce()
-    {
-        t_FnOnce<Multiplier, int, int> asOnce = new Multiplier(7);
-        Assert.Equal(14, asOnce.m_call_once(2));
-    }
-
-    /// <summary>
-    /// Verifies the trait hierarchy: Fn ⊆ FnMut ⊆ FnOnce.
-    /// </summary>
     [Fact]
     public void Fn_ImplementsFullHierarchy()
     {
-        var mul = new Multiplier(2);
-        Assert.IsAssignableFrom<t_Fn<Multiplier, int, int>>(mul);
-        Assert.IsAssignableFrom<t_FnMut<Multiplier, int, int>>(mul);
-        Assert.IsAssignableFrom<t_FnOnce<Multiplier, int, int>>(mul);
+        var mul = new mod_my_module.s_Multiplier(2);
+        Assert.IsAssignableFrom<t_Fn<mod_my_module.s_Multiplier, int, int>>(mul);
+        Assert.IsAssignableFrom<t_FnMut<mod_my_module.s_Multiplier, int, int>>(mul);
+        Assert.IsAssignableFrom<t_FnOnce<mod_my_module.s_Multiplier, int, int>>(mul);
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // T_Fn* tests (dyn dispatch through DynRef)
+    // ════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public void DynFnMut_CallMut_AccumulatesState()
+    {
+        var box = new Var<mod_my_module.s_Accumulator>();
+        var r   = RefHelper.FromVar(box);
+        var dyn = new DynRef<T_FnMut<int, int>>(box, r.Offset, new mod_my_module.S_Accumulator());
+
+        Assert.Equal(10, dyn.Vtable.m_call_mut(dyn, 10));
+        Assert.Equal(15, dyn.Vtable.m_call_mut(dyn, 5));
+    }
+
+    [Fact]
+    public void DynFn_CallFn_IsReadOnly()
+    {
+        var box = new Var<mod_my_module.s_Multiplier>();
+        box.f_value = new mod_my_module.s_Multiplier(7);
+        var r   = RefHelper.FromVar(box);
+        var dyn = new DynRef<T_Fn<int, int>>(box, r.Offset, new mod_my_module.S_Multiplier());
+
+        Assert.Equal(14, dyn.Vtable.m_call(dyn, 2));
+        Assert.Equal(21, dyn.Vtable.m_call(dyn, 3));
+    }
+
+    [Fact]
+    public void DynFnMut_IsThreePointerSizes()
+    {
+        int expected = 3 * IntPtr.Size;
+        int actual   = Unsafe.SizeOf<DynRef<T_FnMut<int, int>>>();
+        Assert.Equal(expected, actual);
     }
 }

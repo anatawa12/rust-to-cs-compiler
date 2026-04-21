@@ -25,8 +25,8 @@ public class PointerTests
     public void Pointer_HeapDeref_ReadWrite()
     {
         var box = new IntBox { f_value = 42 };
-        var r = RefHelper.FromHeapField(box, ref box.f_value);
-        var p = new Pointer<int>(box, r.Offset);
+        var r   = RefHelper.FromHeapField(box, ref box.f_value);
+        var p   = new Pointer<int>(box, r.Offset);
 
         Assert.Equal(42, p.Deref());
         p.Deref() = 100;
@@ -37,8 +37,8 @@ public class PointerTests
     public void Pointer_AsRef_RoundTrips()
     {
         var box = new IntBox { f_value = 7 };
-        var r = RefHelper.FromHeapField(box, ref box.f_value);
-        var p = new Pointer<int>(box, r.Offset);
+        var r   = RefHelper.FromHeapField(box, ref box.f_value);
+        var p   = new Pointer<int>(box, r.Offset);
 
         var r2 = p.AsRef();
         r2.Set(55);
@@ -58,23 +58,23 @@ public class PointerTests
         }
     }
 
-    // ── LenPointer<T> ─────────────────────────────────────────────────────
+    // ── LenPointer<Slice<T>> (raw slice fat pointer) ──────────────────────
 
     private sealed class ThreeInts { public int f_0, f_1, f_2; }
 
     [Fact]
     public void LenPointer_NullConstant_HasZeroLength()
     {
-        var p = LenPointer<int>.Null;
+        var p = LenPointer<Slice<int>>.Null;
         Assert.Equal(0, p.Length);
     }
 
     [Fact]
-    public void LenPointer_HeapDeref_ReadWrite()
+    public void LenPointer_Deref_ReadWrite()
     {
-        var obj = new ThreeInts { f_0 = 1, f_1 = 2, f_2 = 3 };
-        var lenRef = RefHelper.FromHeapLenRef(obj, ref obj.f_0, 3);
-        var p = new LenPointer<int>(lenRef.Target!, lenRef.Offset, 3);
+        var obj    = new ThreeInts { f_0 = 1, f_1 = 2, f_2 = 3 };
+        var lenRef = RefHelper.FromHeapSlice(obj, ref obj.f_0, 3);
+        var p      = new LenPointer<Slice<int>>(lenRef.Target!, lenRef.Offset, 3);
 
         Assert.Equal(1, p.Deref(0));
         Assert.Equal(2, p.Deref(1));
@@ -85,26 +85,27 @@ public class PointerTests
     }
 
     [Fact]
-    public void LenPointer_AsRef_ConvertedToLenRef()
+    public void LenPointer_AsRef_ConvertedToLenRefSlice()
     {
-        var obj = new ThreeInts { f_0 = 5, f_1 = 6, f_2 = 7 };
-        var lenRef = RefHelper.FromHeapLenRef(obj, ref obj.f_0, 3);
-        var p = new LenPointer<int>(lenRef.Target!, lenRef.Offset, 3);
+        var obj    = new ThreeInts { f_0 = 5, f_1 = 6, f_2 = 7 };
+        var lenRef = RefHelper.FromHeapSlice(obj, ref obj.f_0, 3);
+        var p      = new LenPointer<Slice<int>>(lenRef.Target!, lenRef.Offset, 3);
 
-        var converted = p.AsRef();
+        LenRef<Slice<int>> converted = p.AsRef();
         Assert.Equal(5, converted.GetElement(0));
     }
 
-    // ── DynPointer<TVtable> ───────────────────────────────────────────────
+    // ── DynPointer<T_Interface> ───────────────────────────────────────────
 
-    private readonly struct EmptyVtable { }
+    private interface T_Empty { }
+    private struct S_Empty : T_Empty { }
 
     [Fact]
     public void DynPointer_AsRef_ConvertedToDynRef()
     {
         var box = new IntBox { f_value = 11 };
-        var r = RefHelper.FromHeapField(box, ref box.f_value);
-        var dp = new DynPointer<EmptyVtable>(box, r.Offset, default);
+        var r   = RefHelper.FromHeapField(box, ref box.f_value);
+        var dp  = new DynPointer<T_Empty>(box, r.Offset, new S_Empty());
 
         var dynRef = dp.AsRef();
         Assert.Same(box, dynRef.Target);
@@ -115,8 +116,8 @@ public class PointerTests
     public void DynPointer_AsVoidPointer_ErasesType()
     {
         var box = new IntBox { f_value = 0 };
-        var r = RefHelper.FromHeapField(box, ref box.f_value);
-        var dp = new DynPointer<EmptyVtable>(box, r.Offset, default);
+        var r   = RefHelper.FromHeapField(box, ref box.f_value);
+        var dp  = new DynPointer<T_Empty>(box, r.Offset, new S_Empty());
 
         var vp = dp.AsVoidPointer();
         Assert.Same(box, vp.Target);

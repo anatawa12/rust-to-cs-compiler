@@ -6,25 +6,24 @@ namespace r2CsRuntime.Tests;
 /// <summary>
 /// Tests for <see cref="DynRef{TVtable}"/>.
 ///
-/// We use a minimal example that mirrors how the compiler would generate
-/// vtable dispatch for a trait object:
-/// <code>
-/// trait Greet { fn greet(&amp;self) -> String; }
-/// impl Greet for Point { fn greet(&amp;self) -> String { ... } }
-/// let r: &amp;dyn Greet = &amp;my_point;
-/// r.greet();
-/// </code>
+/// Demonstrates the dyn-dispatch pattern:
+/// <list type="bullet">
+///   <item><c>T_Greet</c> — the <c>T_</c>-prefixed trait interface.</item>
+///   <item><c>S_Greet_for_s_Point</c> — the <c>S_</c>-prefixed vtable struct.</item>
+///   <item><c>DynRef&lt;T_Greet&gt;</c> — the fat pointer (Target+Offset+Vtable = 3 ptrs).</item>
+///   <item>Method call: <c>r.Vtable.m_greet(r)</c> — pass the full DynRef as self.</item>
+/// </list>
 /// </summary>
 public class DynRefTests
 {
-    // ── Trait interface (T_Greet) ─────────────────────────────────────────
+    // ── Trait interface (T_ prefix) ───────────────────────────────────────
 
     private interface T_Greet
     {
-        string m_greet(Ref<Void> self);
+        string m_greet(DynRef<T_Greet> self);
     }
 
-    // ── Concrete type ─────────────────────────────────────────────────────
+    // ── Concrete data ─────────────────────────────────────────────────────
 
     private sealed class s_Point_container
     {
@@ -32,14 +31,13 @@ public class DynRefTests
         public int f_y;
     }
 
-    // ── Vtable struct (S_Greet_for_s_Point) ───────────────────────────────
+    // ── Vtable struct (S_ prefix, one per impl) ───────────────────────────
 
-    private readonly struct S_Greet_for_s_Point : T_Greet
+    private struct S_Greet_for_s_Point : T_Greet
     {
-        public string m_greet(Ref<Void> self)
+        public string m_greet(DynRef<T_Greet> self)
         {
-            // Cast the erased void ref to the concrete type.
-            ref int x = ref Unsafe.As<Void, int>(ref self.AsRef());
+            ref int x = ref self.AsConcreteRef<int>();
             return $"({x})";
         }
     }
@@ -50,11 +48,10 @@ public class DynRefTests
     public void DynRef_HeapDispatch_CallsVtableMethod()
     {
         var obj = new s_Point_container { f_x = 3, f_y = 4 };
-        var r = RefHelper.FromHeapField(obj, ref obj.f_x);
-        var vtable = new S_Greet_for_s_Point();
-        var dyn = new DynRef<S_Greet_for_s_Point>(obj, r.Offset, vtable);
+        var r   = RefHelper.FromHeapField(obj, ref obj.f_x);
+        var dyn = new DynRef<T_Greet>(obj, r.Offset, new S_Greet_for_s_Point());
 
-        string result = dyn.Vtable.m_greet(dyn.AsVoidRef());
+        string result = dyn.Vtable.m_greet(dyn);
         Assert.Equal("(3)", result);
     }
 
@@ -62,8 +59,8 @@ public class DynRefTests
     public void DynRef_AsVoidRef_HasSameTargetAndOffset()
     {
         var obj = new s_Point_container { f_x = 1, f_y = 2 };
-        var r = RefHelper.FromHeapField(obj, ref obj.f_x);
-        var dyn = new DynRef<S_Greet_for_s_Point>(obj, r.Offset, new S_Greet_for_s_Point());
+        var r   = RefHelper.FromHeapField(obj, ref obj.f_x);
+        var dyn = new DynRef<T_Greet>(obj, r.Offset, new S_Greet_for_s_Point());
 
         var voidRef = dyn.AsVoidRef();
         Assert.Same(obj, voidRef.Target);
@@ -74,8 +71,8 @@ public class DynRefTests
     public void DynRef_AsConcreteRef_AliasesField()
     {
         var obj = new s_Point_container { f_x = 7, f_y = 8 };
-        var r = RefHelper.FromHeapField(obj, ref obj.f_x);
-        var dyn = new DynRef<S_Greet_for_s_Point>(obj, r.Offset, default);
+        var r   = RefHelper.FromHeapField(obj, ref obj.f_x);
+        var dyn = new DynRef<T_Greet>(obj, r.Offset, new S_Greet_for_s_Point());
 
         ref int concrete = ref dyn.AsConcreteRef<int>();
         Assert.Equal(7, concrete);
@@ -84,25 +81,12 @@ public class DynRefTests
     }
 
     [Fact]
-    public void DynRef_VtableStruct_HasMinimalSize()
+    public void DynRef_IsThreePointerSizes()
     {
-        // Design intent: vtable structs should be zero-sized so that
-        // DynRef<TVtable> has no allocation overhead.
-        //
-        // DESIGN ISSUE FOUND: C# structs always have a minimum size of 1 byte
-        // (even empty structs), unlike Rust where zero-sized types are truly
-        // zero-sized.  Unsafe.SizeOf<S_Greet_for_s_Point>() returns 1, not 0.
-        // This means DynRef<TVtable> is 1 byte larger than intended.
-        //
-        // Mitigation: The JIT still devirtualises calls through the vtable
-        // struct (because it can inline default(S_Greet_for_s_Point)) so the
-        // "zero call cost" goal is still achieved, even though the struct
-        // itself occupies 1 byte in memory.
-        //
-        // Update: StructLayout(LayoutKind.Sequential, Size = 0) can force a
-        // zero-size layout in .NET 8+, but this is not available for all
-        // target frameworks. See design-v1.md notes section.
-        Assert.True(Unsafe.SizeOf<S_Greet_for_s_Point>() <= 1,
-            $"Vtable struct should be at most 1 byte; got {Unsafe.SizeOf<S_Greet_for_s_Point>()}");
+        // DynRef<T_Greet>: Target(ptr) + Offset(nint) + Vtable(interface ref = ptr)
+        // = exactly 3 * pointer-size.
+        int expected = 3 * IntPtr.Size;
+        int actual   = Unsafe.SizeOf<DynRef<T_Greet>>();
+        Assert.Equal(expected, actual);
     }
 }
