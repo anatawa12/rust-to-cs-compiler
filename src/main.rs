@@ -36,11 +36,23 @@ impl rustc_driver::Callbacks for R2CsCallbacks {
 }
 
 /// Entry point for C# code generation.  Receives the fully-analysed type
-/// context and drives the THIR traversal.
+/// context and drives the MIR traversal.
 fn compile(tcx: TyCtxt<'_>) {
     let mut w = codegen::writer::CsWriter::new();
     codegen::item::compile_crate(tcx, &mut w);
-    print!("{}", w.finish());
+    let output = w.finish();
+
+    // If R2CS_OUTPUT_DIR is set, write <crate_name>.cs to that directory.
+    // Otherwise fall back to stdout (useful for quick manual testing).
+    if let Ok(dir) = std::env::var("R2CS_OUTPUT_DIR") {
+        let crate_name = tcx.crate_name(rustc_hir::def_id::LOCAL_CRATE);
+        let filename = format!("{crate_name}.cs");
+        let path = std::path::Path::new(&dir).join(&filename);
+        std::fs::write(&path, &output)
+            .unwrap_or_else(|e| panic!("failed to write {}: {e}", path.display()));
+    } else {
+        print!("{output}");
+    }
 }
 
 fn main() {
