@@ -70,6 +70,7 @@ fn transpile_inputs_and_run_dotnet_tests() {
         "tests/inputs/casts.rs",
         "tests/inputs/consts.rs",
         "tests/inputs/bitwise.rs",
+        "tests/inputs/calls.rs",
     ];
     for rel in &inputs {
         let input = root.join(rel);
