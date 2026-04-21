@@ -443,6 +443,7 @@ fn compile_type_alias(
 fn eval_const_to_cs(tcx: TyCtxt<'_>, def_id: rustc_hir::def_id::DefId) -> String {
     // Try to evaluate the constant.
     let instance = rustc_middle::ty::Instance::mono(tcx, def_id);
+    let ty = tcx.type_of(def_id).skip_binder();
     let result = tcx.const_eval_instance(
         rustc_middle::ty::TypingEnv::fully_monomorphized(),
         instance,
@@ -457,8 +458,38 @@ fn eval_const_to_cs(tcx: TyCtxt<'_>, def_id: rustc_hir::def_id::DefId) -> String
                 ConstValue::Scalar(scalar) => {
                     match scalar {
                         Scalar::Int(si) => {
+                            // Re-use the typed path from mir.rs to get signed/float interpretation.
                             let bits = si.to_bits(si.size());
-                            format!("{bits}")
+                            use rustc_middle::ty::TyKind;
+                            match ty.kind() {
+                                TyKind::Float(rustc_middle::ty::FloatTy::F32) => {
+                                    format!("{}f", f32::from_bits(bits as u32))
+                                }
+                                TyKind::Float(rustc_middle::ty::FloatTy::F64) => {
+                                    format!("{}", f64::from_bits(bits as u64))
+                                }
+                                TyKind::Bool => {
+                                    if bits == 0 { "false".into() } else { "true".into() }
+                                }
+                                TyKind::Int(k) => {
+                                    use rustc_middle::ty::IntTy;
+                                    let signed: i128 = match k {
+                                        IntTy::I8    => (bits as i8)   as i128,
+                                        IntTy::I16   => (bits as i16)  as i128,
+                                        IntTy::I32   => (bits as i32)  as i128,
+                                        IntTy::I64   => (bits as i64)  as i128,
+                                        IntTy::I128  => bits as i128,
+                                        IntTy::Isize => (bits as i64)  as i128,
+                                    };
+                                    let cs_ty = crate::codegen::types::int_ty_cs(k);
+                                    if signed < i32::MIN as i128 || signed > i32::MAX as i128 {
+                                        format!("({cs_ty}){signed}L")
+                                    } else {
+                                        format!("{signed}")
+                                    }
+                                }
+                                _ => format!("{bits}"),
+                            }
                         }
                         Scalar::Ptr(ptr, _) => {
                             match tcx.global_alloc(ptr.provenance.alloc_id()) {
