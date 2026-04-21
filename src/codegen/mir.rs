@@ -427,6 +427,13 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
                 format!("{p}.f_discriminant")
             }
             Rvalue::CopyForDeref(place) => self.place_cs(place),
+            Rvalue::Cast(_, operand, ty) => {
+                // Emit a C# explicit cast: `(TargetType)operand`.
+                let op_cs = self.operand_cs(operand);
+                let ty_str = ty_to_cs(self.tcx, *ty)
+                    .unwrap_or_else(|| "object /* unknown */".into());
+                format!("({ty_str}){op_cs}")
+            }
             _ => format!("/* rvalue */default"),
         }
     }
@@ -461,6 +468,15 @@ fn bb_label(bb: BasicBlock) -> String {
 fn const_cs<'tcx>(tcx: TyCtxt<'tcx>, c: &rustc_middle::mir::Const<'tcx>) -> String {
     use rustc_middle::mir::Const;
     match c {
+        Const::Ty(_, ty_const) => {
+            // Constants from the type system (e.g. generic const params).
+            // Try to evaluate if it's a known value.
+            if let Some(val) = ty_const.try_to_scalar() {
+                let bits = val.to_bits(val.size()).unwrap_or(0);
+                return format!("{bits}");
+            }
+            "/* ty const */default".into()
+        }
         Const::Val(val, ty) => {
             use rustc_middle::mir::ConstValue;
             use rustc_middle::ty::TyKind;
@@ -528,6 +544,24 @@ fn const_cs<'tcx>(tcx: TyCtxt<'tcx>, c: &rustc_middle::mir::Const<'tcx>) -> Stri
                 _ => "/* const */default".into(),
             }
         }
-        _ => "/* const */default".into(),
+        Const::Unevaluated(unevaluated, ty) => {
+            // Try to evaluate the constant at compile time.
+            let result = tcx.const_eval_resolve(
+                rustc_middle::ty::TypingEnv::fully_monomorphized(),
+                *unevaluated,
+                rustc_span::DUMMY_SP,
+            );
+            match result {
+                Ok(val) => {
+                    // Re-use the value branch by constructing a temporary Const::Val.
+                    let temp = rustc_middle::mir::Const::Val(val, *ty);
+                    const_cs(tcx, &temp)
+                }
+                Err(_) => {
+                    // Fall back to the definition path.
+                    crate::codegen::types::def_id_to_cs_path(tcx, unevaluated.def)
+                }
+            }
+        }
     }
 }
