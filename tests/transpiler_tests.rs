@@ -79,6 +79,7 @@ fn transpile_inputs_and_run_dotnet_tests() {
         "tests/inputs/floats.rs",
         "tests/inputs/nested_structs.rs",
         "tests/inputs/references.rs",
+        "tests/inputs/pattern_match.rs",
     ];
     for rel in &inputs {
         let input = root.join(rel);
