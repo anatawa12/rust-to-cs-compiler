@@ -140,6 +140,24 @@ public static class RefHelper
         => FromHeapField(var, ref var.f_value);
 
     /// <summary>
+    /// Creates a <see cref="LenRef{T}"/> pointing to <paramref name="firstElement"/>
+    /// inside the heap object <paramref name="owner"/>, with the given
+    /// <paramref name="length"/>.
+    ///
+    /// <para>Typically used when taking a slice of a heap-allocated array field
+    /// or an inline array field in a struct.</para>
+    /// </summary>
+    public static LenRef<T> FromHeapLenRef<TOwner, T>(TOwner owner, ref T firstElement, nint length)
+        where TOwner : class
+    {
+        ref byte dataStart = ref RawData.GetDataRef(owner);
+        nint offset = Unsafe.ByteOffset(
+            ref dataStart,
+            ref Unsafe.As<T, byte>(ref firstElement));
+        return new LenRef<T>(owner, offset, length);
+    }
+
+    /// <summary>
     /// Creates a stack <see cref="Ref{T}"/> from a pinned pointer.
     /// <para><strong>Unsafe:</strong> the caller must ensure the variable's
     /// address remains valid for the lifetime of the returned ref.

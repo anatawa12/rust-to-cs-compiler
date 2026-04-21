@@ -1,10 +1,4 @@
 namespace r2CsRuntime.Tests;
 
-public class UnitTest1
-{
-    [Fact]
-    public void Test1()
-    {
-
-    }
-}
+// Replaced by individual test files.
+// This file is kept empty to preserve the original file path.
