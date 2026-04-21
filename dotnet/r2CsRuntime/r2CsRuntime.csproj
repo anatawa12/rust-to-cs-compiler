@@ -5,6 +5,17 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>10</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Provides Unsafe.As, Unsafe.AddByteOffset, Unsafe.ByteOffset, etc.
+         Required for the Ref<T>/LenRef<T>/DynRef<T>/Pointer<T> implementations
+         which use byte-offset arithmetic over managed object references. -->
+    <PackageReference Include="System.Runtime.CompilerServices.Unsafe" Version="6.0.0" />
+    <!-- Provides Span<T>, ReadOnlySpan<T>, MemoryMarshal for netstandard2.0.
+         Used by LenRef<T>.AsSpan() and LenPointer<T>.AsSpan(). -->
+    <PackageReference Include="System.Memory" Version="4.5.5" />
+  </ItemGroup>
 
 </Project>
