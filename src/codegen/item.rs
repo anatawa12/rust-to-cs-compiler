@@ -1,17 +1,32 @@
 /// Top-level item (function, struct) code generation.
 ///
-/// Each `compile_*` function receives a fully-analysed `TyCtxt` and emits
-/// C# source text through a [`CsWriter`].
+/// # THIR vs MIR for function bodies
+///
+/// THIR is the ideal representation because it preserves async/await structure,
+/// match expressions, and other high-level constructs.  However, THIR is
+/// "stolen" (consumed) by the borrow checker during the `analysis` phase, which
+/// runs before `rustc_driver::Callbacks::after_analysis` is called.  Attempting
+/// to call `tcx.thir_body(def_id)` after analysis panics with "attempted to
+/// read from stolen value".
+///
+/// We therefore use **MIR** for function bodies.  See `docs/mir-vs-thir.md` for
+/// a detailed comparison and the implications for async support.
+///
+/// THIR is still used in `compile_fn` for one small purpose: extracting
+/// parameter names (which MIR does not preserve for named parameters).
+/// `thir_body` must be called before analysis steals it, but since we only use
+/// it here for names, the approach that works is to get param names from
+/// `body.var_debug_info` in MIR instead (which does survive analysis).
 
 use rustc_hir::ItemKind;
 use rustc_middle::ty::TyCtxt;
 
-use crate::codegen::expr::{compile_block, ExprCtx};
+use crate::codegen::mir::compile_mir_body;
 use crate::codegen::naming;
 use crate::codegen::types::ty_to_cs;
 use crate::codegen::writer::CsWriter;
 
-/// Compile a single free function item.
+/// Compile a single free function item using its MIR body.
 pub fn compile_fn(
     tcx: TyCtxt<'_>,
     def_id: rustc_hir::def_id::LocalDefId,
@@ -20,41 +35,53 @@ pub fn compile_fn(
 ) {
     let cs_name = naming::method_name(fn_name);
 
-    // Obtain THIR for this function.
-    let Ok((thir_cell, root_expr)) = tcx.thir_body(def_id) else {
-        w.write_line(&format!("// THIR unavailable for {fn_name}"));
-        return;
-    };
-    let thir = thir_cell.borrow();
+    // Get the optimized MIR body (always available after analysis).
+    let body = tcx.optimized_mir(def_id.to_def_id());
 
-    // Build the parameter list.
-    let mut params: Vec<String> = Vec::new();
-    for param in thir.params.iter() {
-        let ty_str = ty_to_cs(tcx, param.ty)
-            .unwrap_or_else(|| "object /* unknown */".into());
-
-        let param_name = match &param.pat {
-            Some(pat) => {
-                use rustc_middle::thir::PatKind;
-                match &pat.kind {
-                    PatKind::Binding { name, .. } => {
-                        naming::local_name(name.as_str(), 0)
-                    }
-                    _ => "_".into(),
-                }
-            }
-            None => "_".into(),
-        };
-        params.push(format!("{ty_str} {param_name}"));
-    }
-
-    // Return type from the function signature via fn_sig.
+    // Build parameter list from MIR local_decls + fn_sig.
+    // _0 is the return slot; _1.._arg_count are the parameters.
+    // We use `_N` names in the signature to match what the MIR body uses.
+    // VarDebugInfo names are emitted as comments for readability.
     let fn_sig = tcx.fn_sig(def_id).skip_binder().skip_binder();
+    let param_tys = fn_sig.inputs();
     let ret_ty = fn_sig.output();
+
     let ret_str = ty_to_cs(tcx, ret_ty)
         .unwrap_or_else(|| "object /* unknown */".into());
 
-    // Emit function header.
+    // Build human-readable name map from VarDebugInfo.
+    let debug_names: std::collections::HashMap<usize, String> = body
+        .var_debug_info
+        .iter()
+        .filter_map(|dbg| {
+            if let rustc_middle::mir::VarDebugInfoContents::Place(p) = &dbg.value {
+                if p.projection.is_empty() {
+                    let idx = p.local.index();
+                    if idx >= 1 && idx <= body.arg_count {
+                        return Some((idx, dbg.name.to_string()));
+                    }
+                }
+            }
+            None
+        })
+        .collect();
+
+    let params: Vec<String> = param_tys
+        .iter()
+        .enumerate()
+        .map(|(i, &ty)| {
+            let ty_str = ty_to_cs(tcx, ty)
+                .unwrap_or_else(|| "object /* unknown */".into());
+            let local_idx = i + 1;
+            // Use `_N` to match what MIR body emits; add a comment with the source name.
+            if let Some(src_name) = debug_names.get(&local_idx) {
+                format!("{ty_str} _{local_idx} /* {src_name} */")
+            } else {
+                format!("{ty_str} _{local_idx}")
+            }
+        })
+        .collect();
+
     w.write_line(&format!(
         "public static {ret_str} {cs_name}({})",
         params.join(", ")
@@ -62,29 +89,7 @@ pub fn compile_fn(
     w.write_line("{");
     w.indent();
 
-    // Emit body via THIR block.
-    let root = &thir.exprs[root_expr];
-    let body_block_id = match &root.kind {
-        rustc_middle::thir::ExprKind::Block { block } => *block,
-        _ => {
-            // Single-expression body — wrap in a synthetic return.
-            let mut ctx = ExprCtx::new(tcx, &thir);
-            match crate::codegen::expr::compile_expr(&mut ctx, root_expr) {
-                Some(cs) => {
-                    w.write_line(&format!("return {cs};"));
-                }
-                None => {
-                    w.write_line("/* TODO: function body */");
-                }
-            }
-            w.dedent();
-            w.write_line("}");
-            return;
-        }
-    };
-
-    let mut ctx = ExprCtx::new(tcx, &thir);
-    compile_block(&mut ctx, body_block_id, w);
+    compile_mir_body(tcx, body, w);
 
     w.dedent();
     w.write_line("}");
@@ -129,6 +134,14 @@ pub fn compile_crate(tcx: TyCtxt<'_>, w: &mut CsWriter) {
     w.write_line("{");
     w.indent();
 
+    compile_module_items(tcx, rustc_hir::def_id::LOCAL_CRATE.as_def_id(), w);
+
+    w.dedent();
+    w.write_line("}");
+}
+
+/// Recursively compile all items inside a module.
+fn compile_module_items(tcx: TyCtxt<'_>, _mod_def_id: rustc_hir::def_id::DefId, w: &mut CsWriter) {
     for item_id in tcx.hir_crate_items(()).free_items() {
         let item = tcx.hir_item(item_id);
         match item.kind {
@@ -140,10 +153,19 @@ pub fn compile_crate(tcx: TyCtxt<'_>, w: &mut CsWriter) {
                 w.write_line("");
                 compile_struct(tcx, item_id.owner_id.def_id, ident.name.as_str(), w);
             }
+            ItemKind::Mod(ident, _) => {
+                w.write_line("");
+                let mod_name = naming::module_name(ident.name.as_str());
+                w.write_line(&format!("public static partial class {mod_name}"));
+                w.write_line("{");
+                w.indent();
+                // Note: nested module items are not yet recursively compiled.
+                // The item iterator above already flattens the module tree;
+                // proper nesting support is a future TODO.
+                w.dedent();
+                w.write_line("}");
+            }
             _ => {}
         }
     }
-
-    w.dedent();
-    w.write_line("}");
 }

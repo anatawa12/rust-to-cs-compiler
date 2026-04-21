@@ -91,7 +91,8 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
 
     fn compile_stmt(&self, stmt: &rustc_middle::mir::Statement<'tcx>, w: &mut CsWriter) {
         match &stmt.kind {
-            StatementKind::Assign(box (place, rvalue)) => {
+            StatementKind::Assign(assign) => {
+                let (place, rvalue) = assign.as_ref();
                 let lhs = self.place_cs(place);
                 let rhs = self.rvalue_cs(rvalue);
                 w.write_line(&format!("{lhs} = {rhs};"));
@@ -192,6 +193,16 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
             TerminatorKind::UnwindResume | TerminatorKind::UnwindTerminate(_) => {
                 w.write_line("throw new global::r2CsRuntime.PanicException(\"unwind\");");
             }
+            TerminatorKind::Assert { cond, expected, target, .. } => {
+                // Runtime assertion (e.g. overflow check).  In debug mode we
+                // could emit a real check; for now just goto the success block.
+                let cond_cs = self.operand_cs(cond);
+                let expected_cs = if *expected { "true" } else { "false" };
+                w.write_line(&format!(
+                    "global::System.Diagnostics.Debug.Assert(({cond_cs}) == {expected_cs});"
+                ));
+                w.write_line(&format!("goto {};", bb_label(*target)));
+            }
             _ => {
                 w.write_line("/* TODO: unsupported terminator */");
             }
@@ -202,29 +213,62 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
 
     fn place_cs(&self, place: &Place<'tcx>) -> String {
         let mut s = local_cs_name(place.local);
+        // Track the accumulated type so we can name struct fields correctly.
+        let mut cur_ty = self.body.local_decls[place.local].ty;
         for proj in place.projection.iter() {
             match proj {
                 PlaceElem::Deref => {
-                    // Ref<T>.AsRef() / ref indirection — just wrap with a comment.
+                    // Ref<T> indirection — transparent in C# representation.
                     s = format!("(*{s})");
+                    // Unwrap reference/pointer for type tracking.
+                    use rustc_middle::ty::TyKind;
+                    cur_ty = match cur_ty.kind() {
+                        TyKind::Ref(_, inner, _) | TyKind::RawPtr(inner, _) => *inner,
+                        _ => cur_ty,
+                    };
                 }
-                PlaceElem::Field(field_idx, ty) => {
-                    // Try to get the field name from the parent type.
-                    let parent_ty = place
-                        .ty(self.body, self.tcx)
-                        .ty;
-                    let name = crate::codegen::expr::field_cs_name_mir(
-                        self.tcx, parent_ty, field_idx.index());
+                PlaceElem::Field(field_idx, field_ty) => {
+                    use rustc_middle::ty::TyKind;
+                    let name = match cur_ty.kind() {
+                        TyKind::Adt(adt_def, _) => {
+                            let variant = adt_def.variant(rustc_abi::VariantIdx::ZERO);
+                            if field_idx.index() < variant.fields.len() {
+                                crate::codegen::naming::field_name(
+                                    variant.fields[field_idx].name.as_str()
+                                )
+                            } else {
+                                format!("f_{}", field_idx.index())
+                            }
+                        }
+                        TyKind::Tuple(_) => {
+                            format!("Item{}", field_idx.index() + 1)
+                        }
+                        TyKind::Closure(..) => {
+                            format!("_{}", field_idx.index())
+                        }
+                        _ => format!("f_{}", field_idx.index()),
+                    };
                     s = format!("{s}.{name}");
+                    cur_ty = field_ty;
                 }
                 PlaceElem::Index(local) => {
-                    s = format!("{s}[{}]", local_cs_name(*local));
+                    s = format!("{s}[{}]", local_cs_name(local));
+                    use rustc_middle::ty::TyKind;
+                    cur_ty = match cur_ty.kind() {
+                        TyKind::Array(inner, _) | TyKind::Slice(inner) => *inner,
+                        _ => cur_ty,
+                    };
                 }
                 PlaceElem::ConstantIndex { offset, .. } => {
                     s = format!("{s}[{offset}]");
                 }
-                PlaceElem::Downcast(_, variant_idx) => {
-                    s = format!("{s} /* downcast variant {} */", variant_idx.index());
+                PlaceElem::Downcast(name, variant_idx) => {
+                    // Downcast selects a variant; in C# we add a cast comment.
+                    if let Some(sym) = name {
+                        s = format!("/* as {sym} */{s}");
+                    } else {
+                        s = format!("/* downcast {} */{s}", variant_idx.index());
+                    }
                 }
                 _ => {
                     s = format!("{s} /* proj */");
@@ -241,14 +285,17 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
                 // In C# we represent borrows as their place directly.
                 self.place_cs(place)
             }
-            Rvalue::BinaryOp(op, box (lhs, rhs)) => {
+            Rvalue::BinaryOp(op, operands) => {
+                let (lhs, rhs) = operands.as_ref();
                 let l = self.operand_cs(lhs);
                 let r = self.operand_cs(rhs);
                 use rustc_middle::mir::BinOp;
+                // WithOverflow variants return a (value, bool) tuple in MIR.
+                // In C# we represent these as (value, false) — no overflow check.
                 let op_str = match op {
-                    BinOp::Add | BinOp::AddUnchecked => "+",
-                    BinOp::Sub | BinOp::SubUnchecked => "-",
-                    BinOp::Mul | BinOp::MulUnchecked => "*",
+                    BinOp::Add | BinOp::AddUnchecked | BinOp::AddWithOverflow => "+",
+                    BinOp::Sub | BinOp::SubUnchecked | BinOp::SubWithOverflow => "-",
+                    BinOp::Mul | BinOp::MulUnchecked | BinOp::MulWithOverflow => "*",
                     BinOp::Div => "/",
                     BinOp::Rem => "%",
                     BinOp::BitAnd => "&",
@@ -262,9 +309,15 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
                     BinOp::Le  => "<=",
                     BinOp::Gt  => ">",
                     BinOp::Ge  => ">=",
-                    _ => "/* BinOp */+",
+                    BinOp::Cmp => return format!("global::r2CsRuntime.Intrinsics.Cmp({l}, {r})"),
+                    BinOp::Offset => return format!("({l} + {r})"),
                 };
-                format!("({l} {op_str} {r})")
+                // WithOverflow ops produce a tuple; emit `(result, false)`.
+                if matches!(op, BinOp::AddWithOverflow | BinOp::SubWithOverflow | BinOp::MulWithOverflow) {
+                    format!("({l} {op_str} {r}, false)")
+                } else {
+                    format!("({l} {op_str} {r})")
+                }
             }
             Rvalue::UnaryOp(op, operand) => {
                 let a = self.operand_cs(operand);
@@ -312,6 +365,11 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
         match op {
             Operand::Copy(place) | Operand::Move(place) => self.place_cs(place),
             Operand::Constant(c) => const_cs(&c.const_),
+            Operand::RuntimeChecks(_) => {
+                // RuntimeChecks is a compile-time flag (overflow/UB checks).
+                // In C# we represent it as a bool literal.
+                "false".into()
+            }
         }
     }
 }
@@ -341,7 +399,7 @@ fn const_cs(c: &rustc_middle::mir::Const<'_>) -> String {
                     match scalar {
                         Scalar::Int(si) => {
                             // Extract the raw bit pattern.
-                            let bits = si.to_bits(si.size()).unwrap_or(0);
+                            let bits = si.to_bits(si.size());
                             format!("{bits}")
                         }
                         Scalar::Ptr(_, _) => "/* ptr const */default".into(),
