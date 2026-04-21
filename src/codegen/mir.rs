@@ -55,13 +55,13 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
         }
     }
 
-    /// Declare local variables (skip _0 = return, _1.._arg_count = params).
+    /// Declare local variables (skip _1.._arg_count = params; always declare _0 = return).
     fn emit_local_decls(&self, w: &mut CsWriter) {
         let arg_count = self.body.arg_count;
         for (local, decl) in self.body.local_decls.iter_enumerated() {
             let idx = local.index();
-            if idx == 0 || (idx >= 1 && idx <= arg_count) {
-                continue; // return slot / params already in signature
+            if idx >= 1 && idx <= arg_count {
+                continue; // params already in signature
             }
             let ty_str = ty_to_cs(self.tcx, decl.ty)
                 .unwrap_or_else(|| "object /* unknown */".into());
@@ -385,11 +385,36 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
                         let adt_def = self.tcx.adt_def(*def_id);
                         let variant = &adt_def.variant(*variant_idx);
                         let ty_str = crate::codegen::types::def_id_to_cs_path(self.tcx, *def_id);
-                        let mut field_inits = Vec::new();
-                        for (field, op) in variant.fields.iter().zip(fields.iter()) {
-                            let f_name = crate::codegen::naming::field_name(field.name.as_str());
-                            let val = self.operand_cs(op);
-                            field_inits.push(format!("{f_name} = {val}"));
+                        let mut field_inits: Vec<String> = Vec::new();
+
+                        if adt_def.is_enum() {
+                            // Enum construction: set discriminant + payload wrapper field.
+                            let v_idx = variant_idx.index();
+                            let vname = variant.name.as_str();
+                            field_inits.push(format!("f_discriminant = {v_idx}"));
+                            if !variant.fields.is_empty() {
+                                // Build the inner payload struct.
+                                let payload_ty = format!("{ty_str}_{vname}");
+                                let inner_fields: Vec<String> = variant.fields.iter()
+                                    .zip(fields.iter())
+                                    .map(|(f, op)| {
+                                        let fname = crate::codegen::naming::field_name(f.name.as_str());
+                                        let val = self.operand_cs(op);
+                                        format!("{fname} = {val}")
+                                    })
+                                    .collect();
+                                field_inits.push(format!(
+                                    "f_{vname} = new {payload_ty} {{ {} }}",
+                                    inner_fields.join(", ")
+                                ));
+                            }
+                        } else {
+                            // Struct construction.
+                            for (field, op) in variant.fields.iter().zip(fields.iter()) {
+                                let f_name = crate::codegen::naming::field_name(field.name.as_str());
+                                let val = self.operand_cs(op);
+                                field_inits.push(format!("{f_name} = {val}"));
+                            }
                         }
                         format!("new {ty_str} {{ {} }}", field_inits.join(", "))
                     }
