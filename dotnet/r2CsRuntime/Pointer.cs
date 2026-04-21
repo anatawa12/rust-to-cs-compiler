@@ -75,12 +75,17 @@ public readonly struct Pointer<T>
 }
 
 /// <summary>
-/// Represents a Rust raw fat pointer to a slice
-/// (<c>*const [T]</c> or <c>*mut [T]</c>).
+/// Represents a Rust raw fat pointer to an unsized type
+/// (<c>*const T</c> or <c>*mut T</c> where <c>T: ?Sized</c>).
 ///
 /// Internal representation is identical to <see cref="LenRef{T}"/>.
+/// For slice fat pointers (<c>*const [T]</c> / <c>*mut [T]</c>) use
+/// <c>LenPointer&lt;<see cref="Slice{T}"/>&gt;</c>; element access is provided
+/// by <see cref="SliceExt"/> extension methods.
 /// </summary>
-/// <typeparam name="T">The element type.</typeparam>
+/// <typeparam name="T">
+/// The unsized pointee type.  Use <see cref="Slice{T}"/> for plain slice pointers.
+/// </typeparam>
 public readonly struct LenPointer<T>
 {
     public readonly object? Target;
@@ -101,20 +106,6 @@ public readonly struct LenPointer<T>
         Length = length;
     }
 
-    /// <summary>Dereferences element at <paramref name="index"/>.</summary>
-    public unsafe ref T Deref(nint index)
-    {
-        nint elementOffset = Offset + index * Unsafe.SizeOf<T>();
-        if (Target == null)
-        {
-#pragma warning disable CS8500
-            return ref *(T*)elementOffset;
-#pragma warning restore CS8500
-        }
-        ref byte dataStart = ref RawData.GetDataRef(Target!);
-        return ref Unsafe.As<byte, T>(ref Unsafe.AddByteOffset(ref dataStart, elementOffset));
-    }
-
     /// <summary>Converts this raw pointer to a <see cref="LenRef{T}"/>.</summary>
     public LenRef<T> AsRef() =>
         Target == null
@@ -123,9 +114,6 @@ public readonly struct LenPointer<T>
 
     /// <summary>A null pointer constant.</summary>
     public static LenPointer<T> Null => new LenPointer<T>(0, 0);
-    // Note: AsSpan() is intentionally omitted — see LenRef<T> for the same
-    // rationale (MemoryMarshal.CreateSpan not exposed by netstandard2.0
-    // reference assemblies).
 }
 
 /// <summary>
@@ -134,8 +122,8 @@ public readonly struct LenPointer<T>
 ///
 /// Internal representation is identical to <see cref="DynRef{TVtable}"/>.
 /// </summary>
-/// <typeparam name="TVtable">The vtable struct type.</typeparam>
-public readonly struct DynPointer<TVtable> where TVtable : struct
+/// <typeparam name="TVtable">The <c>T_</c>-prefixed trait interface type.</typeparam>
+public readonly struct DynPointer<TVtable>
 {
     public readonly object? Target;
     public readonly nint Offset;

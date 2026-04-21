@@ -144,17 +144,43 @@ public static class RefHelper
     /// inside the heap object <paramref name="owner"/>, with the given
     /// <paramref name="length"/>.
     ///
+    /// <para>Use <see cref="FromHeapSlice{TOwner,T}"/> for plain slices (<c>&amp;[T]</c>)
+    /// and this method for DST-struct fat references where <typeparamref name="TDst"/>
+    /// is the outer struct type.</para>
+    /// </summary>
+    public static LenRef<TDst> FromHeapLenRef<TOwner, TDst>(TOwner owner, ref TDst startField, nint length)
+        where TOwner : class
+    {
+        ref byte dataStart = ref RawData.GetDataRef(owner);
+        nint offset = Unsafe.ByteOffset(
+            ref dataStart,
+            ref Unsafe.As<TDst, byte>(ref startField));
+        return new LenRef<TDst>(owner, offset, length);
+    }
+
+    /// <summary>
+    /// Creates a <c>LenRef&lt;Slice&lt;T&gt;&gt;</c> that represents a <c>&amp;[T]</c>
+    /// slice starting at <paramref name="firstElement"/> inside the heap object
+    /// <paramref name="owner"/>.
+    ///
     /// <para>Typically used when taking a slice of a heap-allocated array field
     /// or an inline array field in a struct.</para>
+    ///
+    /// <para>Example (generated code pattern):
+    /// <code>
+    /// var r = RefHelper.FromHeapSlice(obj, ref obj.f_arr_0, length: 3);
+    /// r.GetElement(1) = 42;
+    /// </code>
+    /// </para>
     /// </summary>
-    public static LenRef<T> FromHeapLenRef<TOwner, T>(TOwner owner, ref T firstElement, nint length)
+    public static LenRef<Slice<T>> FromHeapSlice<TOwner, T>(TOwner owner, ref T firstElement, nint length)
         where TOwner : class
     {
         ref byte dataStart = ref RawData.GetDataRef(owner);
         nint offset = Unsafe.ByteOffset(
             ref dataStart,
             ref Unsafe.As<T, byte>(ref firstElement));
-        return new LenRef<T>(owner, offset, length);
+        return new LenRef<Slice<T>>(owner, offset, length);
     }
 
     /// <summary>
