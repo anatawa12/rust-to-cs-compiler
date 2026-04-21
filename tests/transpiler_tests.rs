@@ -82,6 +82,7 @@ fn transpile_inputs_and_run_dotnet_tests() {
         "tests/inputs/pattern_match.rs",
         "tests/inputs/calculator.rs",
         "tests/inputs/borrowing.rs",
+        "tests/inputs/tuples.rs",
     ];
     for rel in &inputs {
         let input = root.join(rel);
