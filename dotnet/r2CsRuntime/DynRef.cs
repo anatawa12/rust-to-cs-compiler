@@ -9,6 +9,7 @@ namespace r2CsRuntime;
 ///
 /// <para><strong>Memory model</strong></para>
 /// <c>DynRef&lt;TVtable&gt; = (object? Target, nint Offset, TVtable Vtable)</c>
+///
 /// <list type="table">
 ///   <listheader><term>Field</term><description>Meaning</description></listheader>
 ///   <item>
@@ -18,37 +19,41 @@ namespace r2CsRuntime;
 ///   <item>
 ///     <term><see cref="Vtable"/></term>
 ///     <description>
-///       An instance of the <em>trait-static-interface</em> struct (prefixed
-///       <c>S_</c> per naming convention) that carries all vtable entries.
-///       Because <typeparamref name="TVtable"/> is a zero-sized struct whose
-///       methods are monomorphised by the JIT, virtual-dispatch overhead
-///       is eliminated ("JIT monopolization").
+///       A reference to a <c>T_</c>-prefixed trait interface instance (the vtable).
+///       Each concrete <c>S_</c>-prefixed vtable struct implements the <c>T_</c>
+///       interface and is stored here (boxed as the interface type).
+///       This makes <c>DynRef&lt;TVtable&gt;</c> exactly 3 pointer-sizes:
+///       Target (ptr) + Offset (ptr/nint) + Vtable (interface ref = ptr).
 ///     </description>
 ///   </item>
 /// </list>
 ///
 /// <para><strong>Dispatch pattern</strong></para>
-/// To call a method through a <c>DynRef</c>, generated code casts the
-/// erased <see cref="Ref{Void}"/> data pointer to the concrete type and
-/// invokes the vtable method:
+/// T_ interface methods receive the full <c>DynRef&lt;T_Trait&gt;</c> as their
+/// self parameter, because the caller only holds the fat pointer and does not
+/// know the concrete underlying type.  The vtable method uses
+/// <see cref="AsConcreteRef{T}"/> to recover the concrete data reference.
 /// <code>
-/// // vtable method signature (conceptual):
-/// void S_Foo_for_s_Bar.m_some_method(Ref&lt;Void&gt; self, ...)
-/// {
-///     ref s_Bar concrete = ref Unsafe.As&lt;Void, s_Bar&gt;(ref self.AsRef());
-///     concrete.m_some_method_impl(...);
-/// }
-/// </code>
+/// // Trait interface (T_ prefix):
+/// interface T_Greet { string m_greet(DynRef&lt;T_Greet&gt; self); }
 ///
-/// <para>Design note: <typeparamref name="TVtable"/> is constrained to
-/// <c>struct</c> to ensure zero-size allocation and enable JIT devirtualisation.
-/// The actual vtable type is the <c>T_</c>-prefixed interface; each
-/// <c>S_</c>-prefixed struct for a specific impl carries the method bodies.</para>
+/// // Vtable struct (S_ prefix), one per impl:
+/// struct S_Greet_for_s_Point : T_Greet {
+///     string T_Greet.m_greet(DynRef&lt;T_Greet&gt; self) {
+///         ref s_Point p = ref self.AsConcreteRef&lt;s_Point&gt;();
+///         return p.m_greet_impl();
+///     }
+/// }
+///
+/// // Creating and calling:
+/// DynRef&lt;T_Greet&gt; r = new(obj, offset, new S_Greet_for_s_Point());
+/// string result = r.Vtable.m_greet(r);   // pass the full DynRef as self
+/// </code>
 /// </summary>
 /// <typeparam name="TVtable">
-/// The vtable struct type, which implements the <c>T_</c>-prefixed trait interface.
+/// The <c>T_</c>-prefixed trait interface type (e.g. <c>T_Greet</c>).
 /// </typeparam>
-public readonly struct DynRef<TVtable> where TVtable : struct
+public readonly struct DynRef<TVtable>
 {
     /// <summary>Owning heap object, or <c>null</c> for a stack reference.</summary>
     public readonly object? Target;
@@ -57,7 +62,8 @@ public readonly struct DynRef<TVtable> where TVtable : struct
     public readonly nint Offset;
 
     /// <summary>
-    /// Zero-sized vtable struct that implements the trait's static interface.
+    /// Reference to the vtable interface instance (an <c>S_</c>-prefixed struct
+    /// boxed as a <c>T_</c>-prefixed interface).
     /// Call methods on this field to dispatch trait methods.
     /// </summary>
     public readonly TVtable Vtable;
@@ -80,8 +86,7 @@ public readonly struct DynRef<TVtable> where TVtable : struct
 
     /// <summary>
     /// Returns the data location as an erased <see cref="Ref{Void}"/>.
-    /// Vtable method implementations reinterpret-cast this to their concrete
-    /// type with <c>Unsafe.As&lt;Void, s_ConcreteType&gt;(ref dataRef.AsRef())</c>.
+    /// Vtable method implementations reinterpret-cast this to their concrete type.
     /// </summary>
     public Ref<Void> AsVoidRef() =>
         Target == null
@@ -89,8 +94,8 @@ public readonly struct DynRef<TVtable> where TVtable : struct
             : new Ref<Void>(Target!, Offset);
 
     /// <summary>
-    /// Reinterprets the data as a <see cref="Ref{T}"/> to a specific concrete
-    /// type. Used inside vtable method bodies.
+    /// Reinterprets the data as a <see cref="Ref{T}"/> to a specific concrete type.
+    /// Used inside vtable method bodies.
     ///
     /// <para><strong>Unsafe:</strong> the caller must guarantee that the
     /// underlying data is actually of type <typeparamref name="T"/>.</para>
