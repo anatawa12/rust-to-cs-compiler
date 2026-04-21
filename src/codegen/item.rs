@@ -134,15 +134,19 @@ pub fn compile_crate(tcx: TyCtxt<'_>, w: &mut CsWriter) {
     w.write_line("{");
     w.indent();
 
-    compile_module_items(tcx, rustc_hir::def_id::LOCAL_CRATE.as_def_id(), w);
+    // Recursively compile the crate root module.
+    compile_module(tcx, rustc_hir::def_id::LocalModDefId::CRATE_DEF_ID, w);
 
     w.dedent();
     w.write_line("}");
 }
 
-/// Recursively compile all items inside a module.
-fn compile_module_items(tcx: TyCtxt<'_>, _mod_def_id: rustc_hir::def_id::DefId, w: &mut CsWriter) {
-    for item_id in tcx.hir_crate_items(()).free_items() {
+/// Recursively compile the items in a single HIR module into a C# static class.
+fn compile_module(tcx: TyCtxt<'_>, module_id: rustc_hir::def_id::LocalModDefId, w: &mut CsWriter) {
+    let mod_items = tcx.hir_module_items(module_id);
+
+    // Emit free items (fns, structs, enums, …).
+    for item_id in mod_items.free_items() {
         let item = tcx.hir_item(item_id);
         match item.kind {
             ItemKind::Fn { ident, .. } => {
@@ -159,9 +163,11 @@ fn compile_module_items(tcx: TyCtxt<'_>, _mod_def_id: rustc_hir::def_id::DefId, 
                 w.write_line(&format!("public static partial class {mod_name}"));
                 w.write_line("{");
                 w.indent();
-                // Note: nested module items are not yet recursively compiled.
-                // The item iterator above already flattens the module tree;
-                // proper nesting support is a future TODO.
+                // Recurse into the sub-module.
+                let sub_mod_id = rustc_hir::def_id::LocalModDefId::new_unchecked(
+                    item_id.owner_id.def_id
+                );
+                compile_module(tcx, sub_mod_id, w);
                 w.dedent();
                 w.write_line("}");
             }

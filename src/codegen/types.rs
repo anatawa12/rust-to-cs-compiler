@@ -131,43 +131,38 @@ fn adt_to_cs<'tcx>(
 /// Converts a `DefId` (struct / enum definition) to its fully-qualified C# path,
 /// following the naming conventions (module → `mod_`, struct → `s_`).
 pub fn def_id_to_cs_path(tcx: TyCtxt<'_>, def_id: rustc_hir::def_id::DefId) -> String {
-    // Collect crate + module path segments.
-    let mut segments: Vec<String> = Vec::new();
     use crate::codegen::naming;
+    use rustc_hir::definitions::DefPathData;
 
-    // Crate name becomes the root partial-class namespace.
+    // Crate name becomes the root partial-class: `mod_<crate>`.
     let crate_name = tcx.crate_name(def_id.krate);
-    segments.push(crate_name.to_string());
+    let mut segments: Vec<String> = vec![naming::module_name(crate_name.as_str())];
 
-    // Walk module ancestors (skip the crate root and the item itself).
-    let module_path = tcx.def_path(def_id);
-    let data = module_path.data;
+    let path = tcx.def_path(def_id);
+    let data = &path.data;
 
-    // The last element is the item name; everything before is modules.
     for (i, seg) in data.iter().enumerate() {
-        use rustc_hir::definitions::DefPathData;
+        let is_last = i + 1 == data.len();
         match &seg.data {
             DefPathData::TypeNs(sym) => {
                 let s = sym.as_str();
-                if i + 1 == data.len() {
-                    // The item itself — use struct prefix.
+                if is_last {
+                    // Final segment — struct (or enum) name.
                     segments.push(naming::struct_name(s));
                 } else {
-                    // Intermediate type (e.g. an impl block container) — keep as-is.
-                    segments.push(naming::struct_name(s));
+                    // Intermediate module-like namespace.
+                    segments.push(naming::module_name(s));
                 }
             }
             DefPathData::ValueNs(sym) => {
-                segments.push(naming::struct_name(sym.as_str()));
+                // Free function or constant.
+                segments.push(naming::method_name(sym.as_str()));
             }
             DefPathData::MacroNs(sym) => {
                 segments.push(sym.to_string());
             }
-            DefPathData::Impl => {
-                // impl blocks don't add a name segment.
-            }
-            DefPathData::CrateRoot => {
-                // Already handled by crate_name above.
+            DefPathData::Impl | DefPathData::CrateRoot => {
+                // Impl blocks and the crate root don't add segments.
             }
             _ => {}
         }
