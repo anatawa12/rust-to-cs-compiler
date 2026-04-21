@@ -147,7 +147,7 @@ match guard 等の特殊スコープは **Rustの動作を再現する**。
 
 ---
 
-# Borrow / Ref
+# Ref
 
 共通表現
 
@@ -161,6 +161,29 @@ Ref<T> = (object? target, nint offset)
 |---------------| ---------- | ---------------- |
 | on-heap field | object     | field offset     |
 | stack         | null       | absolute pointer |
+
+# Unsized Ref
+
+## slices
+
+sliceが最後のフィールドであるstructも同様
+
+```
+LenRef<T> = (object? target, nint offset, nint len)
+```
+
+## dyn Trait
+
+dyn traitが最後のフィールドであるstructも同様
+
+```
+DynRef<T> = (object? target, nint offset, T vtable)
+```
+
+Tは`trait interfaces for static members`。
+実際に作る際には defualt(structs for trait static memers)を渡す。
+
+trait interfaces for static membersのdyn部分はRef<Void>で関数内でRef<s_Struct>に強制キャストする
 
 ---
 
@@ -190,14 +213,14 @@ offset = stack address
 それ以外
 
 ```
-Box<T>
+class Var<T>
 ```
 
 > **Note**: `async fn` 内のローカル変数は、コンパイラが生成する async state machine（ヒープオブジェクト）に
 > 格納されるため、実態はスタック上に存在しない。
 > stack borrow 解析では `async fn` のローカルを「スタック変数ではない」として扱い、
 > `await` を跨ぐ判定とは独立して stack borrow に分類しないこと。
-> これらの変数への参照は heap borrow として `Box<T>` 経由で扱う。
+> これらの変数への参照は heap borrow として `Var<T>` 経由で扱う。
 
 ---
 
@@ -211,8 +234,12 @@ Box<T>
 内部表現
 
 ```
-Ref<T>
+Pointer<T>
+LenPointer<T>
+DynPointer<T>
 ```
+
+中身はRef<T>と同様
 
 制限
 
@@ -237,18 +264,13 @@ with_addr
 
 # struct / enum
 
-Rust `struct` は C# `struct` にマップする。
-
-Rust `enum` は後述の class hierarchy にマップする（`struct` ではない）。
+Rust `struct` ・ `enum` は C# `struct` にマップする。
 
 ただし以下の型は **ヒープオブジェクトとして実装される**
 
 ```
-enum
 closure environment
 async state machine
-dyn trait object
-Box
 ```
 
 ---
@@ -267,25 +289,13 @@ enum E {
 C#
 
 ```
-// #nullable enable が前提。Rust enum は null にならないため非 null 参照として扱う。
-abstract class e_E
-
-class e_E_A : e_E
-
-class e_E_B : e_E {
-    X
+struct s_E {
+    public int tag;
+    public x f_0;
 }
 ```
 
-pattern match
-
-```
-switch / is
-```
-
-> **Note**: Rust の enum は値型だが、C# では参照型 (class) にマップされる。
-> 生成コードは `#nullable enable` のもとで動作し、enum 変数は常に非 null であることを前提とする。
-> null が紛れ込まないよう、コンストラクタ以外で null を代入しない。
+(f_0はAのときに使われない)
 
 ---
 
@@ -378,13 +388,7 @@ Rust
 dyn Trait
 ```
 
-は
-
-```
-object safe subset interface
-```
-
-を生成して実装する。
+は empty structs for trait static memers をvtableとして使用する
 
 ---
 
@@ -665,10 +669,9 @@ struct S_A : T_Static {
 
 - modules ⇒ replaced with partial class with `mod_` prefix
 - structs ⇒ struct with `s_` prefix
-- structs for trait static memers ⇒ `S_` prefix (at same module)
+- empty structs for trait static memers ⇒ `S_` prefix (at same module)
 - non-dyn trait interfaces ⇒ interface with `t_` prefix
-- non-dyn trait interfaces for static members => `T_` prefix
-- dyn trait interfaces ⇒ interface with `d_` prefix
+- trait interfaces for static members (including dyn support) => `T_` prefix
 - generic parameter represents associated type of trait ⇒ `A_` prefix
 - generic parameter represents self of trait => `Self`
 - generic parameter represents generic parameter => `P_` prefix
