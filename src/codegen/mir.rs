@@ -421,9 +421,12 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
                             let vname = variant.name.as_str();
                             field_inits.push(format!("f_discriminant = {v_idx}"));
                             if !variant.fields.is_empty() {
-                                // Build the inner payload struct.
+                                // The payload struct is nested inside the enum struct:
+                                // e.g. `s_Shape.s_Shape_Circle` not `s_Shape_Circle`.
                                 let base_ty = crate::codegen::types::def_id_to_cs_path(self.tcx, *def_id);
-                                let payload_ty = format!("{base_ty}_{vname}");
+                                let enum_short = base_ty.split('.').last().unwrap_or("").to_string();
+                                let payload_inner = format!("{enum_short}_{vname}");
+                                let payload_ty = format!("{base_ty}.{payload_inner}");
                                 let inner_fields: Vec<String> = variant.fields.iter()
                                     .zip(fields.iter())
                                     .map(|(f, op)| {
