@@ -381,10 +381,19 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
                             .collect();
                         format!("({})", parts.join(", "))
                     }
-                    AggregateKind::Adt(def_id, variant_idx, _, _, _) => {
+                    AggregateKind::Adt(def_id, variant_idx, substs, _, _) => {
                         let adt_def = self.tcx.adt_def(*def_id);
                         let variant = &adt_def.variant(*variant_idx);
-                        let ty_str = crate::codegen::types::def_id_to_cs_path(self.tcx, *def_id);
+                        // Use the substituted type path (includes generic args like <int, bool>).
+                        let ty_str = {
+                            let ty = rustc_middle::ty::Ty::new_adt(
+                                self.tcx, adt_def, substs
+                            );
+                            crate::codegen::types::ty_to_cs(self.tcx, ty)
+                                .unwrap_or_else(|| {
+                                    crate::codegen::types::def_id_to_cs_path(self.tcx, *def_id)
+                                })
+                        };
                         let mut field_inits: Vec<String> = Vec::new();
 
                         if adt_def.is_enum() {
@@ -394,7 +403,8 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
                             field_inits.push(format!("f_discriminant = {v_idx}"));
                             if !variant.fields.is_empty() {
                                 // Build the inner payload struct.
-                                let payload_ty = format!("{ty_str}_{vname}");
+                                let base_ty = crate::codegen::types::def_id_to_cs_path(self.tcx, *def_id);
+                                let payload_ty = format!("{base_ty}_{vname}");
                                 let inner_fields: Vec<String> = variant.fields.iter()
                                     .zip(fields.iter())
                                     .map(|(f, op)| {

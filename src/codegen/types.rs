@@ -79,6 +79,13 @@ pub fn ty_to_cs<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<String> {
             }
         }
 
+        // ── arrays ────────────────────────────────────────────────────────
+        TyKind::Array(elem, _len) => {
+            let cs_elem = ty_to_cs(tcx, *elem)?;
+            // Rust fixed-size arrays → C# arrays (no size encoding at type level).
+            format!("{cs_elem}[]")
+        }
+
         // ── slices (bare, e.g. as DST tail) ──────────────────────────────
         TyKind::Slice(elem) => {
             let cs_elem = ty_to_cs(tcx, *elem)?;

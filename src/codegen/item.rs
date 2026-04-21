@@ -105,9 +105,10 @@ pub fn compile_struct(
     let cs_name = naming::struct_name(struct_name);
     let adt_def = tcx.adt_def(def_id);
     let variant = adt_def.non_enum_variant();
+    let generics_str = cs_generic_params(tcx, def_id.to_def_id());
 
     // Always emit `partial` so that an `impl` block extension can be added later.
-    w.write_line(&format!("public partial struct {cs_name}"));
+    w.write_line(&format!("public partial struct {cs_name}{generics_str}"));
     w.write_line("{");
     w.indent();
 
@@ -147,8 +148,9 @@ pub fn compile_enum(
 ) {
     let cs_name = naming::struct_name(enum_name);
     let adt_def = tcx.adt_def(def_id);
+    let generics_str = cs_generic_params(tcx, def_id.to_def_id());
 
-    w.write_line(&format!("public partial struct {cs_name}"));
+    w.write_line(&format!("public partial struct {cs_name}{generics_str}"));
     w.write_line("{");
     w.indent();
 
@@ -292,26 +294,28 @@ fn compile_impl<'hir>(
     impl_block: &rustc_hir::Impl<'hir>,
     w: &mut CsWriter,
 ) {
-    // Determine the C# class name from the self type.
-    let self_ty_name = {
+    // Determine the C# class name from the self type, including generic params.
+    let (self_ty_name, generics_str) = {
         use rustc_hir::TyKind;
         match impl_block.self_ty.kind {
             TyKind::Path(rustc_hir::QPath::Resolved(_, path)) => {
                 if let Some(def_id) = path.res.opt_def_id() {
-                    crate::codegen::types::def_id_to_cs_path(tcx, def_id)
+                    let base = crate::codegen::types::def_id_to_cs_path(tcx, def_id)
                         .split('.')
                         .last()
                         .unwrap_or("Impl")
-                        .to_string()
+                        .to_string();
+                    let gparams = cs_generic_params(tcx, def_id);
+                    (base, gparams)
                 } else {
-                    "Impl".to_string()
+                    ("Impl".to_string(), String::new())
                 }
             }
-            _ => "Impl".to_string(),
+            _ => ("Impl".to_string(), String::new()),
         }
     };
 
-    w.write_line(&format!("public partial struct {self_ty_name}"));
+    w.write_line(&format!("public partial struct {self_ty_name}{generics_str}"));
     w.write_line("{");
     w.indent();
 
@@ -479,5 +483,29 @@ fn eval_const_to_cs(tcx: TyCtxt<'_>, def_id: rustc_hir::def_id::DefId) -> String
         | Err(rustc_middle::mir::interpret::ErrorHandled::TooGeneric(_)) => {
             "/* unevaluated */default".into()
         }
+    }
+}
+
+/// Returns the C# generic parameter list for a definition, e.g. `<T, U>`.
+/// Returns an empty string if there are no type parameters.
+fn cs_generic_params(tcx: TyCtxt<'_>, def_id: rustc_hir::def_id::DefId) -> String {
+    let generics = tcx.generics_of(def_id);
+    let type_params: Vec<String> = generics
+        .own_params
+        .iter()
+        .filter_map(|p| {
+            use rustc_middle::ty::GenericParamDefKind;
+            match p.kind {
+                GenericParamDefKind::Type { .. } => {
+                    Some(crate::codegen::naming::generic_param_name(p.name.as_str()))
+                }
+                _ => None,
+            }
+        })
+        .collect();
+    if type_params.is_empty() {
+        String::new()
+    } else {
+        format!("<{}>", type_params.join(", "))
     }
 }
