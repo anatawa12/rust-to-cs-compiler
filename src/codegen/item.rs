@@ -437,8 +437,6 @@ fn compile_type_alias(
 
 /// Evaluate a constant / static initializer and return a C# literal string.
 fn eval_const_to_cs(tcx: TyCtxt<'_>, def_id: rustc_hir::def_id::DefId) -> String {
-    use rustc_middle::mir::interpret::{ErrorHandled, GlobalAlloc};
-
     // Try to evaluate the constant.
     let instance = rustc_middle::ty::Instance::mono(tcx, def_id);
     let result = tcx.const_eval_instance(

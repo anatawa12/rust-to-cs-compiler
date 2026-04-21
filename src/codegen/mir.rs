@@ -470,9 +470,9 @@ fn const_cs<'tcx>(tcx: TyCtxt<'tcx>, c: &rustc_middle::mir::Const<'tcx>) -> Stri
     match c {
         Const::Ty(_, ty_const) => {
             // Constants from the type system (e.g. generic const params).
-            // Try to evaluate if it's a known value.
-            if let Some(val) = ty_const.try_to_scalar() {
-                let bits = val.to_bits(val.size()).unwrap_or(0);
+            // `try_to_leaf` gives a ScalarInt whose bits we can read directly.
+            if let Some(si) = ty_const.try_to_leaf() {
+                let bits = si.to_bits_unchecked();
                 return format!("{bits}");
             }
             "/* ty const */default".into()
