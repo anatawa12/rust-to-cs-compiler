@@ -344,8 +344,13 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
                     BinOp::BitAnd => "&",
                     BinOp::BitOr  => "|",
                     BinOp::BitXor => "^",
-                    BinOp::Shl | BinOp::ShlUnchecked => "<<",
-                    BinOp::Shr | BinOp::ShrUnchecked => ">>",
+                    // C# requires the shift count to be int.
+                    BinOp::Shl | BinOp::ShlUnchecked => {
+                        return format!("({l} << (int){r})");
+                    }
+                    BinOp::Shr | BinOp::ShrUnchecked => {
+                        return format!("({l} >> (int){r})");
+                    }
                     BinOp::Eq  => "==",
                     BinOp::Ne  => "!=",
                     BinOp::Lt  => "<",
