@@ -236,6 +236,86 @@ fn find_impl_def_id(
 
 // ── primitive helpers ─────────────────────────────────────────────────────
 
+/// Converts a resolved function `Instance` to its fully-qualified C# method path.
+///
+/// Unlike `def_id_to_cs_path`, this version also appends the concrete generic
+/// type arguments for the *enclosing type* when the function lives inside an impl.
+/// For example `Pair::<int, long>::swap` becomes `global::mod_crate.s_Pair<int, long>.m_swap`.
+pub fn fn_instance_to_cs_path<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    instance: &ty::Instance<'tcx>,
+) -> String {
+    use crate::codegen::naming;
+    use rustc_hir::definitions::DefPathData;
+
+    let def_id = instance.def.def_id();
+    let crate_name = tcx.crate_name(def_id.krate);
+    let mut segments: Vec<String> = vec![naming::module_name(crate_name.as_str())];
+
+    let path = tcx.def_path(def_id);
+    let data = &path.data;
+
+    let mut i = 0;
+    while i < data.len() {
+        let seg = &data[i];
+        let is_last = i + 1 == data.len();
+        match &seg.data {
+            DefPathData::TypeNs(sym) => {
+                let s = sym.as_str();
+                if is_last {
+                    segments.push(naming::struct_name(s));
+                } else {
+                    segments.push(naming::module_name(s));
+                }
+            }
+            DefPathData::ValueNs(sym) => {
+                segments.push(naming::method_name(sym.as_str()));
+            }
+            DefPathData::MacroNs(sym) => {
+                segments.push(sym.to_string());
+            }
+            DefPathData::Impl => {
+                if let Some(impl_def_id) = find_impl_def_id(tcx, def_id, i) {
+                    let self_ty = tcx.type_of(impl_def_id)
+                        .instantiate(tcx, instance.args)
+                        .skip_normalization();
+                    use rustc_middle::ty::TyKind;
+                    if let TyKind::Adt(adt_def, adt_args) = self_ty.kind() {
+                        let adt_path = tcx.def_path(adt_def.did());
+                        if let Some(last) = adt_path.data.last() {
+                            if let DefPathData::TypeNs(sym) = &last.data {
+                                let base_name = naming::struct_name(sym.as_str());
+                                // Add generic args if any.
+                                if adt_args.is_empty() {
+                                    segments.push(base_name);
+                                } else {
+                                    let cs_args: Vec<String> = adt_args
+                                        .iter()
+                                        .filter_map(|arg| match arg.kind() {
+                                            ty::GenericArgKind::Type(t) => ty_to_cs(tcx, t),
+                                            _ => None,
+                                        })
+                                        .collect();
+                                    if cs_args.is_empty() {
+                                        segments.push(base_name);
+                                    } else {
+                                        segments.push(format!("{base_name}<{}>", cs_args.join(", ")));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            DefPathData::CrateRoot => {}
+            _ => {}
+        }
+        i += 1;
+    }
+
+    format!("global::{}", segments.join("."))
+}
+
 /// Public helper so `mir.rs` can format a signed-int cast in constants.
 pub fn int_ty_cs(k: &ty::IntTy) -> String {
     int_ty(k)

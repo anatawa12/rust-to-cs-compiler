@@ -73,6 +73,7 @@ fn transpile_inputs_and_run_dotnet_tests() {
         "tests/inputs/calls.rs",
         "tests/inputs/traits.rs",
         "tests/inputs/recursion.rs",
+        "tests/inputs/generics.rs",
     ];
     for rel in &inputs {
         let input = root.join(rel);

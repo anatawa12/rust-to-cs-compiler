@@ -584,12 +584,14 @@ fn const_cs<'tcx>(tcx: TyCtxt<'tcx>, c: &rustc_middle::mir::Const<'tcx>) -> Stri
                                 *def_id,
                                 substs,
                             );
-                            let resolved_def_id = match instance {
-                                Ok(Some(inst)) => inst.def.def_id(),
-                                _ => *def_id,
-                            };
-                            // Emit the fully-qualified C# method reference.
-                            crate::codegen::types::def_id_to_cs_path(tcx, resolved_def_id)
+                            match instance {
+                                Ok(Some(inst)) => {
+                                    crate::codegen::types::fn_instance_to_cs_path(tcx, &inst)
+                                }
+                                _ => {
+                                    crate::codegen::types::def_id_to_cs_path(tcx, *def_id)
+                                }
+                            }
                         }
                         _ => "default".into(),
                     }
