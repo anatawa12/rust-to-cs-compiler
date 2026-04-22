@@ -98,6 +98,34 @@ fn transpile_inputs_and_run_dotnet_tests() {
         transpile(&input, &out_dir);
     }
 
+    // Remove any stale .cs files in Generated/ that weren't just generated.
+    // This prevents old files (e.g. from removed test inputs) from causing build errors.
+    let expected_stems: std::collections::HashSet<String> = inputs
+        .iter()
+        .map(|rel| {
+            PathBuf::from(rel)
+                .file_stem()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    if let Ok(entries) = std::fs::read_dir(&out_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) == Some("cs") {
+                let stem = path
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned();
+                if !expected_stems.contains(&stem) {
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+        }
+    }
+
     // Run dotnet test on the compiler-tests project.
     let project = root.join("dotnet/r2CsCompilerTests");
     let status = Command::new("dotnet")
