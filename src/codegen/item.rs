@@ -537,12 +537,20 @@ fn compile_impl<'hir>(
     // Each `impl Trait for Type` block emits a `partial struct` declaration
     // that carries the interface.  C# allows multiple partial declarations
     // for the same struct, each adding different interfaces.
+    // Only local traits are emitted as C# interfaces; external traits (Drop,
+    // Clone, Iterator, etc.) have no corresponding generated interface.
     let trait_clause = if let Some(trait_ref) = impl_block.of_trait {
         if let Some(last_seg) = trait_ref.trait_ref.path.segments.last() {
-            let iface_name = naming::trait_iface_name(last_seg.ident.name.as_str());
-            // Substitute Self with the concrete type (including its own generics).
-            let cs_self = format!("{self_ty_name}{generics_str}");
-            format!(" : {iface_name}<{cs_self}>")
+            let trait_is_local = trait_ref.trait_ref.path.res
+                .opt_def_id()
+                .map_or(false, |id| id.is_local());
+            if trait_is_local {
+                let iface_name = naming::trait_iface_name(last_seg.ident.name.as_str());
+                let cs_self = format!("{self_ty_name}{generics_str}");
+                format!(" : {iface_name}<{cs_self}>")
+            } else {
+                String::new()
+            }
         } else {
             String::new()
         }

@@ -229,13 +229,17 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
                 }
             }
             TerminatorKind::Drop { place, target, .. } => {
-                // Emit a call to the drop glue if the type implements Drop.
-                let place_cs = self.place_cs(place);
+                // If the type has an explicit `Drop` impl, call the generated
+                // static `m_drop` method.  Otherwise there is nothing to do.
                 let ty = place.ty(self.body, self.tcx).ty;
-                if let Some(ty_str) = ty_to_cs(self.tcx, ty) {
-                    w.write_line(&format!(
-                        "/* drop */ (({ty_str}){place_cs}).Dispose();"
-                    ));
+                use rustc_middle::ty::TyKind;
+                if let TyKind::Adt(adt_def, _) = ty.kind() {
+                    if self.tcx.adt_destructor(adt_def.did()).is_some() {
+                        let place_cs = self.place_cs(place);
+                        if let Some(ty_str) = ty_to_cs(self.tcx, ty) {
+                            w.write_line(&format!("{ty_str}.m_drop(&{place_cs});"));
+                        }
+                    }
                 }
                 w.write_line(&format!("goto {};", bb_label(*target)));
             }
