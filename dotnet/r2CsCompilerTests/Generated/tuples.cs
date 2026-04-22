@@ -4,28 +4,28 @@
 public static partial class mod_tuples
 {
 
-    public static (int, long) m_make_pair(int _1 /* a */, long _2 /* b */)
+    public static unsafe (int, long) m_make_pair(int _1 /* a */, long _2 /* b */)
     {
         (int, long) _0 = default;
         _0 = (_1, _2);
         return _0;
     }
 
-    public static int m_fst((int, long) _1 /* t */)
+    public static unsafe int m_fst((int, long) _1 /* t */)
     {
         int _0 = default;
         _0 = _1.Item1;
         return _0;
     }
 
-    public static long m_snd((int, long) _1 /* t */)
+    public static unsafe long m_snd((int, long) _1 /* t */)
     {
         long _0 = default;
         _0 = _1.Item2;
         return _0;
     }
 
-    public static (long, int) m_swap_pair((int, long) _1 /* t */)
+    public static unsafe (long, int) m_swap_pair((int, long) _1 /* t */)
     {
         (long, int) _0 = default;
         long _2 = default;
@@ -36,7 +36,7 @@ public static partial class mod_tuples
         return _0;
     }
 
-    public static int m_add_pair((int, int) _1 /* t */)
+    public static unsafe int m_add_pair((int, int) _1 /* t */)
     {
         int _0 = default;
         int _2 = default;
@@ -52,14 +52,14 @@ public static partial class mod_tuples
         return _0;
     }
 
-    public static (int, int, int) m_triple(int _1 /* a */, int _2 /* b */, int _3 /* c */)
+    public static unsafe (int, int, int) m_triple(int _1 /* a */, int _2 /* b */, int _3 /* c */)
     {
         (int, int, int) _0 = default;
         _0 = (_1, _2, _3);
         return _0;
     }
 
-    public static int m_sum_triple((int, int, int) _1 /* t */)
+    public static unsafe int m_sum_triple((int, int, int) _1 /* t */)
     {
         int _0 = default;
         int _2 = default;
@@ -84,7 +84,7 @@ public static partial class mod_tuples
         return _0;
     }
 
-    public static int m_max_of_pair((int, int) _1 /* t */)
+    public static unsafe int m_max_of_pair((int, int) _1 /* t */)
     {
         int _0 = default;
         bool _2 = default;

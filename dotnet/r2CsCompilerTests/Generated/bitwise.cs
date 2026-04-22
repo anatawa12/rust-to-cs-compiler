@@ -4,35 +4,35 @@
 public static partial class mod_bitwise
 {
 
-    public static uint m_bit_and(uint _1 /* a */, uint _2 /* b */)
+    public static unsafe uint m_bit_and(uint _1 /* a */, uint _2 /* b */)
     {
         uint _0 = default;
         _0 = (_1 & _2);
         return _0;
     }
 
-    public static uint m_bit_or(uint _1 /* a */, uint _2 /* b */)
+    public static unsafe uint m_bit_or(uint _1 /* a */, uint _2 /* b */)
     {
         uint _0 = default;
         _0 = (_1 | _2);
         return _0;
     }
 
-    public static uint m_bit_xor(uint _1 /* a */, uint _2 /* b */)
+    public static unsafe uint m_bit_xor(uint _1 /* a */, uint _2 /* b */)
     {
         uint _0 = default;
         _0 = (_1 ^ _2);
         return _0;
     }
 
-    public static uint m_bit_not(uint _1 /* a */)
+    public static unsafe uint m_bit_not(uint _1 /* a */)
     {
         uint _0 = default;
         _0 = (~_1);
         return _0;
     }
 
-    public static uint m_shl(uint _1 /* a */, uint _2 /* b */)
+    public static unsafe uint m_shl(uint _1 /* a */, uint _2 /* b */)
     {
         uint _0 = default;
         bool _3 = default;
@@ -44,7 +44,7 @@ public static partial class mod_bitwise
         return _0;
     }
 
-    public static uint m_shr(uint _1 /* a */, uint _2 /* b */)
+    public static unsafe uint m_shr(uint _1 /* a */, uint _2 /* b */)
     {
         uint _0 = default;
         bool _3 = default;
@@ -56,14 +56,14 @@ public static partial class mod_bitwise
         return _0;
     }
 
-    public static bool m_logical_not(bool _1 /* a */)
+    public static unsafe bool m_logical_not(bool _1 /* a */)
     {
         bool _0 = default;
         _0 = (!_1);
         return _0;
     }
 
-    public static uint m_count_set_bits(uint _1 /* x */)
+    public static unsafe uint m_count_set_bits(uint _1 /* x */)
     {
         uint _0 = default;
         uint _2 = default;
@@ -107,7 +107,7 @@ public static partial class mod_bitwise
         return _0;
     }
 
-    public static bool m_is_power_of_two(uint _1 /* x */)
+    public static unsafe bool m_is_power_of_two(uint _1 /* x */)
     {
         bool _0 = default;
         bool _2 = default;

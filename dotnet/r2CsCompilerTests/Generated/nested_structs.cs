@@ -13,14 +13,14 @@ public static partial class mod_nested_structs
     public partial struct s_Vec2
     {
 
-        public static global::mod_nested_structs.s_Vec2 m_new(float _1 /* x */, float _2 /* y */)
+        public static unsafe global::mod_nested_structs.s_Vec2 m_new(float _1 /* x */, float _2 /* y */)
         {
             global::mod_nested_structs.s_Vec2 _0 = default;
             _0 = new global::mod_nested_structs.s_Vec2 { f_x = _1, f_y = _2 };
             return _0;
         }
 
-        public static global::mod_nested_structs.s_Vec2 m_add(global::mod_nested_structs.s_Vec2 _1 /* self */, global::mod_nested_structs.s_Vec2 _2 /* other */)
+        public static unsafe global::mod_nested_structs.s_Vec2 m_add(global::mod_nested_structs.s_Vec2 _1 /* self */, global::mod_nested_structs.s_Vec2 _2 /* other */)
         {
             global::mod_nested_structs.s_Vec2 _0 = default;
             float _3 = default;
@@ -39,7 +39,7 @@ public static partial class mod_nested_structs
             return _0;
         }
 
-        public static global::mod_nested_structs.s_Vec2 m_scale(global::mod_nested_structs.s_Vec2 _1 /* self */, float _2 /* factor */)
+        public static unsafe global::mod_nested_structs.s_Vec2 m_scale(global::mod_nested_structs.s_Vec2 _1 /* self */, float _2 /* factor */)
         {
             global::mod_nested_structs.s_Vec2 _0 = default;
             float _3 = default;
@@ -54,7 +54,7 @@ public static partial class mod_nested_structs
             return _0;
         }
 
-        public static float m_dot(global::mod_nested_structs.s_Vec2 _1 /* self */, global::mod_nested_structs.s_Vec2 _2 /* other */)
+        public static unsafe float m_dot(global::mod_nested_structs.s_Vec2 _1 /* self */, global::mod_nested_structs.s_Vec2 _2 /* other */)
         {
             float _0 = default;
             float _3 = default;
@@ -73,7 +73,7 @@ public static partial class mod_nested_structs
             return _0;
         }
 
-        public static float m_len_sq(global::mod_nested_structs.s_Vec2 _1 /* self */)
+        public static unsafe float m_len_sq(global::mod_nested_structs.s_Vec2 _1 /* self */)
         {
             float _0 = default;
             float _2 = default;
@@ -102,7 +102,7 @@ public static partial class mod_nested_structs
     public partial struct s_Rect
     {
 
-        public static float m_area(global::mod_nested_structs.s_Rect _1 /* self */)
+        public static unsafe float m_area(global::mod_nested_structs.s_Rect _1 /* self */)
         {
             float _0 = default;
             float _2 = default;
@@ -113,7 +113,7 @@ public static partial class mod_nested_structs
             return _0;
         }
 
-        public static global::mod_nested_structs.s_Vec2 m_center(global::mod_nested_structs.s_Rect _1 /* self */)
+        public static unsafe global::mod_nested_structs.s_Vec2 m_center(global::mod_nested_structs.s_Rect _1 /* self */)
         {
             global::mod_nested_structs.s_Vec2 _0 = default;
             float _2 = default;
@@ -137,7 +137,7 @@ public static partial class mod_nested_structs
         }
     }
 
-    public static global::mod_nested_structs.s_Vec2 m_make_vec2(float _1 /* x */, float _2 /* y */)
+    public static unsafe global::mod_nested_structs.s_Vec2 m_make_vec2(float _1 /* x */, float _2 /* y */)
     {
         global::mod_nested_structs.s_Vec2 _0 = default;
         _0 = global::mod_nested_structs.s_Vec2.m_new(_1, _2);
@@ -146,7 +146,7 @@ public static partial class mod_nested_structs
         return _0;
     }
 
-    public static global::mod_nested_structs.s_Vec2 m_add_vecs(global::mod_nested_structs.s_Vec2 _1 /* a */, global::mod_nested_structs.s_Vec2 _2 /* b */)
+    public static unsafe global::mod_nested_structs.s_Vec2 m_add_vecs(global::mod_nested_structs.s_Vec2 _1 /* a */, global::mod_nested_structs.s_Vec2 _2 /* b */)
     {
         global::mod_nested_structs.s_Vec2 _0 = default;
         _0 = global::mod_nested_structs.s_Vec2.m_add(_1, _2);
@@ -155,7 +155,7 @@ public static partial class mod_nested_structs
         return _0;
     }
 
-    public static float m_dot_product(global::mod_nested_structs.s_Vec2 _1 /* a */, global::mod_nested_structs.s_Vec2 _2 /* b */)
+    public static unsafe float m_dot_product(global::mod_nested_structs.s_Vec2 _1 /* a */, global::mod_nested_structs.s_Vec2 _2 /* b */)
     {
         float _0 = default;
         _0 = global::mod_nested_structs.s_Vec2.m_dot(_1, _2);
@@ -164,7 +164,7 @@ public static partial class mod_nested_structs
         return _0;
     }
 
-    public static float m_rect_area(global::mod_nested_structs.s_Rect _1 /* r */)
+    public static unsafe float m_rect_area(global::mod_nested_structs.s_Rect _1 /* r */)
     {
         float _0 = default;
         _0 = global::mod_nested_structs.s_Rect.m_area(_1);

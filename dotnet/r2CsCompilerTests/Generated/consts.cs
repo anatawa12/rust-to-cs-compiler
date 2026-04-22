@@ -14,7 +14,7 @@ public static partial class mod_consts
 
     public static readonly long k_BIG = (long)1000000000000L;
 
-    public static int m_use_const()
+    public static unsafe int m_use_const()
     {
         int _0 = default;
         (int, bool) _1 = default;
@@ -26,7 +26,7 @@ public static partial class mod_consts
         return _0;
     }
 
-    public static int m_scale_by_const(int _1 /* x */)
+    public static unsafe int m_scale_by_const(int _1 /* x */)
     {
         int _0 = default;
         (int, bool) _2 = default;
@@ -38,14 +38,14 @@ public static partial class mod_consts
         return _0;
     }
 
-    public static bool m_is_max_byte(byte _1 /* x */)
+    public static unsafe bool m_is_max_byte(byte _1 /* x */)
     {
         bool _0 = default;
         _0 = (_1 == 255);
         return _0;
     }
 
-    public static long m_get_big()
+    public static unsafe long m_get_big()
     {
         long _0 = default;
         _0 = (long)1000000000000L;

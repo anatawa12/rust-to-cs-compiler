@@ -10,6 +10,24 @@
 /// - `SwitchInt` on a bool becomes `if / else`.
 /// - `SwitchInt` on an int becomes `switch`.
 /// - Other terminators (Goto, Return, Call, Drop, …) are mapped directly.
+///
+/// # Reference representation
+///
+/// Thin Rust references (`&T`, `&mut T`) and raw pointers (`*const T`,
+/// `*mut T`) are represented as C# raw pointers (`T*`).  All generated
+/// function bodies are marked `unsafe`.
+///
+/// This is safe because all Rust locals (including async-fn locals, which
+/// are represented as non-heap C# structs) live on the C# stack.  The GC
+/// never relocates stack values, so `T*` pointers remain valid for the
+/// lifetime of the stack frame — which exactly matches Rust's borrow rules.
+///
+/// Fat references keep their wrapper types:
+///   `&[T]`  → `LenRef<Slice<T>>`  (needs a length field alongside the pointer)
+///   `&dyn T` → `DynRef<T>`         (needs a vtable field alongside the pointer)
+///
+/// The `Var<T>` heap-boxing mechanism is **not used**: all Rust locals are
+/// plain C# value-type locals whose address can be taken directly with `&`.
 
 use rustc_middle::mir::{
     BasicBlock, BasicBlockData, Body, Local, Operand, Place, PlaceElem,
@@ -31,30 +49,8 @@ pub fn compile_mir_body<'tcx>(
     body: &Body<'tcx>,
     w: &mut CsWriter,
 ) {
-    // Collect locals whose address is taken (appear in Rvalue::Ref).
-    let boxed_locals = collect_borrowed_locals(body);
-    let ctx = MirCtx { tcx, body, boxed_locals };
+    let ctx = MirCtx { tcx, body };
     ctx.compile(w);
-}
-
-/// Collect locals that appear as the place in `Rvalue::Ref(...)`.
-/// These need to be boxed as `Var<T>` to support proper reference semantics.
-fn collect_borrowed_locals(body: &Body<'_>) -> std::collections::HashSet<usize> {
-    let mut borrowed: std::collections::HashSet<usize> = std::collections::HashSet::new();
-    for bb_data in body.basic_blocks.iter() {
-        for stmt in &bb_data.statements {
-            if let StatementKind::Assign(assign) = &stmt.kind {
-                let (_, rvalue) = assign.as_ref();
-                if let Rvalue::Ref(_, _, place) = rvalue {
-                    // Only box simple locals (no projections for now).
-                    if place.projection.is_empty() {
-                        borrowed.insert(place.local.index());
-                    }
-                }
-            }
-        }
-    }
-    borrowed
 }
 
 // ── Internal context ──────────────────────────────────────────────────────
@@ -62,18 +58,11 @@ fn collect_borrowed_locals(body: &Body<'_>) -> std::collections::HashSet<usize> 
 struct MirCtx<'a, 'tcx> {
     tcx:  TyCtxt<'tcx>,
     body: &'a Body<'tcx>,
-    /// Locals boxed as `Var<T>` (address was taken).
-    boxed_locals: std::collections::HashSet<usize>,
 }
 
 impl<'a, 'tcx> MirCtx<'a, 'tcx> {
     fn compile(&self, w: &mut CsWriter) {
-        // Declare all non-parameter, non-return locals.
         self.emit_local_decls(w);
-        // For parameters that are borrowed, emit Var<T> copies at function entry.
-        self.emit_borrowed_param_boxes(w);
-
-        // Emit basic blocks.
         let bbs = self.body.basic_blocks.indices();
         for bb in bbs {
             let data = &self.body.basic_blocks[bb];
@@ -81,49 +70,17 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
         }
     }
 
-    /// For each parameter whose address is taken, emit a `Var<T>` local with a copy of the param.
-    /// These are named `_N_var` to distinguish from the original param.
-    fn emit_borrowed_param_boxes(&self, w: &mut CsWriter) {
-        let arg_count = self.body.arg_count;
-        for (local, decl) in self.body.local_decls.iter_enumerated() {
-            let idx = local.index();
-            if idx < 1 || idx > arg_count {
-                continue; // not a param
-            }
-            if !self.boxed_locals.contains(&idx) {
-                continue; // param not borrowed
-            }
-            let inner_ty = ty_to_cs(self.tcx, decl.ty)
-                .unwrap_or_else(|| "object /* unknown */".into());
-            let local_name = local_cs_name(local);
-            // Declare a Var<T> that boxes the param value.
-            w.write_line(&format!(
-                "var {local_name}_var = new global::r2CsRuntime.Var<{inner_ty}>() {{ f_value = {local_name} }};"
-            ));
-        }
-    }
-
-    /// Declare local variables (skip _1.._arg_count = params; always declare _0 = return).
+    /// Declare local variables (skip _1.._arg_count = params).
     fn emit_local_decls(&self, w: &mut CsWriter) {
         let arg_count = self.body.arg_count;
         for (local, decl) in self.body.local_decls.iter_enumerated() {
             let idx = local.index();
             if idx >= 1 && idx <= arg_count {
-                continue; // params already in signature
+                continue; // params are already in the signature
             }
-            let local_name = local_cs_name(local);
-            if self.boxed_locals.contains(&idx) {
-                // This local's address is taken; box it as Var<T>.
-                let inner_ty = ty_to_cs(self.tcx, decl.ty)
-                    .unwrap_or_else(|| "object /* unknown */".into());
-                w.write_line(&format!(
-                    "var {local_name} = new global::r2CsRuntime.Var<{inner_ty}>();"
-                ));
-            } else {
-                let ty_str = ty_to_cs(self.tcx, decl.ty)
-                    .unwrap_or_else(|| "object /* unknown */".into());
-                w.write_line(&format!("{ty_str} {local_name} = default;"));
-            }
+            let ty_str = ty_to_cs(self.tcx, decl.ty)
+                .unwrap_or_else(|| "object /* unknown */".into());
+            w.write_line(&format!("{ty_str} {} = default;", local_cs_name(local)));
         }
     }
 
@@ -150,27 +107,11 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
         match &stmt.kind {
             StatementKind::Assign(assign) => {
                 let (place, rvalue) = assign.as_ref();
-                // Detect a deref-write pattern (writing through a Ref<T>).
-                // When the place's last projection is a Deref, we need to use
-                // Ref<T>.Set(value) rather than (*ref) = value.
-                let last_proj = place.projection.last();
-                if matches!(last_proj, Some(PlaceElem::Deref)) {
-                    // Build the Ref<T> place (without the final Deref).
-                    use rustc_middle::ty::TyKind;
-                    let base_place = rustc_middle::mir::Place {
-                        local: place.local,
-                        projection: self.tcx.mk_place_elems(
-                            &place.projection[..place.projection.len() - 1]
-                        ),
-                    };
-                    let base_ty = base_place.ty(self.body, self.tcx).ty;
-                    if matches!(base_ty.kind(), TyKind::Ref(..) | TyKind::RawPtr(..)) {
-                        let ref_expr = self.place_cs(&base_place);
-                        let rhs = self.rvalue_cs(rvalue);
-                        w.write_line(&format!("{ref_expr}.Set({rhs});"));
-                        return;
-                    }
-                }
+                // With raw-pointer references, writing through a pointer is
+                // expressed as `(*ptr) = value`, which is a valid C# lvalue.
+                // `place_cs` already emits `(*ptr)` for a Deref of a pointer
+                // type, so the generic `lhs = rhs` path handles this correctly
+                // without any special-casing.
                 let lhs = self.place_cs(place);
                 let rhs = self.rvalue_cs(rvalue);
                 w.write_line(&format!("{lhs} = {rhs};"));
@@ -323,20 +264,8 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
     // ── Place / Rvalue / Operand → C# strings ────────────────────────────
 
     fn place_cs(&self, place: &Place<'tcx>) -> String {
-        let local_idx = place.local.index();
-        let arg_count = self.body.arg_count;
-        let is_param = local_idx >= 1 && local_idx <= arg_count;
-        let mut s = if self.boxed_locals.contains(&local_idx) {
-            if is_param {
-                // Boxed parameter: access through the `_N_var.f_value` copy.
-                format!("{}_var.f_value", local_cs_name(place.local))
-            } else {
-                // Boxed non-param local: access through f_value.
-                format!("{}.f_value", local_cs_name(place.local))
-            }
-        } else {
-            local_cs_name(place.local)
-        };
+        // All locals are plain C# value-type locals; no Var<T> boxing needed.
+        let mut s = local_cs_name(place.local);
         // Track the accumulated type so we can name struct fields correctly.
         let mut cur_ty = self.body.local_decls[place.local].ty;
         // Track which enum variant is active (set by Downcast projections).
@@ -349,26 +278,22 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
         for proj in place.projection.iter() {
             match proj {
                 PlaceElem::Deref => {
-                    // Ref<T> indirection — use .Get() for read access.
                     use rustc_middle::ty::TyKind;
-                    let (new_ty, is_ref) = match cur_ty.kind() {
+                    let (new_ty, is_ptr) = match cur_ty.kind() {
                         TyKind::Ref(_, inner, _) => (*inner, true),
-                        TyKind::RawPtr(inner, _) => (*inner, false),
+                        TyKind::RawPtr(inner, _) => (*inner, true),
                         _ => (cur_ty, false),
                     };
-                    if is_ref && matches!(new_ty.kind(), TyKind::Slice(_)) {
-                        // Slice reference (&[T]): don't emit .Get() — LenRef<Slice<T>>
-                        // element access goes through .GetElement() instead.
-                        // `s` stays as the LenRef expression; record it for the Index arm.
+                    if is_ptr && matches!(new_ty.kind(), TyKind::Slice(_)) {
+                        // &[T] / *[T]: LenRef<Slice<T>> — element access goes
+                        // through .GetElement(); record the base for the Index arm.
                         slice_ref_base = Some(s.clone());
-                        // `s` is intentionally left unchanged (the LenRef itself).
-                    } else if is_ref {
-                        slice_ref_base = None;
-                        s = format!("{s}.Get()");
-                    } else {
-                        // Raw pointer: emit unsafe deref (will need unsafe block in real code).
+                    } else if is_ptr {
+                        // Thin pointer (*T): emit C# pointer dereference.
                         slice_ref_base = None;
                         s = format!("(*{s})");
+                    } else {
+                        slice_ref_base = None;
                     }
                     cur_ty = new_ty;
                     cur_variant_idx = None;
@@ -462,23 +387,16 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
         match rv {
             Rvalue::Use(op) => self.operand_cs(op),
             Rvalue::Ref(_, _, place) => {
-                // Create a Ref<T> from the place.
-                let local_idx = place.local.index();
-                let arg_count = self.body.arg_count;
-                let is_param = local_idx >= 1 && local_idx <= arg_count;
-                if place.projection.is_empty() && self.boxed_locals.contains(&local_idx) {
-                    // Boxed local or param: create a Ref<T> from the Var<T>.
-                    let local_name = local_cs_name(place.local);
-                    let var_name = if is_param {
-                        format!("{local_name}_var")
-                    } else {
-                        local_name
-                    };
-                    format!("global::r2CsRuntime.RefHelper.FromVar({var_name})")
-                } else {
-                    // Struct field or complex place: emit the place directly.
-                    // (Full heap-ref support requires owner tracking — TODO.)
+                // &T / &mut T → T*: take the address of the place.
+                // For slice references (&[T]) we keep LenRef<Slice<T>> for now
+                // (the place is already a LenRef produced by a prior call).
+                use rustc_middle::ty::TyKind;
+                let inner_ty = place.ty(self.body, self.tcx).ty;
+                if matches!(inner_ty.kind(), TyKind::Slice(_)) {
+                    // LenRef is produced by external calls (e.g. as_bytes); pass through.
                     self.place_cs(place)
+                } else {
+                    format!("&{}", self.place_cs(place))
                 }
             }
             Rvalue::BinaryOp(op, operands) => {
@@ -640,9 +558,8 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
                 format!("global::r2CsRuntime.Intrinsics.Repeat({val}, {n})")
             }
             Rvalue::RawPtr(_, place) => {
-                // Raw pointer — unsafe in C#. Emit the place address for now.
-                let p = self.place_cs(place);
-                format!("/* raw ptr */{p}")
+                // *const T / *mut T → T*: take the address of the place.
+                format!("&{}", self.place_cs(place))
             }
             Rvalue::ThreadLocalRef(def_id) => {
                 // Thread-local static — emit a reference to the static field.
@@ -652,6 +569,7 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
                 // Unsafe binder — pass through the inner value.
                 self.operand_cs(operand)
             }
+            #[allow(unreachable_patterns)]
             _ => format!("/* rvalue */default"),
         }
     }

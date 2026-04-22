@@ -33,7 +33,7 @@ public static partial class mod_complex_enums
         public const byte k_Triangle = 2;
     }
 
-    public static int m_area_x2(global::mod_complex_enums.s_Shape _1 /* s */)
+    public static unsafe int m_area_x2(global::mod_complex_enums.s_Shape _1 /* s */)
     {
         int _0 = default;
         nint _2 = default;
@@ -89,7 +89,7 @@ public static partial class mod_complex_enums
         return _0;
     }
 
-    public static bool m_is_square(global::mod_complex_enums.s_Shape _1 /* s */)
+    public static unsafe bool m_is_square(global::mod_complex_enums.s_Shape _1 /* s */)
     {
         bool _0 = default;
         nint _2 = default;
@@ -116,14 +116,14 @@ public static partial class mod_complex_enums
         return _0;
     }
 
-    public static global::mod_complex_enums.s_Shape m_make_circle(int _1 /* r */)
+    public static unsafe global::mod_complex_enums.s_Shape m_make_circle(int _1 /* r */)
     {
         global::mod_complex_enums.s_Shape _0 = default;
         _0 = new global::mod_complex_enums.s_Shape { f_discriminant = 0, f_Circle = new global::mod_complex_enums.s_Shape.s_Shape_Circle { f_radius = _1 } };
         return _0;
     }
 
-    public static global::mod_complex_enums.s_Shape m_make_rect(int _1 /* w */, int _2 /* h */)
+    public static unsafe global::mod_complex_enums.s_Shape m_make_rect(int _1 /* w */, int _2 /* h */)
     {
         global::mod_complex_enums.s_Shape _0 = default;
         _0 = new global::mod_complex_enums.s_Shape { f_discriminant = 1, f_Rect = new global::mod_complex_enums.s_Shape.s_Shape_Rect { f_width = _1, f_height = _2 } };
@@ -140,7 +140,7 @@ public static partial class mod_complex_enums
         public const byte k_West = 3;
     }
 
-    public static global::mod_complex_enums.s_Direction m_opposite(global::mod_complex_enums.s_Direction _1 /* d */)
+    public static unsafe global::mod_complex_enums.s_Direction m_opposite(global::mod_complex_enums.s_Direction _1 /* d */)
     {
         global::mod_complex_enums.s_Direction _0 = default;
         nint _2 = default;
@@ -176,7 +176,7 @@ public static partial class mod_complex_enums
         return _0;
     }
 
-    public static bool m_is_north(global::mod_complex_enums.s_Direction _1 /* d */)
+    public static unsafe bool m_is_north(global::mod_complex_enums.s_Direction _1 /* d */)
     {
         bool _0 = default;
         nint _2 = default;

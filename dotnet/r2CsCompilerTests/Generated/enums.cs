@@ -33,7 +33,7 @@ public static partial class mod_enums
         public const byte k_Triangle = 2;
     }
 
-    public static int m_area_times_2(global::mod_enums.s_Shape _1 /* s */)
+    public static unsafe int m_area_times_2(global::mod_enums.s_Shape _1 /* s */)
     {
         int _0 = default;
         nint _2 = default;
@@ -103,7 +103,7 @@ public static partial class mod_enums
         return _0;
     }
 
-    public static int m_perimeter_approx(global::mod_enums.s_Shape _1 /* s */)
+    public static unsafe int m_perimeter_approx(global::mod_enums.s_Shape _1 /* s */)
     {
         int _0 = default;
         nint _2 = default;
@@ -183,7 +183,7 @@ public static partial class mod_enums
         public const byte k_West = 3;
     }
 
-    public static global::mod_enums.s_Direction m_opposite(global::mod_enums.s_Direction _1 /* d */)
+    public static unsafe global::mod_enums.s_Direction m_opposite(global::mod_enums.s_Direction _1 /* d */)
     {
         global::mod_enums.s_Direction _0 = default;
         nint _2 = default;
@@ -219,7 +219,7 @@ public static partial class mod_enums
         return _0;
     }
 
-    public static int m_direction_value(global::mod_enums.s_Direction _1 /* d */)
+    public static unsafe int m_direction_value(global::mod_enums.s_Direction _1 /* d */)
     {
         int _0 = default;
         nint _2 = default;

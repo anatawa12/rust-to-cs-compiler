@@ -13,14 +13,14 @@ public static partial class mod_structs
     public partial struct s_Point
     {
 
-        public static global::mod_structs.s_Point m_new(int _1 /* x */, int _2 /* y */)
+        public static unsafe global::mod_structs.s_Point m_new(int _1 /* x */, int _2 /* y */)
         {
             global::mod_structs.s_Point _0 = default;
             _0 = new global::mod_structs.s_Point { f_x = _1, f_y = _2 };
             return _0;
         }
 
-        public static int m_distance_squared(global::mod_structs.s_Point _1 /* self */)
+        public static unsafe int m_distance_squared(global::mod_structs.s_Point _1 /* self */)
         {
             int _0 = default;
             int _2 = default;
@@ -54,7 +54,7 @@ public static partial class mod_structs
             return _0;
         }
 
-        public static global::mod_structs.s_Point m_translate(global::mod_structs.s_Point _1 /* self */, int _2 /* dx */, int _3 /* dy */)
+        public static unsafe global::mod_structs.s_Point m_translate(global::mod_structs.s_Point _1 /* self */, int _2 /* dx */, int _3 /* dy */)
         {
             global::mod_structs.s_Point _0 = default;
             int _4 = default;
@@ -79,7 +79,7 @@ public static partial class mod_structs
             return _0;
         }
 
-        public static global::mod_structs.s_Point m_scale(global::mod_structs.s_Point _1 /* self */, int _2 /* factor */)
+        public static unsafe global::mod_structs.s_Point m_scale(global::mod_structs.s_Point _1 /* self */, int _2 /* factor */)
         {
             global::mod_structs.s_Point _0 = default;
             int _3 = default;
@@ -104,14 +104,14 @@ public static partial class mod_structs
             return _0;
         }
 
-        public static int m_x(global::mod_structs.s_Point _1 /* self */)
+        public static unsafe int m_x(global::mod_structs.s_Point _1 /* self */)
         {
             int _0 = default;
             _0 = _1.f_x;
             return _0;
         }
 
-        public static int m_y(global::mod_structs.s_Point _1 /* self */)
+        public static unsafe int m_y(global::mod_structs.s_Point _1 /* self */)
         {
             int _0 = default;
             _0 = _1.f_y;
@@ -128,14 +128,14 @@ public static partial class mod_structs
     public partial struct s_Rectangle
     {
 
-        public static global::mod_structs.s_Rectangle m_new(int _1 /* width */, int _2 /* height */)
+        public static unsafe global::mod_structs.s_Rectangle m_new(int _1 /* width */, int _2 /* height */)
         {
             global::mod_structs.s_Rectangle _0 = default;
             _0 = new global::mod_structs.s_Rectangle { f_width = _1, f_height = _2 };
             return _0;
         }
 
-        public static int m_area(global::mod_structs.s_Rectangle _1 /* self */)
+        public static unsafe int m_area(global::mod_structs.s_Rectangle _1 /* self */)
         {
             int _0 = default;
             int _2 = default;
@@ -151,7 +151,7 @@ public static partial class mod_structs
             return _0;
         }
 
-        public static int m_perimeter(global::mod_structs.s_Rectangle _1 /* self */)
+        public static unsafe int m_perimeter(global::mod_structs.s_Rectangle _1 /* self */)
         {
             int _0 = default;
             int _2 = default;
@@ -174,7 +174,7 @@ public static partial class mod_structs
             return _0;
         }
 
-        public static bool m_is_square(global::mod_structs.s_Rectangle _1 /* self */)
+        public static unsafe bool m_is_square(global::mod_structs.s_Rectangle _1 /* self */)
         {
             bool _0 = default;
             int _2 = default;

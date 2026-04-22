@@ -4,32 +4,29 @@
 public static partial class mod_borrowing
 {
 
-    public static int m_sum_refs(int _1 /* a */, int _2 /* b */, int _3 /* c */)
+    public static unsafe int m_sum_refs(int _1 /* a */, int _2 /* b */, int _3 /* c */)
     {
         int _0 = default;
-        global::r2CsRuntime.Ref<int> _4 = default;
-        global::r2CsRuntime.Ref<int> _5 = default;
-        global::r2CsRuntime.Ref<int> _6 = default;
+        int* _4 = default;
+        int* _5 = default;
+        int* _6 = default;
         int _7 = default;
         int _8 = default;
         int _9 = default;
         (int, bool) _10 = default;
         int _11 = default;
         (int, bool) _12 = default;
-        var _1_var = new global::r2CsRuntime.Var<int>() { f_value = _1 };
-        var _2_var = new global::r2CsRuntime.Var<int>() { f_value = _2 };
-        var _3_var = new global::r2CsRuntime.Var<int>() { f_value = _3 };
-        _4 = global::r2CsRuntime.RefHelper.FromVar(_1_var);
-        _5 = global::r2CsRuntime.RefHelper.FromVar(_2_var);
-        _6 = global::r2CsRuntime.RefHelper.FromVar(_3_var);
-        _8 = _4.Get();
-        _9 = _5.Get();
+        _4 = &_1;
+        _5 = &_2;
+        _6 = &_3;
+        _8 = (*_4);
+        _9 = (*_5);
         _10 = ((int)(_8 + _9), false);
         global::System.Diagnostics.Debug.Assert((_10.Item2) == false);
         goto _bb1;
         _bb1: ;
         _7 = _10.Item1;
-        _11 = _6.Get();
+        _11 = (*_6);
         _12 = ((int)(_7 + _11), false);
         global::System.Diagnostics.Debug.Assert((_12.Item2) == false);
         goto _bb2;
@@ -38,20 +35,18 @@ public static partial class mod_borrowing
         return _0;
     }
 
-    public static int m_max_by_ref(int _1 /* a */, int _2 /* b */)
+    public static unsafe int m_max_by_ref(int _1 /* a */, int _2 /* b */)
     {
         int _0 = default;
-        global::r2CsRuntime.Ref<int> _3 = default;
-        global::r2CsRuntime.Ref<int> _4 = default;
+        int* _3 = default;
+        int* _4 = default;
         bool _5 = default;
         int _6 = default;
         int _7 = default;
-        var _1_var = new global::r2CsRuntime.Var<int>() { f_value = _1 };
-        var _2_var = new global::r2CsRuntime.Var<int>() { f_value = _2 };
-        _3 = global::r2CsRuntime.RefHelper.FromVar(_1_var);
-        _4 = global::r2CsRuntime.RefHelper.FromVar(_2_var);
-        _6 = _3.Get();
-        _7 = _4.Get();
+        _3 = &_1;
+        _4 = &_2;
+        _6 = (*_3);
+        _7 = (*_4);
         _5 = (_6 > _7);
         if (_5)
         {
@@ -62,46 +57,46 @@ public static partial class mod_borrowing
             goto _bb2;
         }
         _bb1: ;
-        _0 = _3.Get();
+        _0 = (*_3);
         goto _bb3;
         _bb2: ;
-        _0 = _4.Get();
+        _0 = (*_4);
         goto _bb3;
         _bb3: ;
         return _0;
     }
 
-    public static int m_double_local(int _1 /* x */)
+    public static unsafe int m_double_local(int _1 /* x */)
     {
         int _0 = default;
-        var _2 = new global::r2CsRuntime.Var<int>();
-        global::r2CsRuntime.Ref<int> _3 = default;
+        int _2 = default;
+        int* _3 = default;
         (int, bool) _4 = default;
-        _2.f_value = _1;
-        _3 = global::r2CsRuntime.RefHelper.FromVar(_2);
-        _4 = ((int)(_3.Get() * 2), false);
+        _2 = _1;
+        _3 = &_2;
+        _4 = ((int)((*_3) * 2), false);
         global::System.Diagnostics.Debug.Assert((_4.Item2) == false);
         goto _bb1;
         _bb1: ;
-        _3.Set(_4.Item1);
-        _0 = _2.f_value;
+        (*_3) = _4.Item1;
+        _0 = _2;
         return _0;
     }
 
-    public static int m_increment_local(int _1 /* x */)
+    public static unsafe int m_increment_local(int _1 /* x */)
     {
         int _0 = default;
-        var _2 = new global::r2CsRuntime.Var<int>();
-        global::r2CsRuntime.Ref<int> _3 = default;
+        int _2 = default;
+        int* _3 = default;
         (int, bool) _4 = default;
-        _2.f_value = _1;
-        _3 = global::r2CsRuntime.RefHelper.FromVar(_2);
-        _4 = ((int)(_3.Get() + 1), false);
+        _2 = _1;
+        _3 = &_2;
+        _4 = ((int)((*_3) + 1), false);
         global::System.Diagnostics.Debug.Assert((_4.Item2) == false);
         goto _bb1;
         _bb1: ;
-        _3.Set(_4.Item1);
-        _0 = _2.f_value;
+        (*_3) = _4.Item1;
+        _0 = _2;
         return _0;
     }
 }

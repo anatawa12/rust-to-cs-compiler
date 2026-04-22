@@ -13,7 +13,7 @@ public static partial class mod_generics
     public partial struct s_Pair<P_A, P_B>
     {
 
-        public static global::mod_generics.s_Pair<P_B, P_A> m_swap(global::mod_generics.s_Pair<P_A, P_B> _1 /* self */)
+        public static unsafe global::mod_generics.s_Pair<P_B, P_A> m_swap(global::mod_generics.s_Pair<P_A, P_B> _1 /* self */)
         {
             global::mod_generics.s_Pair<P_B, P_A> _0 = default;
             P_B _2 = default;
@@ -24,14 +24,14 @@ public static partial class mod_generics
             return _0;
         }
 
-        public static P_A m_first(global::mod_generics.s_Pair<P_A, P_B> _1 /* self */)
+        public static unsafe P_A m_first(global::mod_generics.s_Pair<P_A, P_B> _1 /* self */)
         {
             P_A _0 = default;
             _0 = _1.f_first;
             return _0;
         }
 
-        public static P_B m_second(global::mod_generics.s_Pair<P_A, P_B> _1 /* self */)
+        public static unsafe P_B m_second(global::mod_generics.s_Pair<P_A, P_B> _1 /* self */)
         {
             P_B _0 = default;
             _0 = _1.f_second;
@@ -39,14 +39,14 @@ public static partial class mod_generics
         }
     }
 
-    public static global::mod_generics.s_Pair<int, long> m_make_pair(int _1 /* a */, long _2 /* b */)
+    public static unsafe global::mod_generics.s_Pair<int, long> m_make_pair(int _1 /* a */, long _2 /* b */)
     {
         global::mod_generics.s_Pair<int, long> _0 = default;
         _0 = new global::mod_generics.s_Pair<int, long> { f_first = _1, f_second = _2 };
         return _0;
     }
 
-    public static global::mod_generics.s_Pair<long, int> m_swap_ints(global::mod_generics.s_Pair<int, long> _1 /* p */)
+    public static unsafe global::mod_generics.s_Pair<long, int> m_swap_ints(global::mod_generics.s_Pair<int, long> _1 /* p */)
     {
         global::mod_generics.s_Pair<long, int> _0 = default;
         _0 = global::mod_generics.s_Pair<int, long>.m_swap(_1);
@@ -55,7 +55,7 @@ public static partial class mod_generics
         return _0;
     }
 
-    public static int m_get_first(global::mod_generics.s_Pair<int, long> _1 /* p */)
+    public static unsafe int m_get_first(global::mod_generics.s_Pair<int, long> _1 /* p */)
     {
         int _0 = default;
         _0 = global::mod_generics.s_Pair<int, long>.m_first(_1);
@@ -64,7 +64,7 @@ public static partial class mod_generics
         return _0;
     }
 
-    public static long m_get_second(global::mod_generics.s_Pair<int, long> _1 /* p */)
+    public static unsafe long m_get_second(global::mod_generics.s_Pair<int, long> _1 /* p */)
     {
         long _0 = default;
         _0 = global::mod_generics.s_Pair<int, long>.m_second(_1);
@@ -79,14 +79,14 @@ public static partial class mod_generics
         public int f_y;
     }
 
-    public static global::mod_generics.s_Point m_origin()
+    public static unsafe global::mod_generics.s_Point m_origin()
     {
         global::mod_generics.s_Point _0 = default;
         _0 = new global::mod_generics.s_Point { f_x = 0, f_y = 0 };
         return _0;
     }
 
-    public static long m_distance_squared(global::mod_generics.s_Point _1 /* p */)
+    public static unsafe long m_distance_squared(global::mod_generics.s_Point _1 /* p */)
     {
         long _0 = default;
         long _2 = default;

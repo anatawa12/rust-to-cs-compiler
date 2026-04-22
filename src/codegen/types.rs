@@ -37,32 +37,44 @@ pub fn ty_to_cs<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<String> {
         }
 
         // ── references ───────────────────────────────────────────────────
+        // Thin Rust references (&T / &mut T) map to C# raw pointers (T*).
+        // This matches Rust's actual ABI representation and gives zero-overhead
+        // access without the heap-tracking overhead of Ref<T>.
+        //
+        // Fat references keep their wrapper types because they carry extra
+        // metadata alongside the pointer:
+        //   &[T]         → LenRef<Slice<T>>  (pointer + length)
+        //   &str         → string            (C# string is already a fat object)
+        //   &dyn Trait   → DynRef<T>         (pointer + vtable)
         TyKind::Ref(_, inner, _) => {
             match inner.kind() {
-                // &[T] / &mut [T]
+                // &[T] / &mut [T] — fat pointer (pointer + length)
                 TyKind::Slice(elem) => {
                     let cs_elem = ty_to_cs(tcx, *elem)?;
                     format!(
                         "global::r2CsRuntime.LenRef<global::r2CsRuntime.Slice<{cs_elem}>>"
                     )
                 }
-                // &str
+                // &str — represented as C# string
                 TyKind::Str => "string".into(),
-                // &dyn Trait — represented as DynRef<T_Trait>
+                // &dyn Trait — needs vtable alongside pointer
                 TyKind::Dynamic(..) => {
                     // TODO: extract trait name from the predicate list
                     "/* &dyn */ global::r2CsRuntime.DynRef<object>".into()
                 }
+                // &T / &mut T — thin reference → raw C# pointer
                 _ => {
                     let cs_inner = ty_to_cs(tcx, *inner)?;
-                    format!("global::r2CsRuntime.Ref<{cs_inner}>")
+                    format!("{cs_inner}*")
                 }
             }
         }
 
         // ── raw pointers ─────────────────────────────────────────────────
+        // *const T / *mut T use the same raw-pointer representation.
         TyKind::RawPtr(inner, _) => {
             match inner.kind() {
+                // *const [T] / *mut [T] — fat pointer (pointer + length)
                 TyKind::Slice(elem) => {
                     let cs_elem = ty_to_cs(tcx, *elem)?;
                     format!(
@@ -72,9 +84,10 @@ pub fn ty_to_cs<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<String> {
                 TyKind::Dynamic(..) => {
                     "/* *dyn */ global::r2CsRuntime.DynPointer<object>".into()
                 }
+                // *const T / *mut T → raw C# pointer
                 _ => {
                     let cs_inner = ty_to_cs(tcx, *inner)?;
-                    format!("global::r2CsRuntime.Pointer<{cs_inner}>")
+                    format!("{cs_inner}*")
                 }
             }
         }
@@ -100,7 +113,14 @@ pub fn ty_to_cs<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<String> {
         // ── generic parameters ────────────────────────────────────────────
         TyKind::Param(param) => {
             use crate::codegen::naming;
-            naming::generic_param_name(param.name.as_str())
+            let name = param.name.as_str();
+            // The trait's implicit Self type parameter keeps its Rust name.
+            // All other generic parameters are prefixed with P_.
+            if name == "Self" {
+                naming::SELF_PARAM.to_string()
+            } else {
+                naming::generic_param_name(name)
+            }
         }
 
         // ── unsupported ───────────────────────────────────────────────────

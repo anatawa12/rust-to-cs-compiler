@@ -4,21 +4,21 @@
 public static partial class mod_references
 {
 
-    public static int m_read_ref(global::r2CsRuntime.Ref<int> _1 /* x */)
+    public static unsafe int m_read_ref(int* _1 /* x */)
     {
         int _0 = default;
-        _0 = _1.Get();
+        _0 = (*_1);
         return _0;
     }
 
-    public static int m_add_by_ref(global::r2CsRuntime.Ref<int> _1 /* a */, global::r2CsRuntime.Ref<int> _2 /* b */)
+    public static unsafe int m_add_by_ref(int* _1 /* a */, int* _2 /* b */)
     {
         int _0 = default;
         int _3 = default;
         int _4 = default;
         (int, bool) _5 = default;
-        _3 = _1.Get();
-        _4 = _2.Get();
+        _3 = (*_1);
+        _4 = (*_2);
         _5 = ((int)(_3 + _4), false);
         global::System.Diagnostics.Debug.Assert((_5.Item2) == false);
         goto _bb1;
@@ -27,57 +27,57 @@ public static partial class mod_references
         return _0;
     }
 
-    public static global::r2CsRuntime.Void m_write_ref(global::r2CsRuntime.Ref<int> _1 /* x */, int _2 /* val */)
+    public static unsafe global::r2CsRuntime.Void m_write_ref(int* _1 /* x */, int _2 /* val */)
     {
         global::r2CsRuntime.Void _0 = default;
-        _1.Set(_2);
+        (*_1) = _2;
         return _0;
     }
 
-    public static global::r2CsRuntime.Void m_increment(global::r2CsRuntime.Ref<int> _1 /* x */)
-    {
-        global::r2CsRuntime.Void _0 = default;
-        (int, bool) _2 = default;
-        _2 = ((int)(_1.Get() + 1), false);
-        global::System.Diagnostics.Debug.Assert((_2.Item2) == false);
-        goto _bb1;
-        _bb1: ;
-        _1.Set(_2.Item1);
-        return _0;
-    }
-
-    public static global::r2CsRuntime.Void m_double_in_place(global::r2CsRuntime.Ref<int> _1 /* x */)
+    public static unsafe global::r2CsRuntime.Void m_increment(int* _1 /* x */)
     {
         global::r2CsRuntime.Void _0 = default;
         (int, bool) _2 = default;
-        _2 = ((int)(_1.Get() * 2), false);
+        _2 = ((int)((*_1) + 1), false);
         global::System.Diagnostics.Debug.Assert((_2.Item2) == false);
         goto _bb1;
         _bb1: ;
-        _1.Set(_2.Item1);
+        (*_1) = _2.Item1;
         return _0;
     }
 
-    public static global::r2CsRuntime.Void m_swap(global::r2CsRuntime.Ref<int> _1 /* a */, global::r2CsRuntime.Ref<int> _2 /* b */)
+    public static unsafe global::r2CsRuntime.Void m_double_in_place(int* _1 /* x */)
+    {
+        global::r2CsRuntime.Void _0 = default;
+        (int, bool) _2 = default;
+        _2 = ((int)((*_1) * 2), false);
+        global::System.Diagnostics.Debug.Assert((_2.Item2) == false);
+        goto _bb1;
+        _bb1: ;
+        (*_1) = _2.Item1;
+        return _0;
+    }
+
+    public static unsafe global::r2CsRuntime.Void m_swap(int* _1 /* a */, int* _2 /* b */)
     {
         global::r2CsRuntime.Void _0 = default;
         int _3 = default;
         int _4 = default;
-        _3 = _1.Get();
-        _4 = _2.Get();
-        _1.Set(_4);
-        _2.Set(_3);
+        _3 = (*_1);
+        _4 = (*_2);
+        (*_1) = _4;
+        (*_2) = _3;
         return _0;
     }
 
-    public static int m_sum_via_ref(global::r2CsRuntime.Ref<int> _1 /* a */, global::r2CsRuntime.Ref<int> _2 /* b */)
+    public static unsafe int m_sum_via_ref(int* _1 /* a */, int* _2 /* b */)
     {
         int _0 = default;
         int _3 = default;
         int _4 = default;
         (int, bool) _5 = default;
-        _3 = _1.Get();
-        _4 = _2.Get();
+        _3 = (*_1);
+        _4 = (*_2);
         _5 = ((int)(_3 + _4), false);
         global::System.Diagnostics.Debug.Assert((_5.Item2) == false);
         goto _bb1;

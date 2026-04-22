@@ -4,7 +4,7 @@
 public static partial class mod_recursion
 {
 
-    public static ulong m_factorial(ulong _1 /* n */)
+    public static unsafe ulong m_factorial(ulong _1 /* n */)
     {
         ulong _0 = default;
         bool _2 = default;
@@ -43,7 +43,7 @@ public static partial class mod_recursion
         return _0;
     }
 
-    public static ulong m_fibonacci(uint _1 /* n */)
+    public static unsafe ulong m_fibonacci(uint _1 /* n */)
     {
         ulong _0 = default;
         bool _2 = default;
@@ -107,7 +107,7 @@ public static partial class mod_recursion
         return _0;
     }
 
-    public static long m_power(long _1 /* base */, uint _2 /* exp */)
+    public static unsafe long m_power(long _1 /* base */, uint _2 /* exp */)
     {
         long _0 = default;
         bool _3 = default;
@@ -146,7 +146,7 @@ public static partial class mod_recursion
         return _0;
     }
 
-    public static ulong m_gcd(ulong _1 /* a */, ulong _2 /* b */)
+    public static unsafe ulong m_gcd(ulong _1 /* a */, ulong _2 /* b */)
     {
         ulong _0 = default;
         bool _3 = default;
@@ -176,7 +176,7 @@ public static partial class mod_recursion
         return _0;
     }
 
-    public static ulong m_sum_digits(ulong _1 /* n */)
+    public static unsafe ulong m_sum_digits(ulong _1 /* n */)
     {
         ulong _0 = default;
         bool _2 = default;

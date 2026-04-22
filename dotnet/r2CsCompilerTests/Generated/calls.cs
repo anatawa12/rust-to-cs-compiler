@@ -4,7 +4,7 @@
 public static partial class mod_calls
 {
 
-    public static int m_double(int _1 /* x */)
+    public static unsafe int m_double(int _1 /* x */)
     {
         int _0 = default;
         (int, bool) _2 = default;
@@ -16,7 +16,7 @@ public static partial class mod_calls
         return _0;
     }
 
-    public static int m_triple(int _1 /* x */)
+    public static unsafe int m_triple(int _1 /* x */)
     {
         int _0 = default;
         int _2 = default;
@@ -35,7 +35,7 @@ public static partial class mod_calls
         return _0;
     }
 
-    public static int m_double_then_triple(int _1 /* x */)
+    public static unsafe int m_double_then_triple(int _1 /* x */)
     {
         int _0 = default;
         int _2 = default;
@@ -48,7 +48,7 @@ public static partial class mod_calls
         return _0;
     }
 
-    public static int m_sum_of_doubles(int _1 /* a */, int _2 /* b */)
+    public static unsafe int m_sum_of_doubles(int _1 /* a */, int _2 /* b */)
     {
         int _0 = default;
         int _3 = default;
@@ -68,7 +68,7 @@ public static partial class mod_calls
         return _0;
     }
 
-    public static int m_apply_twice(int _1 /* x */)
+    public static unsafe int m_apply_twice(int _1 /* x */)
     {
         int _0 = default;
         int _2 = default;
@@ -81,7 +81,7 @@ public static partial class mod_calls
         return _0;
     }
 
-    public static int m_square(int _1 /* x */)
+    public static unsafe int m_square(int _1 /* x */)
     {
         int _0 = default;
         (int, bool) _2 = default;
@@ -93,7 +93,7 @@ public static partial class mod_calls
         return _0;
     }
 
-    public static int m_sum_of_squares(int _1 /* a */, int _2 /* b */)
+    public static unsafe int m_sum_of_squares(int _1 /* a */, int _2 /* b */)
     {
         int _0 = default;
         int _3 = default;
@@ -113,7 +113,7 @@ public static partial class mod_calls
         return _0;
     }
 
-    public static bool m_pythagorean_check(int _1 /* a */, int _2 /* b */, int _3 /* c */)
+    public static unsafe bool m_pythagorean_check(int _1 /* a */, int _2 /* b */, int _3 /* c */)
     {
         bool _0 = default;
         int _4 = default;

@@ -40,7 +40,7 @@ public static partial class mod_pattern_match
         public const byte k_Neg = 3;
     }
 
-    public static int m_eval(global::mod_pattern_match.s_Expr _1 /* e */)
+    public static unsafe int m_eval(global::mod_pattern_match.s_Expr _1 /* e */)
     {
         int _0 = default;
         nint _2 = default;
@@ -103,7 +103,7 @@ public static partial class mod_pattern_match
         return _0;
     }
 
-    public static bool m_is_zero(global::mod_pattern_match.s_Expr _1 /* e */)
+    public static unsafe bool m_is_zero(global::mod_pattern_match.s_Expr _1 /* e */)
     {
         bool _0 = default;
         int _2 = default;
@@ -132,7 +132,7 @@ public static partial class mod_pattern_match
         public const byte k_Custom = 3;
     }
 
-    public static bool m_is_primary(global::mod_pattern_match.s_Color _1 /* c */)
+    public static unsafe bool m_is_primary(global::mod_pattern_match.s_Color _1 /* c */)
     {
         bool _0 = default;
         nint _2 = default;
@@ -162,7 +162,7 @@ public static partial class mod_pattern_match
         return _0;
     }
 
-    public static byte m_red_component(global::mod_pattern_match.s_Color _1 /* c */)
+    public static unsafe byte m_red_component(global::mod_pattern_match.s_Color _1 /* c */)
     {
         byte _0 = default;
         nint _2 = default;
@@ -200,7 +200,7 @@ public static partial class mod_pattern_match
         return _0;
     }
 
-    public static uint m_brightness(global::mod_pattern_match.s_Color _1 /* c */)
+    public static unsafe uint m_brightness(global::mod_pattern_match.s_Color _1 /* c */)
     {
         uint _0 = default;
         nint _2 = default;

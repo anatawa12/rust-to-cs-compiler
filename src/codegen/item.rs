@@ -83,7 +83,7 @@ pub fn compile_fn(
         .collect();
 
     w.write_line(&format!(
-        "public static {ret_str} {cs_name}({})",
+        "public static unsafe {ret_str} {cs_name}({})",
         params.join(", ")
     ));
     w.write_line("{");
@@ -276,13 +276,96 @@ fn compile_module(tcx: TyCtxt<'_>, module_id: rustc_hir::def_id::LocalModDefId, 
             }
             // use / extern crate — no C# equivalent needed.
             ItemKind::Use(..) | ItemKind::ExternCrate(..) => {}
-            // Trait definitions — emit as a comment for now.
-            ItemKind::Trait(_, _, _, _, ident, _, _, _) => {
-                w.write_line(&format!("// trait {}", ident.name.as_str()));
+            // Trait definitions → C# interface t_Foo<Self> with static abstract methods.
+            ItemKind::Trait(_, _, _, _, ident, _, _, items) => {
+                w.write_line("");
+                compile_trait(tcx, item_id.owner_id.def_id, ident.name.as_str(), items, w);
             }
             _ => {}
         }
     }
+}
+
+/// Compile a trait definition into a C# `interface t_Foo<Self>`.
+///
+/// Each method in the trait becomes a `static abstract` member so that
+/// generic functions with a `T: Foo` bound can call `T.m_method(...)`.
+/// The `where Self : t_Foo<Self>` F-bounded constraint ensures that the
+/// self type is always constrained to a concrete implementor.
+fn compile_trait<'hir>(
+    tcx: TyCtxt<'_>,
+    def_id: rustc_hir::def_id::LocalDefId,
+    trait_name: &str,
+    items: &[rustc_hir::TraitItemId],
+    w: &mut CsWriter,
+) {
+    let iface_name = naming::trait_iface_name(trait_name);
+
+    // Build the generic parameter list.  The trait's own generics always
+    // include an implicit `Self` parameter at index 0, followed by any
+    // explicit type parameters the trait declares.
+    let generics = tcx.generics_of(def_id.to_def_id());
+    let type_params: Vec<String> = generics
+        .own_params
+        .iter()
+        .filter_map(|p| {
+            use rustc_middle::ty::GenericParamDefKind;
+            if let GenericParamDefKind::Type { .. } = p.kind {
+                let name = p.name.as_str();
+                if name == "Self" {
+                    Some(naming::SELF_PARAM.to_string())
+                } else {
+                    Some(naming::generic_param_name(name))
+                }
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // If no type params were found, still include Self.
+    let params_str = if type_params.is_empty() {
+        naming::SELF_PARAM.to_string()
+    } else {
+        type_params.join(", ")
+    };
+
+    let self_constraint = format!("{iface_name}<{params_str}>");
+    w.write_line(&format!(
+        "public interface {iface_name}<{params_str}> where {} : {self_constraint}",
+        naming::SELF_PARAM
+    ));
+    w.write_line("{");
+    w.indent();
+
+    for item_id in items {
+        use rustc_hir::TraitItemKind;
+        let trait_item = tcx.hir_trait_item(*item_id);
+        if let TraitItemKind::Fn(_, _) = trait_item.kind {
+            let method_cs = naming::method_name(trait_item.ident.name.as_str());
+            let item_def_id = item_id.owner_id.def_id;
+            let fn_sig = tcx.fn_sig(item_def_id).skip_binder().skip_binder();
+            let ret_str = ty_to_cs(tcx, fn_sig.output())
+                .unwrap_or_else(|| "object /* unknown */".into());
+            let params: Vec<String> = fn_sig
+                .inputs()
+                .iter()
+                .enumerate()
+                .map(|(i, &ty)| {
+                    let ty_str = ty_to_cs(tcx, ty)
+                        .unwrap_or_else(|| "object /* unknown */".into());
+                    format!("{ty_str} _{}", i + 1)
+                })
+                .collect();
+            w.write_line(&format!(
+                "static abstract {ret_str} {method_cs}({});",
+                params.join(", ")
+            ));
+        }
+    }
+
+    w.dedent();
+    w.write_line("}");
 }
 
 /// Compile an inherent `impl` block.
@@ -315,7 +398,24 @@ fn compile_impl<'hir>(
         }
     };
 
-    w.write_line(&format!("public partial struct {self_ty_name}{generics_str}"));
+    // If this is a trait impl, add the `: t_TraitName<SelfType>` clause.
+    // Each `impl Trait for Type` block emits a `partial struct` declaration
+    // that carries the interface.  C# allows multiple partial declarations
+    // for the same struct, each adding different interfaces.
+    let trait_clause = if let Some(trait_ref) = impl_block.of_trait {
+        if let Some(last_seg) = trait_ref.trait_ref.path.segments.last() {
+            let iface_name = naming::trait_iface_name(last_seg.ident.name.as_str());
+            // Substitute Self with the concrete type (including its own generics).
+            let cs_self = format!("{self_ty_name}{generics_str}");
+            format!(" : {iface_name}<{cs_self}>")
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
+
+    w.write_line(&format!("public partial struct {self_ty_name}{generics_str}{trait_clause}"));
     w.write_line("{");
     w.indent();
 
@@ -381,7 +481,7 @@ fn compile_method(
         .collect();
 
     w.write_line(&format!(
-        "public static {ret_str} {cs_name}({})",
+        "public static unsafe {ret_str} {cs_name}({})",
         params.join(", ")
     ));
     w.write_line("{");

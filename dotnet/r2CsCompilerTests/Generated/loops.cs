@@ -4,7 +4,7 @@
 public static partial class mod_loops
 {
 
-    public static int m_sum_to(int _1 /* n */)
+    public static unsafe int m_sum_to(int _1 /* n */)
     {
         int _0 = default;
         int _2 = default;
@@ -46,7 +46,7 @@ public static partial class mod_loops
         return _0;
     }
 
-    public static int m_product_to(int _1 /* n */)
+    public static unsafe int m_product_to(int _1 /* n */)
     {
         int _0 = default;
         int _2 = default;
@@ -88,7 +88,7 @@ public static partial class mod_loops
         return _0;
     }
 
-    public static int m_count_down(int _1 /* start */)
+    public static unsafe int m_count_down(int _1 /* start */)
     {
         int _0 = default;
         int _2 = default;
@@ -128,7 +128,7 @@ public static partial class mod_loops
         goto _bb1;
     }
 
-    public static int m_first_multiple_of_7_above(int _1 /* x */)
+    public static unsafe int m_first_multiple_of_7_above(int _1 /* x */)
     {
         int _0 = default;
         int _2 = default;
@@ -181,7 +181,7 @@ public static partial class mod_loops
         goto _bb2;
     }
 
-    public static ulong m_collatz_steps(ulong _1 /* n */)
+    public static unsafe ulong m_collatz_steps(ulong _1 /* n */)
     {
         ulong _0 = default;
         ulong _2 = default;
@@ -258,7 +258,7 @@ public static partial class mod_loops
         return _0;
     }
 
-    public static int m_max_in_range(int _1 /* start */, int _2 /* end */)
+    public static unsafe int m_max_in_range(int _1 /* start */, int _2 /* end */)
     {
         int _0 = default;
         int _3 = default;

@@ -21,7 +21,7 @@ public static partial class mod_calculator
         public const byte k_Div = 4;
     }
 
-    public static long m_token_value(global::mod_calculator.s_Token _1 /* t */)
+    public static unsafe long m_token_value(global::mod_calculator.s_Token _1 /* t */)
     {
         long _0 = default;
         nint _2 = default;
@@ -46,7 +46,7 @@ public static partial class mod_calculator
         return _0;
     }
 
-    public static bool m_is_operator(global::mod_calculator.s_Token _1 /* t */)
+    public static unsafe bool m_is_operator(global::mod_calculator.s_Token _1 /* t */)
     {
         bool _0 = default;
         nint _2 = default;
@@ -87,14 +87,14 @@ public static partial class mod_calculator
     public partial struct s_Calculator
     {
 
-        public static global::mod_calculator.s_Calculator m_new()
+        public static unsafe global::mod_calculator.s_Calculator m_new()
         {
             global::mod_calculator.s_Calculator _0 = default;
             _0 = new global::mod_calculator.s_Calculator { f_accumulator = 0, f_last_op = 0 };
             return _0;
         }
 
-        public static global::mod_calculator.s_Calculator m_apply(global::mod_calculator.s_Calculator _1 /* self */, int _2 /* op */, long _3 /* val */)
+        public static unsafe global::mod_calculator.s_Calculator m_apply(global::mod_calculator.s_Calculator _1 /* self */, int _2 /* op */, long _3 /* val */)
         {
             global::mod_calculator.s_Calculator _0 = default;
             long _4 = default;
@@ -184,7 +184,7 @@ public static partial class mod_calculator
             return _0;
         }
 
-        public static long m_result(global::mod_calculator.s_Calculator _1 /* self */)
+        public static unsafe long m_result(global::mod_calculator.s_Calculator _1 /* self */)
         {
             long _0 = default;
             _0 = _1.f_accumulator;
@@ -192,7 +192,7 @@ public static partial class mod_calculator
         }
     }
 
-    public static long m_compute(long _1 /* a */, int _2 /* op */, long _3 /* b */)
+    public static unsafe long m_compute(long _1 /* a */, int _2 /* op */, long _3 /* b */)
     {
         long _0 = default;
         global::mod_calculator.s_Calculator _4 = default;
@@ -213,7 +213,7 @@ public static partial class mod_calculator
         return _0;
     }
 
-    public static long m_multi_op(long _1 /* a */, long _2 /* b */, long _3 /* c */)
+    public static unsafe long m_multi_op(long _1 /* a */, long _2 /* b */, long _3 /* c */)
     {
         long _0 = default;
         long _4 = default;

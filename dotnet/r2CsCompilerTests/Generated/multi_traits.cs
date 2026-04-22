@@ -3,8 +3,16 @@
 
 public static partial class mod_multi_traits
 {
-    // trait Measurable
-    // trait Scalable
+
+    public interface t_Measurable<Self> where Self : t_Measurable<Self>
+    {
+        static abstract long m_measure(Self _1);
+    }
+
+    public interface t_Scalable<Self> where Self : t_Scalable<Self>
+    {
+        static abstract Self m_scale(Self _1, int _2);
+    }
 
     public partial struct s_Circle
     {
@@ -16,10 +24,10 @@ public static partial class mod_multi_traits
         public int f_side;
     }
 
-    public partial struct s_Circle
+    public partial struct s_Circle : t_Measurable<s_Circle>
     {
 
-        public static long m_measure(global::mod_multi_traits.s_Circle _1 /* self */)
+        public static unsafe long m_measure(global::mod_multi_traits.s_Circle _1 /* self */)
         {
             long _0 = default;
             long _2 = default;
@@ -40,10 +48,10 @@ public static partial class mod_multi_traits
         }
     }
 
-    public partial struct s_Square
+    public partial struct s_Square : t_Measurable<s_Square>
     {
 
-        public static long m_measure(global::mod_multi_traits.s_Square _1 /* self */)
+        public static unsafe long m_measure(global::mod_multi_traits.s_Square _1 /* self */)
         {
             long _0 = default;
             long _2 = default;
@@ -64,10 +72,10 @@ public static partial class mod_multi_traits
         }
     }
 
-    public partial struct s_Circle
+    public partial struct s_Circle : t_Scalable<s_Circle>
     {
 
-        public static global::mod_multi_traits.s_Circle m_scale(global::mod_multi_traits.s_Circle _1 /* self */, int _2 /* factor */)
+        public static unsafe global::mod_multi_traits.s_Circle m_scale(global::mod_multi_traits.s_Circle _1 /* self */, int _2 /* factor */)
         {
             global::mod_multi_traits.s_Circle _0 = default;
             int _3 = default;
@@ -84,10 +92,10 @@ public static partial class mod_multi_traits
         }
     }
 
-    public partial struct s_Square
+    public partial struct s_Square : t_Scalable<s_Square>
     {
 
-        public static global::mod_multi_traits.s_Square m_scale(global::mod_multi_traits.s_Square _1 /* self */, int _2 /* factor */)
+        public static unsafe global::mod_multi_traits.s_Square m_scale(global::mod_multi_traits.s_Square _1 /* self */, int _2 /* factor */)
         {
             global::mod_multi_traits.s_Square _0 = default;
             int _3 = default;
@@ -104,7 +112,7 @@ public static partial class mod_multi_traits
         }
     }
 
-    public static long m_circle_measure(global::mod_multi_traits.s_Circle _1 /* c */)
+    public static unsafe long m_circle_measure(global::mod_multi_traits.s_Circle _1 /* c */)
     {
         long _0 = default;
         _0 = global::mod_multi_traits.s_Circle.m_measure(_1);
@@ -113,7 +121,7 @@ public static partial class mod_multi_traits
         return _0;
     }
 
-    public static long m_square_measure(global::mod_multi_traits.s_Square _1 /* s */)
+    public static unsafe long m_square_measure(global::mod_multi_traits.s_Square _1 /* s */)
     {
         long _0 = default;
         _0 = global::mod_multi_traits.s_Square.m_measure(_1);
@@ -122,7 +130,7 @@ public static partial class mod_multi_traits
         return _0;
     }
 
-    public static long m_scaled_circle_measure(global::mod_multi_traits.s_Circle _1 /* c */, int _2 /* factor */)
+    public static unsafe long m_scaled_circle_measure(global::mod_multi_traits.s_Circle _1 /* c */, int _2 /* factor */)
     {
         long _0 = default;
         global::mod_multi_traits.s_Circle _3 = default;
@@ -135,7 +143,7 @@ public static partial class mod_multi_traits
         return _0;
     }
 
-    public static long m_scaled_square_measure(global::mod_multi_traits.s_Square _1 /* s */, int _2 /* factor */)
+    public static unsafe long m_scaled_square_measure(global::mod_multi_traits.s_Square _1 /* s */, int _2 /* factor */)
     {
         long _0 = default;
         global::mod_multi_traits.s_Square _3 = default;
@@ -148,7 +156,7 @@ public static partial class mod_multi_traits
         return _0;
     }
 
-    public static bool m_compare_areas(global::mod_multi_traits.s_Circle _1 /* c */, global::mod_multi_traits.s_Square _2 /* s */)
+    public static unsafe bool m_compare_areas(global::mod_multi_traits.s_Circle _1 /* c */, global::mod_multi_traits.s_Square _2 /* s */)
     {
         bool _0 = default;
         long _3 = default;

@@ -3,24 +3,29 @@
 
 public static partial class mod_traits
 {
-    // trait Describable
+
+    public interface t_Describable<Self> where Self : t_Describable<Self>
+    {
+        static abstract int m_value(Self _1);
+        static abstract int m_doubled(Self _1);
+    }
 
     public partial struct s_Wrapper
     {
         public int f_0;
     }
 
-    public partial struct s_Wrapper
+    public partial struct s_Wrapper : t_Describable<s_Wrapper>
     {
 
-        public static int m_value(global::mod_traits.s_Wrapper _1 /* self */)
+        public static unsafe int m_value(global::mod_traits.s_Wrapper _1 /* self */)
         {
             int _0 = default;
             _0 = _1.f_0;
             return _0;
         }
 
-        public static int m_doubled(global::mod_traits.s_Wrapper _1 /* self */)
+        public static unsafe int m_doubled(global::mod_traits.s_Wrapper _1 /* self */)
         {
             int _0 = default;
             int _2 = default;
@@ -35,7 +40,7 @@ public static partial class mod_traits
         }
     }
 
-    public static int m_get_value(global::mod_traits.s_Wrapper _1 /* w */)
+    public static unsafe int m_get_value(global::mod_traits.s_Wrapper _1 /* w */)
     {
         int _0 = default;
         _0 = global::mod_traits.s_Wrapper.m_value(_1);
@@ -44,7 +49,7 @@ public static partial class mod_traits
         return _0;
     }
 
-    public static int m_get_doubled(global::mod_traits.s_Wrapper _1 /* w */)
+    public static unsafe int m_get_doubled(global::mod_traits.s_Wrapper _1 /* w */)
     {
         int _0 = default;
         _0 = global::mod_traits.s_Wrapper.m_doubled(_1);
@@ -52,7 +57,12 @@ public static partial class mod_traits
         _bb1: ;
         return _0;
     }
-    // trait Counter
+
+    public interface t_Counter<Self> where Self : t_Counter<Self>
+    {
+        static abstract uint m_count(Self _1);
+        static abstract bool m_is_even(Self _1);
+    }
 
     public partial struct s_Counter3
     {
@@ -64,17 +74,17 @@ public static partial class mod_traits
         public uint f_0;
     }
 
-    public partial struct s_Counter3
+    public partial struct s_Counter3 : t_Counter<s_Counter3>
     {
 
-        public static uint m_count(global::mod_traits.s_Counter3 _1 /* self */)
+        public static unsafe uint m_count(global::mod_traits.s_Counter3 _1 /* self */)
         {
             uint _0 = default;
             _0 = _1.f_0;
             return _0;
         }
 
-        public static bool m_is_even(global::mod_traits.s_Counter3 _1 /* self */)
+        public static unsafe bool m_is_even(global::mod_traits.s_Counter3 _1 /* self */)
         {
             bool _0 = default;
             uint _2 = default;
@@ -91,17 +101,17 @@ public static partial class mod_traits
         }
     }
 
-    public partial struct s_Counter7
+    public partial struct s_Counter7 : t_Counter<s_Counter7>
     {
 
-        public static uint m_count(global::mod_traits.s_Counter7 _1 /* self */)
+        public static unsafe uint m_count(global::mod_traits.s_Counter7 _1 /* self */)
         {
             uint _0 = default;
             _0 = _1.f_0;
             return _0;
         }
 
-        public static bool m_is_even(global::mod_traits.s_Counter7 _1 /* self */)
+        public static unsafe bool m_is_even(global::mod_traits.s_Counter7 _1 /* self */)
         {
             bool _0 = default;
             uint _2 = default;
@@ -118,7 +128,7 @@ public static partial class mod_traits
         }
     }
 
-    public static uint m_triple_count(global::mod_traits.s_Counter3 _1 /* c */)
+    public static unsafe uint m_triple_count(global::mod_traits.s_Counter3 _1 /* c */)
     {
         uint _0 = default;
         uint _2 = default;
@@ -134,7 +144,7 @@ public static partial class mod_traits
         return _0;
     }
 
-    public static bool m_seven_is_even(global::mod_traits.s_Counter7 _1 /* c */)
+    public static unsafe bool m_seven_is_even(global::mod_traits.s_Counter7 _1 /* c */)
     {
         bool _0 = default;
         _0 = global::mod_traits.s_Counter7.m_is_even(_1);

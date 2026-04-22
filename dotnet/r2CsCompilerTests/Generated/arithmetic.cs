@@ -4,7 +4,7 @@
 public static partial class mod_arithmetic
 {
 
-    public static int m_add(int _1 /* a */, int _2 /* b */)
+    public static unsafe int m_add(int _1 /* a */, int _2 /* b */)
     {
         int _0 = default;
         (int, bool) _3 = default;
@@ -16,7 +16,7 @@ public static partial class mod_arithmetic
         return _0;
     }
 
-    public static int m_sub(int _1 /* a */, int _2 /* b */)
+    public static unsafe int m_sub(int _1 /* a */, int _2 /* b */)
     {
         int _0 = default;
         (int, bool) _3 = default;
@@ -28,7 +28,7 @@ public static partial class mod_arithmetic
         return _0;
     }
 
-    public static int m_mul(int _1 /* a */, int _2 /* b */)
+    public static unsafe int m_mul(int _1 /* a */, int _2 /* b */)
     {
         int _0 = default;
         (int, bool) _3 = default;
@@ -40,7 +40,7 @@ public static partial class mod_arithmetic
         return _0;
     }
 
-    public static int m_div(int _1 /* a */, int _2 /* b */)
+    public static unsafe int m_div(int _1 /* a */, int _2 /* b */)
     {
         int _0 = default;
         bool _3 = default;
@@ -61,7 +61,7 @@ public static partial class mod_arithmetic
         return _0;
     }
 
-    public static int m_rem(int _1 /* a */, int _2 /* b */)
+    public static unsafe int m_rem(int _1 /* a */, int _2 /* b */)
     {
         int _0 = default;
         bool _3 = default;
@@ -82,7 +82,7 @@ public static partial class mod_arithmetic
         return _0;
     }
 
-    public static int m_max(int _1 /* a */, int _2 /* b */)
+    public static unsafe int m_max(int _1 /* a */, int _2 /* b */)
     {
         int _0 = default;
         bool _3 = default;
@@ -105,7 +105,7 @@ public static partial class mod_arithmetic
         return _0;
     }
 
-    public static int m_min(int _1 /* a */, int _2 /* b */)
+    public static unsafe int m_min(int _1 /* a */, int _2 /* b */)
     {
         int _0 = default;
         bool _3 = default;
@@ -128,7 +128,7 @@ public static partial class mod_arithmetic
         return _0;
     }
 
-    public static int m_abs(int _1 /* a */)
+    public static unsafe int m_abs(int _1 /* a */)
     {
         int _0 = default;
         bool _2 = default;
@@ -156,7 +156,7 @@ public static partial class mod_arithmetic
         return _0;
     }
 
-    public static int m_fib(int _1 /* n */)
+    public static unsafe int m_fib(int _1 /* n */)
     {
         int _0 = default;
         bool _2 = default;
@@ -206,7 +206,7 @@ public static partial class mod_arithmetic
         return _0;
     }
 
-    public static ulong m_factorial(ulong _1 /* n */)
+    public static unsafe ulong m_factorial(ulong _1 /* n */)
     {
         ulong _0 = default;
         bool _2 = default;
@@ -245,7 +245,7 @@ public static partial class mod_arithmetic
         return _0;
     }
 
-    public static bool m_is_even(int _1 /* n */)
+    public static unsafe bool m_is_even(int _1 /* n */)
     {
         bool _0 = default;
         int _2 = default;
@@ -268,7 +268,7 @@ public static partial class mod_arithmetic
         return _0;
     }
 
-    public static uint m_gcd(uint _1 /* a */, uint _2 /* b */)
+    public static unsafe uint m_gcd(uint _1 /* a */, uint _2 /* b */)
     {
         uint _0 = default;
         bool _3 = default;

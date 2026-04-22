@@ -4,7 +4,7 @@
 public static partial class mod_strings
 {
 
-    public static byte m_first_char_code(string _1 /* s */)
+    public static unsafe byte m_first_char_code(string _1 /* s */)
     {
         byte _0 = default;
         global::r2CsRuntime.LenRef<global::r2CsRuntime.Slice<byte>> _2 = default;
@@ -42,7 +42,7 @@ public static partial class mod_strings
         return _0;
     }
 
-    public static bool m_is_ascii_digit(char _1 /* c */)
+    public static unsafe bool m_is_ascii_digit(char _1 /* c */)
     {
         bool _0 = default;
         bool _2 = default;
@@ -65,7 +65,7 @@ public static partial class mod_strings
         return _0;
     }
 
-    public static bool m_is_ascii_alpha(char _1 /* c */)
+    public static unsafe bool m_is_ascii_alpha(char _1 /* c */)
     {
         bool _0 = default;
         bool _2 = default;
@@ -113,7 +113,7 @@ public static partial class mod_strings
         return _0;
     }
 
-    public static char m_ascii_to_upper(char _1 /* c */)
+    public static unsafe char m_ascii_to_upper(char _1 /* c */)
     {
         char _0 = default;
         bool _2 = default;
@@ -163,7 +163,7 @@ public static partial class mod_strings
         return _0;
     }
 
-    public static char m_ascii_to_lower(char _1 /* c */)
+    public static unsafe char m_ascii_to_lower(char _1 /* c */)
     {
         char _0 = default;
         bool _2 = default;
@@ -213,7 +213,7 @@ public static partial class mod_strings
         return _0;
     }
 
-    public static int m_char_digit_value(char _1 /* c */)
+    public static unsafe int m_char_digit_value(char _1 /* c */)
     {
         int _0 = default;
         bool _2 = default;
