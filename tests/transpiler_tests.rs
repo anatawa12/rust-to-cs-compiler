@@ -96,7 +96,7 @@ fn transpile_inputs_and_run_dotnet_tests() {
         "tests/ui_runner/programs/loops_advanced.rs",
         "tests/ui_runner/programs/structs_methods2.rs",
         "tests/ui_runner/programs/fn_pointers.rs",
-        // traits_generic.rs: TODO generic trait dispatch via P_T.m_method() not yet implemented
+        "tests/ui_runner/programs/traits_generic.rs",
     ];
     for rel in &inputs {
         let input = root.join(rel);
