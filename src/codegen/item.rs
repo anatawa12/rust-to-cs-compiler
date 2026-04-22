@@ -220,6 +220,17 @@ pub fn compile_crate(tcx: TyCtxt<'_>, w: &mut CsWriter) {
     // Recursively compile the crate root module.
     compile_module(tcx, rustc_hir::def_id::LocalModDefId::CRATE_DEF_ID, w);
 
+    // Compile all closure bodies.  Closures don't appear in hir_module_items;
+    // they are found via hir_body_owners().  Each closure becomes a static
+    // method whose name is derived from the containing function + closure index.
+    for owner_id in tcx.hir_body_owners() {
+        use rustc_hir::def::DefKind;
+        if matches!(tcx.def_kind(owner_id), DefKind::Closure) {
+            w.write_line("");
+            compile_closure(tcx, owner_id, w);
+        }
+    }
+
     w.dedent();
     w.write_line("}");
 }
@@ -284,6 +295,130 @@ fn compile_module(tcx: TyCtxt<'_>, module_id: rustc_hir::def_id::LocalModDefId, 
             _ => {}
         }
     }
+}
+
+/// Compile a closure body as a static method.
+///
+/// Closures are emitted as static methods at crate scope.  The method name is
+/// derived from the def path so that calls from the containing function resolve
+/// to the right method (after `DefPathData::Closure` is handled in `types.rs`).
+///
+/// The first parameter is always the captured-environment pointer (`Void*` for
+/// non-capturing closures; full capture structs are a TODO).  Subsequent
+/// parameters mirror the MIR local_decls.
+/// Compile a closure body as a pair of static methods.
+///
+/// Rust uses two calling conventions for closures:
+/// * **Call site** (`Fn::call`/`FnOnce::call_once`): the outer function packs
+///   all arguments into a single tuple and passes `(env, args_tuple)`.
+/// * **Raw body**: the MIR body has individual unpacked parameters
+///   `(env, arg1, arg2, …)`.
+///
+/// We emit:
+/// 1. A **shim** with the tupled signature (the name that call sites use).
+///    The shim unpacks the tuple and delegates to the impl.
+/// 2. An **impl** method with individual-arg signature containing the actual
+///    MIR body.
+fn compile_closure(
+    tcx: TyCtxt<'_>,
+    def_id: rustc_hir::def_id::LocalDefId,
+    w: &mut CsWriter,
+) {
+    let body = tcx.optimized_mir(def_id.to_def_id());
+
+    // _0 = return value; _1 = env (closure captured vars); _2.. = actual args.
+    let ret_ty  = body.local_decls[rustc_middle::mir::Local::ZERO].ty;
+    let env_ty  = body.local_decls[rustc_middle::mir::Local::from_usize(1)].ty;
+    let ret_str = ty_to_cs(tcx, ret_ty)
+        .unwrap_or_else(|| "object /* unknown */".into());
+    let env_str = ty_to_cs(tcx, env_ty)
+        .unwrap_or_else(|| "global::r2CsRuntime.Void".into());
+
+    // The env parameter in the MIR body has type `&closure` which our type system
+    // already maps to `Void*` (reference = raw pointer).  No extra `*` needed.
+    let env_ptr_str = env_str;
+
+    // Collect the individual arg types (_2, _3, …).
+    let arg_tys: Vec<_> = (2..=body.arg_count)
+        .map(|i| {
+            let local = rustc_middle::mir::Local::from_usize(i);
+            ty_to_cs(tcx, body.local_decls[local].ty)
+                .unwrap_or_else(|| "object /* unknown */".into())
+        })
+        .collect();
+
+    // Derive the shim name (same as what the call site resolves to).
+    let shim_name = crate::codegen::types::def_id_to_cs_path(tcx, def_id.to_def_id())
+        .rsplit('.')
+        .next()
+        .unwrap_or("m_closure")
+        .to_string();
+    let impl_name = format!("{shim_name}_impl");
+
+    // Build debug-name comments for the impl params.
+    let debug_names: std::collections::HashMap<usize, String> = body
+        .var_debug_info
+        .iter()
+        .filter_map(|dbg| {
+            if let rustc_middle::mir::VarDebugInfoContents::Place(p) = &dbg.value {
+                if p.projection.is_empty() {
+                    let idx = p.local.index();
+                    if idx >= 2 && idx <= body.arg_count {
+                        return Some((idx, dbg.name.to_string()));
+                    }
+                }
+            }
+            None
+        })
+        .collect();
+
+    // ── Emit the shim ────────────────────────────────────────────────────
+    // The shim bridges the Fn::call ABI (env_ptr + args_tuple) to the impl.
+    let tuple_ty = match arg_tys.len() {
+        0 => "global::r2CsRuntime.Void".into(),
+        1 => format!("global::System.ValueTuple<{}>", arg_tys[0]),
+        _ => format!("({})", arg_tys.join(", ")),
+    };
+    w.write_line(&format!(
+        "public static unsafe {ret_str} {shim_name}({env_ptr_str} _1, {tuple_ty} _2)"
+    ));
+    w.write_line("{");
+    w.indent();
+    // Unpack the tuple into individual calls to the impl.
+    let impl_args: Vec<String> = std::iter::once("_1".to_string())
+        .chain((0..arg_tys.len()).map(|i| {
+            if arg_tys.len() == 1 {
+                "_2.Item1".to_string()
+            } else {
+                format!("_2.Item{}", i + 1)
+            }
+        }))
+        .collect();
+    w.write_line(&format!("return {impl_name}({});", impl_args.join(", ")));
+    w.dedent();
+    w.write_line("}");
+
+    w.write_line("");
+
+    // ── Emit the impl (raw closure body) ─────────────────────────────────
+    let mut params: Vec<String> = vec![format!("{env_ptr_str} _1 /* env */")];
+    for i in 2..=body.arg_count {
+        let ty_str = arg_tys[i - 2].clone();
+        if let Some(name) = debug_names.get(&i) {
+            params.push(format!("{ty_str} _{i} /* {name} */"));
+        } else {
+            params.push(format!("{ty_str} _{i}"));
+        }
+    }
+    w.write_line(&format!(
+        "public static unsafe {ret_str} {impl_name}({})",
+        params.join(", ")
+    ));
+    w.write_line("{");
+    w.indent();
+    compile_mir_body(tcx, body, w);
+    w.dedent();
+    w.write_line("}");
 }
 
 /// Compile a trait definition into a C# `interface t_Foo<Self>`.

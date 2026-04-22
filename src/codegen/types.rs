@@ -28,13 +28,27 @@ pub fn ty_to_cs<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<String> {
         TyKind::Never => "global::r2CsRuntime.Void".into(),
 
         // ── tuples (non-unit) ─────────────────────────────────────────────
+        // C# tuple syntax requires ≥2 elements.  Single-element tuples use
+        // the explicit System.ValueTuple<T> form.
         TyKind::Tuple(fields) => {
             let parts: Option<Vec<_>> = fields
                 .iter()
                 .map(|f| ty_to_cs(tcx, f))
                 .collect();
-            format!("({})", parts?.join(", "))
+            let parts = parts?;
+            if parts.len() == 1 {
+                // C# has no `(T,)` syntax; use the struct form.
+                format!("global::System.ValueTuple<{}>", parts[0])
+            } else {
+                format!("({})", parts.join(", "))
+            }
         }
+
+        // ── closures ──────────────────────────────────────────────────────
+        // Non-capturing closures are zero-sized types (ZST).
+        // Capturing closures carry fields but for now we also map them to Void
+        // since capture analysis is a TODO.
+        TyKind::Closure(..) => "global::r2CsRuntime.Void".into(),
 
         // ── references ───────────────────────────────────────────────────
         // Thin Rust references (&T / &mut T) map to C# raw pointers (T*).
@@ -210,6 +224,12 @@ pub fn def_id_to_cs_path(tcx: TyCtxt<'_>, def_id: rustc_hir::def_id::DefId) -> S
             DefPathData::CrateRoot => {
                 // Already added.
             }
+            DefPathData::Closure => {
+                let disamb = seg.disambiguator;
+                if let Some(last) = segments.last_mut() {
+                    *last = format!("{last}_closure_{disamb}");
+                }
+            }
             _ => {}
         }
         i += 1;
@@ -325,6 +345,15 @@ pub fn fn_instance_to_cs_path<'tcx>(
                             }
                         }
                     }
+                }
+            }
+            DefPathData::Closure => {
+                // Closures don't have their own name; they append `_closure_N`
+                // to the containing function's segment so the generated method
+                // name is unique and stable.
+                let disamb = seg.disambiguator;
+                if let Some(last) = segments.last_mut() {
+                    *last = format!("{last}_closure_{disamb}");
                 }
             }
             DefPathData::CrateRoot => {}

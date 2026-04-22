@@ -483,7 +483,13 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
                         let parts: Vec<_> = fields.iter()
                             .map(|f| self.operand_cs(f))
                             .collect();
-                        format!("({})", parts.join(", "))
+                        if parts.len() == 1 {
+                            // C# has no single-element tuple literal; use the factory
+                            // method which infers the type argument.
+                            format!("global::System.ValueTuple.Create({})", parts[0])
+                        } else {
+                            format!("({})", parts.join(", "))
+                        }
                     }
                     AggregateKind::Adt(def_id, variant_idx, substs, _, _) => {
                         let adt_def = self.tcx.adt_def(*def_id);

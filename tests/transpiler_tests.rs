@@ -85,6 +85,7 @@ fn transpile_inputs_and_run_dotnet_tests() {
         "tests/inputs/tuples.rs",
         "tests/inputs/multi_traits.rs",
         "tests/inputs/strings.rs",
+        "tests/inputs/closures.rs",
     ];
     for rel in &inputs {
         let input = root.join(rel);
