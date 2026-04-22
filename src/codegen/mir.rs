@@ -215,6 +215,12 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
                 target,
                 ..
             } => {
+                // Detect calls to core/std panic entry points and emit a throw instead
+                // of trying to call a non-existent generated method.
+                if is_panic_fn(self.tcx, func) {
+                    w.write_line("throw new global::r2CsRuntime.PanicException(\"explicit panic\");");
+                    return;
+                }
                 let func_cs = self.operand_cs(func);
                 let args_cs: Vec<_> = args.iter()
                     .map(|a| self.operand_cs(&a.node))
@@ -769,4 +775,48 @@ fn const_cs<'tcx>(tcx: TyCtxt<'tcx>, c: &rustc_middle::mir::Const<'tcx>) -> Stri
             }
         }
     }
+}
+
+/// Returns `true` when `func` operand refers to a known panic entry point from
+/// `core::panicking` / `std::panicking` / `core::panic` / `std::panic`.
+/// These are diverging functions that have no C# equivalent — we emit
+/// `throw new PanicException(...)` in their place.
+fn is_panic_fn<'tcx>(tcx: rustc_middle::ty::TyCtxt<'tcx>, func: &rustc_middle::mir::Operand<'tcx>) -> bool {
+    use rustc_middle::ty::TyKind;
+    if let rustc_middle::mir::Operand::Constant(c) = func {
+        if let TyKind::FnDef(def_id, _) = c.const_.ty().kind() {
+            return is_panic_def_id(tcx, *def_id);
+        }
+    }
+    false
+}
+
+/// Returns `true` if `def_id` refers to a panic entry point in `core` or `std`.
+fn is_panic_def_id(tcx: rustc_middle::ty::TyCtxt<'_>, def_id: rustc_hir::def_id::DefId) -> bool {
+    use rustc_hir::definitions::DefPathData;
+    let crate_name = tcx.crate_name(def_id.krate);
+    let name = crate_name.as_str();
+    if name != "core" && name != "std" {
+        return false;
+    }
+    // Check that the path contains a "panicking" module segment or a well-known
+    // panic function name (panic, panic_fmt, panic_nounwind, panic_explicit, ...).
+    let path = tcx.def_path(def_id);
+    let mut has_panic_module = false;
+    let mut has_panic_fn = false;
+    for seg in &path.data {
+        match &seg.data {
+            DefPathData::TypeNs(sym) | DefPathData::ValueNs(sym) => {
+                let s = sym.as_str();
+                if s == "panicking" || s == "panic" {
+                    has_panic_module = true;
+                }
+                if s.starts_with("panic") {
+                    has_panic_fn = true;
+                }
+            }
+            _ => {}
+        }
+    }
+    has_panic_module || has_panic_fn
 }
