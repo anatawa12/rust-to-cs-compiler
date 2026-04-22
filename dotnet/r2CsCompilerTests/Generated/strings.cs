@@ -143,7 +143,7 @@ public static partial class mod_strings
             goto _bb5;
         }
         _bb2: ;
-        _6 = (byte)_1;
+        _6 = unchecked((byte)_1);
         _7 = ((byte)(_6 - 97), false);
         global::System.Diagnostics.Debug.Assert((_7.Item2) == false);
         goto _bb3;
@@ -154,7 +154,7 @@ public static partial class mod_strings
         goto _bb4;
         _bb4: ;
         _4 = _8.Item1;
-        _0 = (char)_4;
+        _0 = unchecked((char)_4);
         goto _bb6;
         _bb5: ;
         _0 = _1;
@@ -193,7 +193,7 @@ public static partial class mod_strings
             goto _bb5;
         }
         _bb2: ;
-        _6 = (byte)_1;
+        _6 = unchecked((byte)_1);
         _7 = ((byte)(_6 - 65), false);
         global::System.Diagnostics.Debug.Assert((_7.Item2) == false);
         goto _bb3;
@@ -204,7 +204,7 @@ public static partial class mod_strings
         goto _bb4;
         _bb4: ;
         _4 = _8.Item1;
-        _0 = (char)_4;
+        _0 = unchecked((char)_4);
         goto _bb6;
         _bb5: ;
         _0 = _1;
@@ -241,8 +241,8 @@ public static partial class mod_strings
             goto _bb4;
         }
         _bb2: ;
-        _4 = (int)_1;
-        _5 = (int)'0';
+        _4 = unchecked((int)_1);
+        _5 = unchecked((int)'0');
         _6 = ((int)(_4 - _5), false);
         global::System.Diagnostics.Debug.Assert((_6.Item2) == false);
         goto _bb3;

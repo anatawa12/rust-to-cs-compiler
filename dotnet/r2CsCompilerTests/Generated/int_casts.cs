@@ -7,56 +7,56 @@ public static partial class mod_int_casts
     public static unsafe long m_i32_to_i64(int _1 /* x */)
     {
         long _0 = default;
-        _0 = (long)_1;
+        _0 = unchecked((long)_1);
         return _0;
     }
 
     public static unsafe int m_i64_to_i32(long _1 /* x */)
     {
         int _0 = default;
-        _0 = (int)_1;
+        _0 = unchecked((int)_1);
         return _0;
     }
 
     public static unsafe int m_u8_to_i32(byte _1 /* x */)
     {
         int _0 = default;
-        _0 = (int)_1;
+        _0 = unchecked((int)_1);
         return _0;
     }
 
     public static unsafe byte m_i32_to_u8(int _1 /* x */)
     {
         byte _0 = default;
-        _0 = (byte)_1;
+        _0 = unchecked((byte)_1);
         return _0;
     }
 
     public static unsafe double m_i32_to_f64(int _1 /* x */)
     {
         double _0 = default;
-        _0 = (double)_1;
+        _0 = unchecked((double)_1);
         return _0;
     }
 
     public static unsafe int m_f64_to_i32(double _1 /* x */)
     {
         int _0 = default;
-        _0 = (int)_1;
+        _0 = unchecked((int)_1);
         return _0;
     }
 
     public static unsafe int m_u32_to_i32_wrap(uint _1 /* x */)
     {
         int _0 = default;
-        _0 = (int)_1;
+        _0 = unchecked((int)_1);
         return _0;
     }
 
     public static unsafe uint m_i32_to_u32_wrap(int _1 /* x */)
     {
         uint _0 = default;
-        _0 = (uint)_1;
+        _0 = unchecked((uint)_1);
         return _0;
     }
 
@@ -64,8 +64,8 @@ public static partial class mod_int_casts
     {
         uint _0 = default;
         ushort _2 = default;
-        _2 = (ushort)_1;
-        _0 = (uint)_2;
+        _2 = unchecked((ushort)_1);
+        _0 = unchecked((uint)_2);
         return _0;
     }
 
@@ -73,8 +73,8 @@ public static partial class mod_int_casts
     {
         int _0 = default;
         byte _2 = default;
-        _2 = (byte)_1;
-        _0 = (int)_2;
+        _2 = unchecked((byte)_1);
+        _0 = unchecked((int)_2);
         return _0;
     }
 
@@ -112,7 +112,7 @@ public static partial class mod_int_casts
         goto _bb3;
         _bb3: ;
         _3 = _8.Item1;
-        _9 = (uint)1;
+        _9 = unchecked((uint)1);
         _10 = (_9 < 32);
         global::System.Diagnostics.Debug.Assert((_10) == true);
         goto _bb4;
@@ -165,7 +165,7 @@ public static partial class mod_int_casts
             goto _bb7;
         }
         _bb4: ;
-        _8 = (uint)1;
+        _8 = unchecked((uint)1);
         _9 = (_8 < 32);
         global::System.Diagnostics.Debug.Assert((_9) == true);
         goto _bb5;

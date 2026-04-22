@@ -36,9 +36,9 @@ public static partial class mod_multi_traits
             int _5 = default;
             (long, bool) _6 = default;
             _3 = _1.f_radius;
-            _2 = (long)_3;
+            _2 = unchecked((long)_3);
             _5 = _1.f_radius;
-            _4 = (long)_5;
+            _4 = unchecked((long)_5);
             _6 = ((long)(_2 * _4), false);
             global::System.Diagnostics.Debug.Assert((_6.Item2) == false);
             goto _bb1;
@@ -60,9 +60,9 @@ public static partial class mod_multi_traits
             int _5 = default;
             (long, bool) _6 = default;
             _3 = _1.f_side;
-            _2 = (long)_3;
+            _2 = unchecked((long)_3);
             _5 = _1.f_side;
-            _4 = (long)_5;
+            _4 = unchecked((long)_5);
             _6 = ((long)(_2 * _4), false);
             global::System.Diagnostics.Debug.Assert((_6.Item2) == false);
             goto _bb1;

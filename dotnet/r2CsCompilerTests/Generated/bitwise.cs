@@ -95,7 +95,7 @@ public static partial class mod_bitwise
         goto _bb3;
         _bb3: ;
         _2 = _7.Item1;
-        _8 = (uint)1;
+        _8 = unchecked((uint)1);
         _9 = (_8 < 32);
         global::System.Diagnostics.Debug.Assert((_9) == true);
         goto _bb4;

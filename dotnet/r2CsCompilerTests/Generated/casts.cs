@@ -7,63 +7,63 @@ public static partial class mod_casts
     public static unsafe byte m_i32_to_u8(int _1 /* x */)
     {
         byte _0 = default;
-        _0 = (byte)_1;
+        _0 = unchecked((byte)_1);
         return _0;
     }
 
     public static unsafe int m_u8_to_i32(byte _1 /* x */)
     {
         int _0 = default;
-        _0 = (int)_1;
+        _0 = unchecked((int)_1);
         return _0;
     }
 
     public static unsafe uint m_i32_to_u32(int _1 /* x */)
     {
         uint _0 = default;
-        _0 = (uint)_1;
+        _0 = unchecked((uint)_1);
         return _0;
     }
 
     public static unsafe int m_u32_to_i32(uint _1 /* x */)
     {
         int _0 = default;
-        _0 = (int)_1;
+        _0 = unchecked((int)_1);
         return _0;
     }
 
     public static unsafe uint m_u8_to_u32(byte _1 /* x */)
     {
         uint _0 = default;
-        _0 = (uint)_1;
+        _0 = unchecked((uint)_1);
         return _0;
     }
 
     public static unsafe int m_i64_to_i32(long _1 /* x */)
     {
         int _0 = default;
-        _0 = (int)_1;
+        _0 = unchecked((int)_1);
         return _0;
     }
 
     public static unsafe long m_i32_to_i64(int _1 /* x */)
     {
         long _0 = default;
-        _0 = (long)_1;
+        _0 = unchecked((long)_1);
         return _0;
     }
 
     public static unsafe nuint m_u64_to_usize(ulong _1 /* x */)
     {
         nuint _0 = default;
-        _0 = (nuint)_1;
+        _0 = unchecked((nuint)_1);
         return _0;
     }
 
     public static unsafe byte m_saturating_cast_u8(int _1 /* x */)
     {
         byte _0 = default;
-        _0 = (byte)_1;
+        _0 = unchecked((byte)_1);
         return _0;
     }
 }

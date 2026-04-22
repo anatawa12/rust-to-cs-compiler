@@ -186,7 +186,7 @@ public static partial class mod_structs_methods2
             _bb2: ;
             _4 = (*_1).f_total;
             _6 = (*_1).f_count;
-            _5 = (long)_6;
+            _5 = unchecked((long)_6);
             _7 = (_5 == 0);
             global::System.Diagnostics.Debug.Assert((_7) == false);
             goto _bb3;

@@ -233,8 +233,8 @@ public static partial class mod_pattern_match
         _3 = _1.f_Custom.f_0;
         _4 = _1.f_Custom.f_1;
         _5 = _1.f_Custom.f_2;
-        _7 = (uint)_3;
-        _8 = (uint)_4;
+        _7 = unchecked((uint)_3);
+        _8 = unchecked((uint)_4);
         _9 = ((uint)(_7 + _8), false);
         global::System.Diagnostics.Debug.Assert((_9.Item2) == false);
         goto _bb6;
@@ -249,7 +249,7 @@ public static partial class mod_pattern_match
         goto _bb8;
         _bb6: ;
         _6 = _9.Item1;
-        _10 = (uint)_5;
+        _10 = unchecked((uint)_5);
         _11 = ((uint)(_6 + _10), false);
         global::System.Diagnostics.Debug.Assert((_11.Item2) == false);
         goto _bb7;

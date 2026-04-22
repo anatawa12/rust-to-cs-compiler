@@ -63,14 +63,14 @@ public static partial class mod_floats
     public static unsafe double m_i32_to_f64(int _1 /* x */)
     {
         double _0 = default;
-        _0 = (double)_1;
+        _0 = unchecked((double)_1);
         return _0;
     }
 
     public static unsafe int m_f64_to_i32(double _1 /* x */)
     {
         int _0 = default;
-        _0 = (int)_1;
+        _0 = unchecked((int)_1);
         return _0;
     }
 

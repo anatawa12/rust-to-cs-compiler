@@ -99,9 +99,9 @@ public static partial class mod_generics
         (long, bool) _9 = default;
         (long, bool) _10 = default;
         _3 = _1.f_x;
-        _2 = (long)_3;
+        _2 = unchecked((long)_3);
         _5 = _1.f_y;
-        _4 = (long)_5;
+        _4 = unchecked((long)_5);
         _7 = ((long)(_2 * _2), false);
         global::System.Diagnostics.Debug.Assert((_7.Item2) == false);
         goto _bb1;

@@ -2,4 +2,5 @@
   <Project Path="r2CsRuntime/r2CsRuntime.csproj" />
   <Project Path="r2CsRuntime.Tests/r2CsRuntime.Tests.csproj" />
   <Project Path="r2CsCompilerTests/r2CsCompilerTests.csproj" />
+  <Project Path="r2CsRunPassTests/r2CsRunPassTests.csproj" />
 </Solution>

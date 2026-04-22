@@ -560,7 +560,7 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
                 format!("{p}.f_discriminant")
             }
             Rvalue::CopyForDeref(place) => self.place_cs(place),
-            Rvalue::Cast(_, operand, ty) => {
+            Rvalue::Cast(cast_kind, operand, ty) => {
                 // Cast-to-function-pointer: C# requires `&MethodName` syntax, not `(T)method`.
                 if matches!(ty.kind(), rustc_middle::ty::TyKind::FnPtr(..)) {
                     let op_cs = self.operand_cs(operand);
@@ -573,11 +573,21 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
                     }
                     return format!("({ty_str})&{op_cs}");
                 }
-                // All other casts: emit a C# explicit cast: `(TargetType)operand`.
                 let op_cs = self.operand_cs(operand);
                 let ty_str = ty_to_cs(self.tcx, *ty)
                     .unwrap_or_else(|| "object /* unknown */".into());
-                format!("({ty_str}){op_cs}")
+                // Integer-to-integer casts always truncate in Rust (like C# `unchecked`).
+                // Wrap in `unchecked(...)` so constant-folded out-of-range values compile.
+                use rustc_middle::mir::CastKind;
+                let is_int_cast = matches!(
+                    cast_kind,
+                    CastKind::IntToInt | CastKind::FloatToInt | CastKind::IntToFloat
+                );
+                if is_int_cast {
+                    format!("unchecked(({ty_str}){op_cs})")
+                } else {
+                    format!("({ty_str}){op_cs}")
+                }
             }
             Rvalue::Repeat(operand, count) => {
                 // `[expr; N]` — emit a runtime array fill.
