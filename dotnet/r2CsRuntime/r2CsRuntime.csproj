@@ -5,6 +5,14 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>10</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Provides Unsafe.As, Unsafe.AddByteOffset, Unsafe.ByteOffset, etc.
+         Required for the Ref<T>/LenRef<T>/DynRef<T>/Pointer<T> implementations
+         which use byte-offset arithmetic over managed object references. -->
+    <PackageReference Include="System.Runtime.CompilerServices.Unsafe" Version="6.0.0" />
+  </ItemGroup>
 
 </Project>

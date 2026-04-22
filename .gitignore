@@ -1,1 +1,9 @@
 /target
+mir_dump/
+*.mir
+# Auto-generated run-pass C# stubs (created by `cargo test --test run_pass_tests`)
+dotnet/r2CsRunPassTests/Generated/
+dotnet/r2CsRunPassTests/Runners/
+# Old paths kept for safety
+dotnet/r2CsCompilerTests/GeneratedRunPass/
+dotnet/r2CsCompilerTests/RunPass/
