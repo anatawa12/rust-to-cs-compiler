@@ -4,14 +4,14 @@
 public static partial class mod_multi_traits
 {
 
-    public interface t_Measurable<Self> where Self : t_Measurable<Self>
+    public unsafe interface t_Measurable<Self> where Self : t_Measurable<Self>
     {
-        static abstract long m_measure(Self _1);
+        static abstract unsafe long m_measure(Self _1);
     }
 
-    public interface t_Scalable<Self> where Self : t_Scalable<Self>
+    public unsafe interface t_Scalable<Self> where Self : t_Scalable<Self>
     {
-        static abstract Self m_scale(Self _1, int _2);
+        static abstract unsafe Self m_scale(Self _1, int _2);
     }
 
     public partial struct s_Circle

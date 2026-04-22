@@ -4,10 +4,10 @@
 public static partial class mod_traits
 {
 
-    public interface t_Describable<Self> where Self : t_Describable<Self>
+    public unsafe interface t_Describable<Self> where Self : t_Describable<Self>
     {
-        static abstract int m_value(Self _1);
-        static abstract int m_doubled(Self _1);
+        static abstract unsafe int m_value(Self _1);
+        static abstract unsafe int m_doubled(Self _1);
     }
 
     public partial struct s_Wrapper
@@ -58,10 +58,10 @@ public static partial class mod_traits
         return _0;
     }
 
-    public interface t_Counter<Self> where Self : t_Counter<Self>
+    public unsafe interface t_Counter<Self> where Self : t_Counter<Self>
     {
-        static abstract uint m_count(Self _1);
-        static abstract bool m_is_even(Self _1);
+        static abstract unsafe uint m_count(Self _1);
+        static abstract unsafe bool m_is_even(Self _1);
     }
 
     public partial struct s_Counter3

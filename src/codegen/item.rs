@@ -82,8 +82,9 @@ pub fn compile_fn(
         })
         .collect();
 
+    let generic_params = cs_generic_params(tcx, def_id.to_def_id());
     w.write_line(&format!(
-        "public static unsafe {ret_str} {cs_name}({})",
+        "public static unsafe {ret_str} {cs_name}{generic_params}({})",
         params.join(", ")
     ));
     w.write_line("{");
@@ -467,7 +468,7 @@ fn compile_trait<'hir>(
 
     let self_constraint = format!("{iface_name}<{params_str}>");
     w.write_line(&format!(
-        "public interface {iface_name}<{params_str}> where {} : {self_constraint}",
+        "public unsafe interface {iface_name}<{params_str}> where {} : {self_constraint}",
         naming::SELF_PARAM
     ));
     w.write_line("{");
@@ -493,7 +494,7 @@ fn compile_trait<'hir>(
                 })
                 .collect();
             w.write_line(&format!(
-                "static abstract {ret_str} {method_cs}({});",
+                "static abstract unsafe {ret_str} {method_cs}({});",
                 params.join(", ")
             ));
         }

@@ -87,6 +87,11 @@ fn transpile_inputs_and_run_dotnet_tests() {
         "tests/inputs/strings.rs",
         "tests/inputs/closures.rs",
         "tests/inputs/drop.rs",
+        // UI-style programs (inspired by rustc's tests/ui/)
+        "tests/ui_runner/programs/numbers_arithmetic.rs",
+        "tests/ui_runner/programs/struct_methods.rs",
+        "tests/ui_runner/programs/match_patterns.rs",
+        // traits_generic.rs: TODO generic trait dispatch via P_T.m_method() not yet implemented
     ];
     for rel in &inputs {
         let input = root.join(rel);

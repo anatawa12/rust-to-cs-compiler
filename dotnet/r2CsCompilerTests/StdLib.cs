@@ -55,4 +55,40 @@ public static class mod_core
         public static bool m_is_empty<T>(LenRef<Slice<T>> slice) =>
             slice.Length == 0;
     }
+
+    /// <summary>Stubs for <c>core::num</c> (integer wrapping/checked/saturating ops).</summary>
+    public static class mod_num
+    {
+        // i32
+        public static int  m_wrapping_add(int a, int b)  => unchecked(a + b);
+        public static int  m_wrapping_sub(int a, int b)  => unchecked(a - b);
+        public static int  m_wrapping_mul(int a, int b)  => unchecked(a * b);
+        public static int  m_wrapping_neg(int a)         => unchecked(-a);
+        public static int  m_wrapping_shl(int a, int b)  => unchecked(a << b);
+        public static int  m_wrapping_shr(int a, int b)  => unchecked(a >> b);
+        public static int  m_saturating_add(int a, int b) {
+            long r = (long)a + b;
+            if (r > int.MaxValue) return int.MaxValue;
+            if (r < int.MinValue) return int.MinValue;
+            return (int)r;
+        }
+        public static int  m_saturating_sub(int a, int b) {
+            long r = (long)a - b;
+            if (r > int.MaxValue) return int.MaxValue;
+            if (r < int.MinValue) return int.MinValue;
+            return (int)r;
+        }
+        // u32
+        public static uint m_wrapping_add(uint a, uint b) => unchecked(a + b);
+        public static uint m_wrapping_sub(uint a, uint b) => unchecked(a - b);
+        public static uint m_wrapping_mul(uint a, uint b) => unchecked(a * b);
+        // i64
+        public static long m_wrapping_add(long a, long b) => unchecked(a + b);
+        public static long m_wrapping_sub(long a, long b) => unchecked(a - b);
+        public static long m_wrapping_mul(long a, long b) => unchecked(a * b);
+        // u64
+        public static ulong m_wrapping_add(ulong a, ulong b) => unchecked(a + b);
+        public static ulong m_wrapping_sub(ulong a, ulong b) => unchecked(a - b);
+        public static ulong m_wrapping_mul(ulong a, ulong b) => unchecked(a * b);
+    }
 }

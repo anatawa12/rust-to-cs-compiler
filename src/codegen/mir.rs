@@ -614,12 +614,35 @@ fn bb_label(bb: BasicBlock) -> String {
 fn const_cs<'tcx>(tcx: TyCtxt<'tcx>, c: &rustc_middle::mir::Const<'tcx>) -> String {
     use rustc_middle::mir::Const;
     match c {
-        Const::Ty(_, ty_const) => {
-            // Constants from the type system (e.g. generic const params).
-            // `try_to_leaf` gives a ScalarInt whose bits we can read directly.
+        Const::Ty(ty, ty_const) => {
+            // Constants from the type system (e.g. range start/end in SwitchInt).
+            // `try_to_leaf` gives a ScalarInt; sign-extend based on the type.
             if let Some(si) = ty_const.try_to_leaf() {
-                let bits = si.to_bits_unchecked();
-                return format!("{bits}");
+                use rustc_middle::ty::TyKind;
+                use rustc_middle::ty::IntTy;
+                match ty.kind() {
+                    TyKind::Int(k) => {
+                        let bits = si.to_bits(si.size());
+                        let signed: i128 = match k {
+                            IntTy::I8    => (bits as i8)   as i128,
+                            IntTy::I16   => (bits as i16)  as i128,
+                            IntTy::I32   => (bits as i32)  as i128,
+                            IntTy::I64   => (bits as i64)  as i128,
+                            IntTy::I128  => bits as i128,
+                            IntTy::Isize => (bits as i64)  as i128,
+                        };
+                        let cs_ty = crate::codegen::types::int_ty_cs(k);
+                        return if signed < i32::MIN as i128 || signed > i32::MAX as i128 {
+                            format!("({cs_ty}){signed}L")
+                        } else {
+                            format!("{signed}")
+                        };
+                    }
+                    _ => {
+                        let bits = si.to_bits_unchecked();
+                        return format!("{bits}");
+                    }
+                }
             }
             "/* ty const */default".into()
         }
