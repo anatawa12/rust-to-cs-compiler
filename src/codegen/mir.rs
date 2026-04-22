@@ -555,7 +555,19 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
             }
             Rvalue::CopyForDeref(place) => self.place_cs(place),
             Rvalue::Cast(_, operand, ty) => {
-                // Emit a C# explicit cast: `(TargetType)operand`.
+                // Cast-to-function-pointer: C# requires `&MethodName` syntax, not `(T)method`.
+                if matches!(ty.kind(), rustc_middle::ty::TyKind::FnPtr(..)) {
+                    let op_cs = self.operand_cs(operand);
+                    let ty_str = ty_to_cs(self.tcx, *ty)
+                        .unwrap_or_else(|| "object /* unknown */".into());
+                    // If the operand is already an address expression (starts with `&`), keep it.
+                    // Otherwise emit `&operand` for function items.
+                    if op_cs.starts_with('&') {
+                        return format!("({ty_str}){op_cs}");
+                    }
+                    return format!("({ty_str})&{op_cs}");
+                }
+                // All other casts: emit a C# explicit cast: `(TargetType)operand`.
                 let op_cs = self.operand_cs(operand);
                 let ty_str = ty_to_cs(self.tcx, *ty)
                     .unwrap_or_else(|| "object /* unknown */".into());

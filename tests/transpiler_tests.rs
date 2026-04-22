@@ -94,6 +94,8 @@ fn transpile_inputs_and_run_dotnet_tests() {
         "tests/ui_runner/programs/int_casts.rs",
         "tests/ui_runner/programs/enum_patterns.rs",
         "tests/ui_runner/programs/loops_advanced.rs",
+        "tests/ui_runner/programs/structs_methods2.rs",
+        "tests/ui_runner/programs/fn_pointers.rs",
         // traits_generic.rs: TODO generic trait dispatch via P_T.m_method() not yet implemented
     ];
     for rel in &inputs {
