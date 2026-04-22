@@ -137,6 +137,23 @@ pub fn ty_to_cs<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<String> {
             }
         }
 
+        // ── function pointers ─────────────────────────────────────────────
+        // Rust `fn(A, B) -> R` maps to C# unmanaged function pointer `delegate* unmanaged[Cdecl]<A, B, R>`.
+        // We use the simpler `delegate*<A, B, R>` (managed calling convention) since we
+        // control all generated code.
+        TyKind::FnPtr(sig_tys, _hdr) => {
+            // `sig_tys` is a `Binder<FnSigTys>` which has `inputs()` and `output()`.
+            let bound = sig_tys.skip_binder();
+            let mut parts: Vec<String> = bound
+                .inputs()
+                .iter()
+                .map(|t| ty_to_cs(tcx, *t).unwrap_or_else(|| "object".into()))
+                .collect();
+            let ret = ty_to_cs(tcx, bound.output()).unwrap_or_else(|| "void".into());
+            parts.push(ret);
+            format!("delegate*<{}>", parts.join(", "))
+        }
+
         // ── unsupported ───────────────────────────────────────────────────
         _ => return None,
     })
