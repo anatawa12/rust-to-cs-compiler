@@ -31,7 +31,7 @@ public static partial class mod_multi_traits
             _2 = (long)_3;
             _5 = _1.f_radius;
             _4 = (long)_5;
-            _6 = (_2 * _4, false);
+            _6 = ((long)(_2 * _4), false);
             global::System.Diagnostics.Debug.Assert((_6.Item2) == false);
             goto _bb1;
             _bb1: ;
@@ -55,7 +55,7 @@ public static partial class mod_multi_traits
             _2 = (long)_3;
             _5 = _1.f_side;
             _4 = (long)_5;
-            _6 = (_2 * _4, false);
+            _6 = ((long)(_2 * _4), false);
             global::System.Diagnostics.Debug.Assert((_6.Item2) == false);
             goto _bb1;
             _bb1: ;
@@ -74,7 +74,7 @@ public static partial class mod_multi_traits
             int _4 = default;
             (int, bool) _5 = default;
             _4 = _1.f_radius;
-            _5 = (_4 * _2, false);
+            _5 = ((int)(_4 * _2), false);
             global::System.Diagnostics.Debug.Assert((_5.Item2) == false);
             goto _bb1;
             _bb1: ;
@@ -94,7 +94,7 @@ public static partial class mod_multi_traits
             int _4 = default;
             (int, bool) _5 = default;
             _4 = _1.f_side;
-            _5 = (_4 * _2, false);
+            _5 = ((int)(_4 * _2), false);
             global::System.Diagnostics.Debug.Assert((_5.Item2) == false);
             goto _bb1;
             _bb1: ;

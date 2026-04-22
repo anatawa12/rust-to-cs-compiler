@@ -18,7 +18,7 @@ public static partial class mod_consts
     {
         int _0 = default;
         (int, bool) _1 = default;
-        _1 = (1 + 0, false);
+        _1 = ((int)(1 + 0), false);
         global::System.Diagnostics.Debug.Assert((_1.Item2) == false);
         goto _bb1;
         _bb1: ;
@@ -30,7 +30,7 @@ public static partial class mod_consts
     {
         int _0 = default;
         (int, bool) _2 = default;
-        _2 = (_1 * 1, false);
+        _2 = ((int)(_1 * 1), false);
         global::System.Diagnostics.Debug.Assert((_2.Item2) == false);
         goto _bb1;
         _bb1: ;

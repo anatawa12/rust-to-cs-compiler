@@ -90,7 +90,7 @@ public static partial class mod_bitwise
         _bb2: ;
         _6 = _1;
         _5 = (_6 & 1);
-        _7 = (_2 + _5, false);
+        _7 = ((uint)(_2 + _5), false);
         global::System.Diagnostics.Debug.Assert((_7.Item2) == false);
         goto _bb3;
         _bb3: ;
@@ -124,7 +124,7 @@ public static partial class mod_bitwise
             goto _bb2;
         }
         _bb1: ;
-        _5 = (_1 - 1, false);
+        _5 = ((uint)(_1 - 1), false);
         global::System.Diagnostics.Debug.Assert((_5.Item2) == false);
         goto _bb3;
         _bb2: ;

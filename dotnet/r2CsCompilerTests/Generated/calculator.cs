@@ -139,17 +139,17 @@ public static partial class mod_calculator
             }
             _bb3: ;
             _9 = _1.f_accumulator;
-            _10 = (_9 * _3, false);
+            _10 = ((long)(_9 * _3), false);
             global::System.Diagnostics.Debug.Assert((_10.Item2) == false);
             goto _bb8;
             _bb4: ;
             _7 = _1.f_accumulator;
-            _8 = (_7 - _3, false);
+            _8 = ((long)(_7 - _3), false);
             global::System.Diagnostics.Debug.Assert((_8.Item2) == false);
             goto _bb7;
             _bb5: ;
             _5 = _1.f_accumulator;
-            _6 = (_5 + _3, false);
+            _6 = ((long)(_5 + _3), false);
             global::System.Diagnostics.Debug.Assert((_6.Item2) == false);
             goto _bb6;
             _bb6: ;
@@ -219,12 +219,12 @@ public static partial class mod_calculator
         long _4 = default;
         (long, bool) _5 = default;
         (long, bool) _6 = default;
-        _5 = (_1 + _2, false);
+        _5 = ((long)(_1 + _2), false);
         global::System.Diagnostics.Debug.Assert((_5.Item2) == false);
         goto _bb1;
         _bb1: ;
         _4 = _5.Item1;
-        _6 = (_4 * _3, false);
+        _6 = ((long)(_4 * _3), false);
         global::System.Diagnostics.Debug.Assert((_6.Item2) == false);
         goto _bb2;
         _bb2: ;

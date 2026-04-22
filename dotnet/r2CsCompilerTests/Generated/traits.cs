@@ -26,7 +26,7 @@ public static partial class mod_traits
             int _2 = default;
             (int, bool) _3 = default;
             _2 = _1.f_0;
-            _3 = (_2 * 2, false);
+            _3 = ((int)(_2 * 2), false);
             global::System.Diagnostics.Debug.Assert((_3.Item2) == false);
             goto _bb1;
             _bb1: ;
@@ -126,7 +126,7 @@ public static partial class mod_traits
         _2 = global::mod_traits.s_Counter3.m_count(_1);
         goto _bb1;
         _bb1: ;
-        _3 = (_2 * 3, false);
+        _3 = ((uint)(_2 * 3), false);
         global::System.Diagnostics.Debug.Assert((_3.Item2) == false);
         goto _bb2;
         _bb2: ;

@@ -8,7 +8,7 @@ public static partial class mod_calls
     {
         int _0 = default;
         (int, bool) _2 = default;
-        _2 = (_1 + _1, false);
+        _2 = ((int)(_1 + _1), false);
         global::System.Diagnostics.Debug.Assert((_2.Item2) == false);
         goto _bb1;
         _bb1: ;
@@ -22,12 +22,12 @@ public static partial class mod_calls
         int _2 = default;
         (int, bool) _3 = default;
         (int, bool) _4 = default;
-        _3 = (_1 + _1, false);
+        _3 = ((int)(_1 + _1), false);
         global::System.Diagnostics.Debug.Assert((_3.Item2) == false);
         goto _bb1;
         _bb1: ;
         _2 = _3.Item1;
-        _4 = (_2 + _1, false);
+        _4 = ((int)(_2 + _1), false);
         global::System.Diagnostics.Debug.Assert((_4.Item2) == false);
         goto _bb2;
         _bb2: ;
@@ -60,7 +60,7 @@ public static partial class mod_calls
         _4 = global::mod_calls.m_double(_2);
         goto _bb2;
         _bb2: ;
-        _5 = (_3 + _4, false);
+        _5 = ((int)(_3 + _4), false);
         global::System.Diagnostics.Debug.Assert((_5.Item2) == false);
         goto _bb3;
         _bb3: ;
@@ -85,7 +85,7 @@ public static partial class mod_calls
     {
         int _0 = default;
         (int, bool) _2 = default;
-        _2 = (_1 * _1, false);
+        _2 = ((int)(_1 * _1), false);
         global::System.Diagnostics.Debug.Assert((_2.Item2) == false);
         goto _bb1;
         _bb1: ;
@@ -105,7 +105,7 @@ public static partial class mod_calls
         _4 = global::mod_calls.m_square(_2);
         goto _bb2;
         _bb2: ;
-        _5 = (_3 + _4, false);
+        _5 = ((int)(_3 + _4), false);
         global::System.Diagnostics.Debug.Assert((_5.Item2) == false);
         goto _bb3;
         _bb3: ;
@@ -127,7 +127,7 @@ public static partial class mod_calls
         _6 = global::mod_calls.m_square(_2);
         goto _bb2;
         _bb2: ;
-        _7 = (_5 + _6, false);
+        _7 = ((int)(_5 + _6), false);
         global::System.Diagnostics.Debug.Assert((_7.Item2) == false);
         goto _bb3;
         _bb3: ;

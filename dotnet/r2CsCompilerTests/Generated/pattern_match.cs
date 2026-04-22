@@ -77,13 +77,13 @@ public static partial class mod_pattern_match
         _bb3: ;
         _7 = _1.f_Mul.f_0;
         _8 = _1.f_Mul.f_1;
-        _9 = (_7 * _8, false);
+        _9 = ((int)(_7 * _8), false);
         global::System.Diagnostics.Debug.Assert((_9.Item2) == false);
         goto _bb7;
         _bb4: ;
         _4 = _1.f_Add.f_0;
         _5 = _1.f_Add.f_1;
-        _6 = (_4 + _5, false);
+        _6 = ((int)(_4 + _5), false);
         global::System.Diagnostics.Debug.Assert((_6.Item2) == false);
         goto _bb6;
         _bb5: ;
@@ -235,7 +235,7 @@ public static partial class mod_pattern_match
         _5 = _1.f_Custom.f_2;
         _7 = (uint)_3;
         _8 = (uint)_4;
-        _9 = (_7 + _8, false);
+        _9 = ((uint)(_7 + _8), false);
         global::System.Diagnostics.Debug.Assert((_9.Item2) == false);
         goto _bb6;
         _bb3: ;
@@ -250,7 +250,7 @@ public static partial class mod_pattern_match
         _bb6: ;
         _6 = _9.Item1;
         _10 = (uint)_5;
-        _11 = (_6 + _10, false);
+        _11 = ((uint)(_6 + _10), false);
         global::System.Diagnostics.Debug.Assert((_11.Item2) == false);
         goto _bb7;
         _bb7: ;

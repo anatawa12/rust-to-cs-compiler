@@ -341,6 +341,10 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
         let mut cur_ty = self.body.local_decls[place.local].ty;
         // Track which enum variant is active (set by Downcast projections).
         let mut cur_variant_idx: Option<rustc_abi::VariantIdx> = None;
+        // Track whether the last Deref was on a slice reference (&[T]).
+        // When true, the next Index/ConstantIndex projection should use .GetElement()
+        // instead of [idx], because LenRef<Slice<T>> doesn't support operator[].
+        let mut slice_ref_base: Option<String> = None;
 
         for proj in place.projection.iter() {
             match proj {
@@ -352,10 +356,18 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
                         TyKind::RawPtr(inner, _) => (*inner, false),
                         _ => (cur_ty, false),
                     };
-                    if is_ref {
+                    if is_ref && matches!(new_ty.kind(), TyKind::Slice(_)) {
+                        // Slice reference (&[T]): don't emit .Get() — LenRef<Slice<T>>
+                        // element access goes through .GetElement() instead.
+                        // `s` stays as the LenRef expression; record it for the Index arm.
+                        slice_ref_base = Some(s.clone());
+                        // `s` is intentionally left unchanged (the LenRef itself).
+                    } else if is_ref {
+                        slice_ref_base = None;
                         s = format!("{s}.Get()");
                     } else {
                         // Raw pointer: emit unsafe deref (will need unsafe block in real code).
+                        slice_ref_base = None;
                         s = format!("(*{s})");
                     }
                     cur_ty = new_ty;
@@ -389,19 +401,38 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
                     s = format!("{s}.{name}");
                     cur_ty = field_ty;
                     cur_variant_idx = None;
+                    slice_ref_base = None;
                 }
                 PlaceElem::Index(local) => {
-                    s = format!("{s}[{}]", local_cs_name(local));
+                    if let Some(ref base) = slice_ref_base {
+                        // Slice element access through a LenRef<Slice<T>>: use GetElement.
+                        // Use the fully-qualified static call form so the extension method
+                        // is found without requiring a `using r2CsRuntime;` directive.
+                        s = format!(
+                            "global::r2CsRuntime.SliceExt.GetElement({base}, (nint){})",
+                            local_cs_name(local)
+                        );
+                    } else {
+                        s = format!("{s}[{}]", local_cs_name(local));
+                    }
                     use rustc_middle::ty::TyKind;
                     cur_ty = match cur_ty.kind() {
                         TyKind::Array(inner, _) | TyKind::Slice(inner) => *inner,
                         _ => cur_ty,
                     };
                     cur_variant_idx = None;
+                    slice_ref_base = None;
                 }
                 PlaceElem::ConstantIndex { offset, .. } => {
-                    s = format!("{s}[{offset}]");
+                    if let Some(ref base) = slice_ref_base {
+                        s = format!(
+                            "global::r2CsRuntime.SliceExt.GetElement({base}, {offset})"
+                        );
+                    } else {
+                        s = format!("{s}[{offset}]");
+                    }
                     cur_variant_idx = None;
+                    slice_ref_base = None;
                 }
                 PlaceElem::Downcast(_, variant_idx) => {
                     // Downcast selects a variant; emit access to the payload field.
@@ -415,10 +446,12 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
                         // Record which variant is active for subsequent Field projections.
                         cur_variant_idx = Some(variant_idx);
                     }
+                    slice_ref_base = None;
                 }
                 _ => {
                     s = format!("{s} /* proj */");
                     cur_variant_idx = None;
+                    slice_ref_base = None;
                 }
             }
         }
@@ -481,8 +514,15 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
                     BinOp::Offset => return format!("({l} + {r})"),
                 };
                 // WithOverflow ops produce a tuple; emit `(result, false)`.
+                // Also cast the result back to the operand type: C# arithmetic on
+                // narrow integer types (byte, sbyte, short, ushort) promotes to int,
+                // so we need an explicit cast to keep the tuple element type correct.
                 if matches!(op, BinOp::AddWithOverflow | BinOp::SubWithOverflow | BinOp::MulWithOverflow) {
-                    format!("({l} {op_str} {r}, false)")
+                    let lhs_ty = lhs.ty(self.body, self.tcx);
+                    match ty_to_cs(self.tcx, lhs_ty) {
+                        Some(ty_str) => format!("(({ty_str})({l} {op_str} {r}), false)"),
+                        None         => format!("({l} {op_str} {r}, false)"),
+                    }
                 } else {
                     format!("({l} {op_str} {r})")
                 }
@@ -502,7 +542,20 @@ impl<'a, 'tcx> MirCtx<'a, 'tcx> {
                         }
                     }
                     UnOp::Neg => format!("(-{a})"),
-                    UnOp::PtrMetadata => format!("/* PtrMetadata */{a}"),
+                    UnOp::PtrMetadata => {
+                        // Extract metadata from a fat pointer.
+                        // For slice references (&[T]): the metadata is the element count.
+                        let op_ty = operand.ty(self.body, self.tcx);
+                        use rustc_middle::ty::TyKind;
+                        match op_ty.kind() {
+                            TyKind::Ref(_, inner, _) | TyKind::RawPtr(inner, _)
+                                if matches!(inner.kind(), TyKind::Slice(_)) =>
+                            {
+                                format!("(nuint){a}.Length")
+                            }
+                            _ => format!("/* PtrMetadata */{a}"),
+                        }
+                    }
                 }
             }
             Rvalue::Aggregate(kind, fields) => {

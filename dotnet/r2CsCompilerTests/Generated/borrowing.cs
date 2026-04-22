@@ -24,13 +24,13 @@ public static partial class mod_borrowing
         _6 = global::r2CsRuntime.RefHelper.FromVar(_3_var);
         _8 = _4.Get();
         _9 = _5.Get();
-        _10 = (_8 + _9, false);
+        _10 = ((int)(_8 + _9), false);
         global::System.Diagnostics.Debug.Assert((_10.Item2) == false);
         goto _bb1;
         _bb1: ;
         _7 = _10.Item1;
         _11 = _6.Get();
-        _12 = (_7 + _11, false);
+        _12 = ((int)(_7 + _11), false);
         global::System.Diagnostics.Debug.Assert((_12.Item2) == false);
         goto _bb2;
         _bb2: ;
@@ -79,7 +79,7 @@ public static partial class mod_borrowing
         (int, bool) _4 = default;
         _2.f_value = _1;
         _3 = global::r2CsRuntime.RefHelper.FromVar(_2);
-        _4 = (_3.Get() * 2, false);
+        _4 = ((int)(_3.Get() * 2), false);
         global::System.Diagnostics.Debug.Assert((_4.Item2) == false);
         goto _bb1;
         _bb1: ;
@@ -96,7 +96,7 @@ public static partial class mod_borrowing
         (int, bool) _4 = default;
         _2.f_value = _1;
         _3 = global::r2CsRuntime.RefHelper.FromVar(_2);
-        _4 = (_3.Get() + 1, false);
+        _4 = ((int)(_3.Get() + 1), false);
         global::System.Diagnostics.Debug.Assert((_4.Item2) == false);
         goto _bb1;
         _bb1: ;

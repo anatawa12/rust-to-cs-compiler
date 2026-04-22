@@ -19,7 +19,7 @@ public static partial class mod_references
         (int, bool) _5 = default;
         _3 = _1.Get();
         _4 = _2.Get();
-        _5 = (_3 + _4, false);
+        _5 = ((int)(_3 + _4), false);
         global::System.Diagnostics.Debug.Assert((_5.Item2) == false);
         goto _bb1;
         _bb1: ;
@@ -38,7 +38,7 @@ public static partial class mod_references
     {
         global::r2CsRuntime.Void _0 = default;
         (int, bool) _2 = default;
-        _2 = (_1.Get() + 1, false);
+        _2 = ((int)(_1.Get() + 1), false);
         global::System.Diagnostics.Debug.Assert((_2.Item2) == false);
         goto _bb1;
         _bb1: ;
@@ -50,7 +50,7 @@ public static partial class mod_references
     {
         global::r2CsRuntime.Void _0 = default;
         (int, bool) _2 = default;
-        _2 = (_1.Get() * 2, false);
+        _2 = ((int)(_1.Get() * 2), false);
         global::System.Diagnostics.Debug.Assert((_2.Item2) == false);
         goto _bb1;
         _bb1: ;
@@ -78,7 +78,7 @@ public static partial class mod_references
         (int, bool) _5 = default;
         _3 = _1.Get();
         _4 = _2.Get();
-        _5 = (_3 + _4, false);
+        _5 = ((int)(_3 + _4), false);
         global::System.Diagnostics.Debug.Assert((_5.Item2) == false);
         goto _bb1;
         _bb1: ;

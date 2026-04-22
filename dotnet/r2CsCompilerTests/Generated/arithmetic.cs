@@ -8,7 +8,7 @@ public static partial class mod_arithmetic
     {
         int _0 = default;
         (int, bool) _3 = default;
-        _3 = (_1 + _2, false);
+        _3 = ((int)(_1 + _2), false);
         global::System.Diagnostics.Debug.Assert((_3.Item2) == false);
         goto _bb1;
         _bb1: ;
@@ -20,7 +20,7 @@ public static partial class mod_arithmetic
     {
         int _0 = default;
         (int, bool) _3 = default;
-        _3 = (_1 - _2, false);
+        _3 = ((int)(_1 - _2), false);
         global::System.Diagnostics.Debug.Assert((_3.Item2) == false);
         goto _bb1;
         _bb1: ;
@@ -32,7 +32,7 @@ public static partial class mod_arithmetic
     {
         int _0 = default;
         (int, bool) _3 = default;
-        _3 = (_1 * _2, false);
+        _3 = ((int)(_1 * _2), false);
         global::System.Diagnostics.Debug.Assert((_3.Item2) == false);
         goto _bb1;
         _bb1: ;
@@ -180,7 +180,7 @@ public static partial class mod_arithmetic
         _0 = _1;
         goto _bb8;
         _bb2: ;
-        _5 = (_1 - 1, false);
+        _5 = ((int)(_1 - 1), false);
         global::System.Diagnostics.Debug.Assert((_5.Item2) == false);
         goto _bb3;
         _bb3: ;
@@ -188,7 +188,7 @@ public static partial class mod_arithmetic
         _3 = global::mod_arithmetic.m_fib(_4);
         goto _bb4;
         _bb4: ;
-        _8 = (_1 - 2, false);
+        _8 = ((int)(_1 - 2), false);
         global::System.Diagnostics.Debug.Assert((_8.Item2) == false);
         goto _bb5;
         _bb5: ;
@@ -196,7 +196,7 @@ public static partial class mod_arithmetic
         _6 = global::mod_arithmetic.m_fib(_7);
         goto _bb6;
         _bb6: ;
-        _9 = (_3 + _6, false);
+        _9 = ((int)(_3 + _6), false);
         global::System.Diagnostics.Debug.Assert((_9.Item2) == false);
         goto _bb7;
         _bb7: ;
@@ -227,7 +227,7 @@ public static partial class mod_arithmetic
         _0 = 1;
         goto _bb6;
         _bb2: ;
-        _5 = (_1 - 1, false);
+        _5 = ((ulong)(_1 - 1), false);
         global::System.Diagnostics.Debug.Assert((_5.Item2) == false);
         goto _bb3;
         _bb3: ;
@@ -235,7 +235,7 @@ public static partial class mod_arithmetic
         _3 = global::mod_arithmetic.m_factorial(_4);
         goto _bb4;
         _bb4: ;
-        _6 = (_1 * _3, false);
+        _6 = ((ulong)(_1 * _3), false);
         global::System.Diagnostics.Debug.Assert((_6.Item2) == false);
         goto _bb5;
         _bb5: ;

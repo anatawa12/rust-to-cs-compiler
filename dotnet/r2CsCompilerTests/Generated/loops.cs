@@ -30,12 +30,12 @@ public static partial class mod_loops
         }
         _bb2: ;
         _6 = _3;
-        _7 = (_2 + _6, false);
+        _7 = ((int)(_2 + _6), false);
         global::System.Diagnostics.Debug.Assert((_7.Item2) == false);
         goto _bb3;
         _bb3: ;
         _2 = _7.Item1;
-        _8 = (_3 + 1, false);
+        _8 = ((int)(_3 + 1), false);
         global::System.Diagnostics.Debug.Assert((_8.Item2) == false);
         goto _bb4;
         _bb4: ;
@@ -72,12 +72,12 @@ public static partial class mod_loops
         }
         _bb2: ;
         _6 = _3;
-        _7 = (_2 * _6, false);
+        _7 = ((int)(_2 * _6), false);
         global::System.Diagnostics.Debug.Assert((_7.Item2) == false);
         goto _bb3;
         _bb3: ;
         _2 = _7.Item1;
-        _8 = (_3 + 1, false);
+        _8 = ((int)(_3 + 1), false);
         global::System.Diagnostics.Debug.Assert((_8.Item2) == false);
         goto _bb4;
         _bb4: ;
@@ -115,12 +115,12 @@ public static partial class mod_loops
         _0 = _3;
         return _0;
         _bb3: ;
-        _6 = (_2 - 1, false);
+        _6 = ((int)(_2 - 1), false);
         global::System.Diagnostics.Debug.Assert((_6.Item2) == false);
         goto _bb4;
         _bb4: ;
         _2 = _6.Item1;
-        _7 = (_3 + 1, false);
+        _7 = ((int)(_3 + 1), false);
         global::System.Diagnostics.Debug.Assert((_7.Item2) == false);
         goto _bb5;
         _bb5: ;
@@ -141,7 +141,7 @@ public static partial class mod_loops
         bool _9 = default;
         bool _10 = default;
         (int, bool) _11 = default;
-        _3 = (_1 + 1, false);
+        _3 = ((int)(_1 + 1), false);
         global::System.Diagnostics.Debug.Assert((_3.Item2) == false);
         goto _bb1;
         _bb1: ;
@@ -173,7 +173,7 @@ public static partial class mod_loops
         _0 = _2;
         return _0;
         _bb6: ;
-        _11 = (_2 + 1, false);
+        _11 = ((int)(_2 + 1), false);
         global::System.Diagnostics.Debug.Assert((_11.Item2) == false);
         goto _bb7;
         _bb7: ;
@@ -235,19 +235,19 @@ public static partial class mod_loops
         goto _bb9;
         _bb6: ;
         _11 = _1;
-        _12 = (3 * _11, false);
+        _12 = ((ulong)(3 * _11), false);
         global::System.Diagnostics.Debug.Assert((_12.Item2) == false);
         goto _bb7;
         _bb7: ;
         _10 = _12.Item1;
-        _13 = (_10 + 1, false);
+        _13 = ((ulong)(_10 + 1), false);
         global::System.Diagnostics.Debug.Assert((_13.Item2) == false);
         goto _bb8;
         _bb8: ;
         _1 = _13.Item1;
         goto _bb9;
         _bb9: ;
-        _14 = (_2 + 1, false);
+        _14 = ((ulong)(_2 + 1), false);
         global::System.Diagnostics.Debug.Assert((_14.Item2) == false);
         goto _bb10;
         _bb10: ;
@@ -272,7 +272,7 @@ public static partial class mod_loops
         int _11 = default;
         (int, bool) _12 = default;
         _3 = _1;
-        _5 = (_1 + 1, false);
+        _5 = ((int)(_1 + 1), false);
         global::System.Diagnostics.Debug.Assert((_5.Item2) == false);
         goto _bb1;
         _bb1: ;
@@ -306,7 +306,7 @@ public static partial class mod_loops
         _3 = _11;
         goto _bb5;
         _bb5: ;
-        _12 = (_4 + 1, false);
+        _12 = ((int)(_4 + 1), false);
         global::System.Diagnostics.Debug.Assert((_12.Item2) == false);
         goto _bb6;
         _bb6: ;

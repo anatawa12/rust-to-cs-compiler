@@ -44,7 +44,7 @@ public static partial class mod_tuples
         (int, bool) _4 = default;
         _2 = _1.Item1;
         _3 = _1.Item2;
-        _4 = (_2 + _3, false);
+        _4 = ((int)(_2 + _3), false);
         global::System.Diagnostics.Debug.Assert((_4.Item2) == false);
         goto _bb1;
         _bb1: ;
@@ -70,13 +70,13 @@ public static partial class mod_tuples
         (int, bool) _7 = default;
         _3 = _1.Item1;
         _4 = _1.Item2;
-        _5 = (_3 + _4, false);
+        _5 = ((int)(_3 + _4), false);
         global::System.Diagnostics.Debug.Assert((_5.Item2) == false);
         goto _bb1;
         _bb1: ;
         _2 = _5.Item1;
         _6 = _1.Item3;
-        _7 = (_2 + _6, false);
+        _7 = ((int)(_2 + _6), false);
         global::System.Diagnostics.Debug.Assert((_7.Item2) == false);
         goto _bb2;
         _bb2: ;

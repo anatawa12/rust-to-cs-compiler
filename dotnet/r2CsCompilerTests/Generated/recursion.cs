@@ -25,7 +25,7 @@ public static partial class mod_recursion
         _0 = 1;
         goto _bb6;
         _bb2: ;
-        _5 = (_1 - 1, false);
+        _5 = ((ulong)(_1 - 1), false);
         global::System.Diagnostics.Debug.Assert((_5.Item2) == false);
         goto _bb3;
         _bb3: ;
@@ -33,7 +33,7 @@ public static partial class mod_recursion
         _3 = global::mod_recursion.m_factorial(_4);
         goto _bb4;
         _bb4: ;
-        _6 = (_1 * _3, false);
+        _6 = ((ulong)(_1 * _3), false);
         global::System.Diagnostics.Debug.Assert((_6.Item2) == false);
         goto _bb5;
         _bb5: ;
@@ -81,7 +81,7 @@ public static partial class mod_recursion
         _0 = 1;
         goto _bb10;
         _bb4: ;
-        _6 = (_1 - 1, false);
+        _6 = ((uint)(_1 - 1), false);
         global::System.Diagnostics.Debug.Assert((_6.Item2) == false);
         goto _bb5;
         _bb5: ;
@@ -89,7 +89,7 @@ public static partial class mod_recursion
         _4 = global::mod_recursion.m_fibonacci(_5);
         goto _bb6;
         _bb6: ;
-        _9 = (_1 - 2, false);
+        _9 = ((uint)(_1 - 2), false);
         global::System.Diagnostics.Debug.Assert((_9.Item2) == false);
         goto _bb7;
         _bb7: ;
@@ -97,7 +97,7 @@ public static partial class mod_recursion
         _7 = global::mod_recursion.m_fibonacci(_8);
         goto _bb8;
         _bb8: ;
-        _10 = (_4 + _7, false);
+        _10 = ((ulong)(_4 + _7), false);
         global::System.Diagnostics.Debug.Assert((_10.Item2) == false);
         goto _bb9;
         _bb9: ;
@@ -128,7 +128,7 @@ public static partial class mod_recursion
         _0 = 1;
         goto _bb6;
         _bb2: ;
-        _6 = (_2 - 1, false);
+        _6 = ((uint)(_2 - 1), false);
         global::System.Diagnostics.Debug.Assert((_6.Item2) == false);
         goto _bb3;
         _bb3: ;
@@ -136,7 +136,7 @@ public static partial class mod_recursion
         _4 = global::mod_recursion.m_power(_1, _5);
         goto _bb4;
         _bb4: ;
-        _7 = (_1 * _4, false);
+        _7 = ((long)(_1 * _4), false);
         global::System.Diagnostics.Debug.Assert((_7.Item2) == false);
         goto _bb5;
         _bb5: ;
@@ -212,7 +212,7 @@ public static partial class mod_recursion
         _5 = global::mod_recursion.m_sum_digits(_6);
         goto _bb5;
         _bb5: ;
-        _8 = (_3 + _5, false);
+        _8 = ((ulong)(_3 + _5), false);
         global::System.Diagnostics.Debug.Assert((_8.Item2) == false);
         goto _bb6;
         _bb6: ;
