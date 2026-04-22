@@ -69,7 +69,7 @@ public static partial class mod_fn_pointers
     {
         int _0 = default;
         delegate*<int, int> _2 = default;
-        _2 = (delegate*<int, int>)global::mod_fn_pointers.m_double;
+        _2 = (delegate*<int, int>)&global::mod_fn_pointers.m_double;
         _0 = global::mod_fn_pointers.m_apply_twice(_2, _1);
         goto _bb1;
         _bb1: ;
@@ -80,7 +80,7 @@ public static partial class mod_fn_pointers
     {
         int _0 = default;
         delegate*<int, int> _2 = default;
-        _2 = (delegate*<int, int>)global::mod_fn_pointers.m_inc;
+        _2 = (delegate*<int, int>)&global::mod_fn_pointers.m_inc;
         _0 = global::mod_fn_pointers.m_apply_twice(_2, _1);
         goto _bb1;
         _bb1: ;
@@ -91,7 +91,7 @@ public static partial class mod_fn_pointers
     {
         int _0 = default;
         delegate*<int, int> _2 = default;
-        _2 = (delegate*<int, int>)global::mod_fn_pointers.m_square;
+        _2 = (delegate*<int, int>)&global::mod_fn_pointers.m_square;
         _0 = global::mod_fn_pointers.m_apply_twice(_2, _1);
         goto _bb1;
         _bb1: ;
@@ -116,8 +116,8 @@ public static partial class mod_fn_pointers
         int _0 = default;
         delegate*<int, int> _2 = default;
         delegate*<int, int> _3 = default;
-        _2 = (delegate*<int, int>)global::mod_fn_pointers.m_inc;
-        _3 = (delegate*<int, int>)global::mod_fn_pointers.m_double;
+        _2 = (delegate*<int, int>)&global::mod_fn_pointers.m_inc;
+        _3 = (delegate*<int, int>)&global::mod_fn_pointers.m_double;
         _0 = global::mod_fn_pointers.m_compose(_2, _3, _1);
         goto _bb1;
         _bb1: ;
@@ -129,8 +129,8 @@ public static partial class mod_fn_pointers
         int _0 = default;
         delegate*<int, int> _2 = default;
         delegate*<int, int> _3 = default;
-        _2 = (delegate*<int, int>)global::mod_fn_pointers.m_double;
-        _3 = (delegate*<int, int>)global::mod_fn_pointers.m_inc;
+        _2 = (delegate*<int, int>)&global::mod_fn_pointers.m_double;
+        _3 = (delegate*<int, int>)&global::mod_fn_pointers.m_inc;
         _0 = global::mod_fn_pointers.m_compose(_2, _3, _1);
         goto _bb1;
         _bb1: ;
@@ -142,8 +142,8 @@ public static partial class mod_fn_pointers
         int _0 = default;
         delegate*<int, int> _2 = default;
         delegate*<int, int> _3 = default;
-        _2 = (delegate*<int, int>)global::mod_fn_pointers.m_negate;
-        _3 = (delegate*<int, int>)global::mod_fn_pointers.m_square;
+        _2 = (delegate*<int, int>)&global::mod_fn_pointers.m_negate;
+        _3 = (delegate*<int, int>)&global::mod_fn_pointers.m_square;
         _0 = global::mod_fn_pointers.m_compose(_2, _3, _1);
         goto _bb1;
         _bb1: ;

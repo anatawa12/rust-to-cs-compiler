@@ -728,7 +728,18 @@ fn const_cs<'tcx>(tcx: TyCtxt<'tcx>, c: &rustc_middle::mir::Const<'tcx>) -> Stri
                                     crate::codegen::types::fn_instance_to_cs_path(tcx, &inst)
                                 }
                                 _ => {
-                                    crate::codegen::types::def_id_to_cs_path(tcx, *def_id)
+                                    // Fallback: resolution failed (e.g. the `Self` type is a
+                                    // generic parameter, so monomorphization is not possible).
+                                    // Check if this is a trait method called on a generic type
+                                    // param (e.g. `<P_T as Summable>::value`).
+                                    // In that case emit `P_T.m_method` for C# static dispatch.
+                                    if let Some(trait_method_path) =
+                                        crate::codegen::types::trait_method_on_param(tcx, *def_id, substs)
+                                    {
+                                        trait_method_path
+                                    } else {
+                                        crate::codegen::types::def_id_to_cs_path(tcx, *def_id)
+                                    }
                                 }
                             }
                         }

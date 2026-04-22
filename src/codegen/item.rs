@@ -83,8 +83,9 @@ pub fn compile_fn(
         .collect();
 
     let generic_params = cs_generic_params(tcx, def_id.to_def_id());
+    let where_clause = cs_fn_where_clause(tcx, def_id.to_def_id());
     w.write_line(&format!(
-        "public static unsafe {ret_str} {cs_name}{generic_params}({})",
+        "public static unsafe {ret_str} {cs_name}{generic_params}({}){where_clause}",
         params.join(", ")
     ));
     w.write_line("{");
@@ -782,5 +783,61 @@ fn cs_generic_params(tcx: TyCtxt<'_>, def_id: rustc_hir::def_id::DefId) -> Strin
         String::new()
     } else {
         format!("<{}>", type_params.join(", "))
+    }
+}
+
+/// Returns the C# `where` clause for a free generic function, e.g.
+/// ` where P_T : unmanaged, t_Foo<P_T>`.
+/// Returns an empty string when there are no type parameters.
+fn cs_fn_where_clause(tcx: TyCtxt<'_>, def_id: rustc_hir::def_id::DefId) -> String {
+    use rustc_middle::ty::{GenericParamDefKind, ClauseKind};
+    use crate::codegen::naming;
+
+    let generics = tcx.generics_of(def_id);
+    let predicates = tcx.predicates_of(def_id);
+
+    // Collect trait bounds per type parameter.
+    let mut bounds: std::collections::HashMap<u32, Vec<String>> = std::collections::HashMap::new();
+
+    for (clause, _) in predicates.predicates.iter() {
+        if let ClauseKind::Trait(trait_pred) = clause.kind().skip_binder() {
+            // Only handle `T: SomeTrait` where `T` is one of our own type params.
+            if let rustc_middle::ty::TyKind::Param(param_ty) = trait_pred.self_ty().kind() {
+                let trait_def_id = trait_pred.trait_ref.def_id;
+                // Skip built-in / external traits (Sized, Copy, etc.)
+                if trait_def_id.krate == rustc_hir::def_id::LOCAL_CRATE {
+                    // Build the interface name: look up crate/module path.
+                    let iface_path = crate::codegen::types::def_id_to_cs_path(tcx, trait_def_id);
+                    // The interface is parameterised with Self = P_T.
+                    let cs_name = naming::generic_param_name(param_ty.name.as_str());
+                    let iface = format!("{}<{}>", iface_path, cs_name);
+                    bounds.entry(param_ty.index).or_default().push(iface);
+                }
+            }
+        }
+    }
+
+    let mut clauses: Vec<String> = generics
+        .own_params
+        .iter()
+        .filter_map(|p| {
+            if let GenericParamDefKind::Type { .. } = p.kind {
+                let cs_name = naming::generic_param_name(p.name.as_str());
+                // Every type param used as a pointer needs `unmanaged`.
+                let mut constraints = vec!["unmanaged".to_string()];
+                if let Some(trait_bounds) = bounds.get(&p.index) {
+                    constraints.extend(trait_bounds.clone());
+                }
+                Some(format!("{cs_name} : {}", constraints.join(", ")))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if clauses.is_empty() {
+        String::new()
+    } else {
+        format!(" where {}", clauses.join(", "))
     }
 }

@@ -207,8 +207,14 @@ pub fn def_id_to_cs_path(tcx: TyCtxt<'_>, def_id: rustc_hir::def_id::DefId) -> S
             DefPathData::TypeNs(sym) => {
                 let s = sym.as_str();
                 if is_last {
-                    // Final segment — struct (or enum) name.
-                    segments.push(naming::struct_name(s));
+                    // Check whether this def_id is a trait — traits get `t_` prefix.
+                    use rustc_hir::def::DefKind;
+                    let name = if matches!(tcx.def_kind(def_id), DefKind::Trait) {
+                        naming::trait_iface_name(s)
+                    } else {
+                        naming::struct_name(s)
+                    };
+                    segments.push(name);
                 } else {
                     // Intermediate module-like namespace.
                     segments.push(naming::module_name(s));
@@ -386,6 +392,37 @@ pub fn fn_instance_to_cs_path<'tcx>(
 pub fn int_ty_cs(k: &ty::IntTy) -> String {
     int_ty(k)
 }
+
+/// If `def_id` is a trait method and the first substitution (`Self`) is a generic
+/// type parameter, returns the C# static-dispatch call path `P_T.m_method`.
+/// Returns `None` otherwise.
+pub fn trait_method_on_param<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def_id: rustc_hir::def_id::DefId,
+    substs: ty::GenericArgsRef<'tcx>,
+) -> Option<String> {
+    use crate::codegen::naming;
+    // Check whether this def is a trait method.
+    let assoc = tcx.opt_associated_item(def_id)?;
+    if assoc.container != ty::AssocContainer::Trait {
+        return None;
+    }
+    // The first generic arg is `Self`.
+    let self_arg = substs.iter().next()?;
+    if let ty::GenericArgKind::Type(self_ty) = self_arg.kind() {
+        if let ty::TyKind::Param(param) = self_ty.kind() {
+            let self_cs = if param.name.as_str() == "Self" {
+                naming::SELF_PARAM.to_string()
+            } else {
+                naming::generic_param_name(param.name.as_str())
+            };
+            let method_cs = naming::method_name(tcx.item_name(def_id).as_str());
+            return Some(format!("{self_cs}.{method_cs}"));
+        }
+    }
+    None
+}
+
 
 fn int_ty(k: &ty::IntTy) -> String {
     use ty::IntTy::*;
