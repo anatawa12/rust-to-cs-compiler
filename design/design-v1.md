@@ -43,7 +43,7 @@ optimized_mir() で最適化済みMIRを取得
 > `analysis` フェーズ中に consume されるため、`after_analysis` callback からは利用できない。
 > MIR はこの問題がなく、`optimized_mir()` で安定して取得できる。
 
-MIRは使用しない。← **廃止済み記述**
+MIRは**使用する**（THIRは使用しない）。
 
 ---
 
@@ -390,8 +390,13 @@ T* raw pointer（Ref<T>/Var<T>/Pointer<T> は廃止）
 &[T] → LenRef<Slice<T>>（fat pointer）
 panic → PanicException（throw）
 enum → tagged union struct（f_discriminant + nested payload structs）
-trait → interface t_Foo<Self> where Self : t_Foo<Self>（ローカルトレイトのみ）
+trait → unsafe interface t_Foo<Self> where Self : t_Foo<Self>（ローカルトレイトのみ）
+  - メソッドは static abstract unsafe で定義
+  - 型パラメータ経由の呼び出し: P_T.m_method()
+  - 汎用関数の where 句: where P_T : unmanaged, t_Foo<P_T>
 closure → static shim+impl pair（_closure_N suffix）
+fn pointer (fn(A)->R) → delegate*<A, R>
+  - 関数アイテムをキャスト: (delegate*<A,R>)&method
 struct → struct
 module → mod_ prefix partial class
 すべての生成関数は unsafe
