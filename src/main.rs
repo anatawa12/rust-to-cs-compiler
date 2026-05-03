@@ -46,7 +46,7 @@ fn main() {
     //tracing_subscriber::fmt::init();
 
     let (db, crates) = load_workspace_from_cargo(
-        "/Users/anatawa12/RustroverProjects/vrc-get/vrc-get-vpm/Cargo.toml",
+        std::path::Path::new("./vrc-get/vrc-get-vpm/Cargo.toml").canonicalize().unwrap().to_string_lossy().as_ref(),
         &FxHashMap::default(),
     );
     let db = &db;
