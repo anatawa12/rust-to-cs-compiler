@@ -3,7 +3,7 @@ namespace r2CsRuntime;
 public static class Helpers
 {
     public static Exception Returns<T>(T value) => new ReturnException<T>(value);
-    public static Exception Panic<T>(T value) => new PanicException(value);
+    public static Exception Panic<T>(T value) => new PanicException(value as object);
 
     /// Runs the lambda expression with ThrowReturns support
     public static T Tr<T>(Func<T> func)
@@ -44,6 +44,7 @@ internal class ReturnException<T> : Exception
 
     public ReturnException(T value)
     {
+        Value = value;
     }
 }
 
@@ -61,7 +62,9 @@ internal class ContinueException : Exception
 
 public class PanicException : Exception
 {
-    public object Value { get; }
-    public PanicException(object value)
-    {}
+    public object? Value { get; }
+    public PanicException(object? value) : base(value?.ToString())
+    {
+        Value = value;
+    }
 }
