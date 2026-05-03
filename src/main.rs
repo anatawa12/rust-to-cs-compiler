@@ -1,7 +1,8 @@
 mod ext;
 
-use hir::{AssocItem, Crate, HasName, Impl, ModuleDef, Name, Semantics};
-use hir::db::DefDatabase;
+use hir::{AssocItem, Crate, HasName, HasSource, HirDisplay, Impl, ModuleDef, Name, Semantics};
+use hir::db::{DefDatabase, HirDatabase};
+use hir_def::DefWithBodyId;
 use ide_db::base_db::{all_crates, CrateDisplayName, SourceDatabase};
 use ide_db::{FxHashMap, RootDatabase};
 use load_cargo::{load_workspace, LoadCargoConfig};
@@ -42,7 +43,7 @@ fn main() {
     //tracing_subscriber::fmt::init();
 
     let (db, crates) = load_workspace_from_cargo(
-        "/Users/anatawa12/RustroverProjects/vrc-get/Cargo.toml",
+        "/Users/anatawa12/RustroverProjects/vrc-get/vrc-get-vpm/Cargo.toml",
         &FxHashMap::default(),
     );
     let db = &db;
@@ -67,22 +68,6 @@ fn main() {
                             ModuleDef::Adt(adt) => {
                                 println!("  adt: {}", adt.name(db).as_str());
                                 println!("    ty: {:?}", adt.ty(db));
-                                for impl_ in Impl::all_for_type(db, adt.ty(db)) {
-                                    println!("    impl in {:?}", impl_.module(db).module_path(db));
-                                    for item in impl_.items(db) {
-                                        match item {
-                                            AssocItem::Function(f) => {
-                                                println!("      fn: {}", f.name(db).as_str());
-                                            }
-                                            AssocItem::Const(c) => {
-                                                println!("      const: {}", c.name(db).unwrap().as_str())
-                                            }
-                                            AssocItem::TypeAlias(alias) => {
-                                                println!("      alias: {}", alias.name(db).as_str())
-                                            }
-                                        }
-                                    }
-                                }
                             }
                             ModuleDef::EnumVariant(v) => {
                                 println!("  variant: {}", v.name(db).as_str())
@@ -104,6 +89,31 @@ fn main() {
                             }
                             ModuleDef::Macro(m) => {
                                 println!("  m: {}", m.name(db).as_str());
+                            }
+                        }
+                    }
+                    for impl_ in module.impl_defs(db) {
+                        println!("  impl for: {:?}", impl_.self_ty(db));
+                        for item in impl_.items(db) {
+                            match item {
+                                AssocItem::Function(f) => {
+                                    println!("    fn: {}", f.name(db).as_str());
+                                    let block = sem.source(f).unwrap().value.body().unwrap();
+                                    let list = block.stmt_list().unwrap();
+                                    for x in list.statements() {
+                                        println!("      body: {x:?}");
+                                    }
+                                    if let Some(stmt) = list.tail_expr() {
+                                        println!("      tail: {stmt:?}");
+                                        println!("      type: {:?}", sem.type_of_expr(&stmt));
+                                    }
+                                }
+                                AssocItem::Const(c) => {
+                                    println!("      const: {}", c.name(db).unwrap().as_str())
+                                }
+                                AssocItem::TypeAlias(alias) => {
+                                    println!("      alias: {}", alias.name(db).as_str())
+                                }
                             }
                         }
                     }
