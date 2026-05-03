@@ -7,6 +7,7 @@ edition = "2024"
 hir = { package = "ra_ap_hir", version = "0.0.330" }
 hir_def = { package = "ra_ap_hir_def", version = "0.0.330" }
 syntax = { package = "ra_ap_syntax", version = "0.0.330" }
+cfg = { package = "ra_ap_cfg", version = "0.0.330" }
 ide_db = { package = "ra_ap_ide_db", version = "0.0.330" }
 load-cargo = { package = "ra_ap_load-cargo", version = "0.0.330" }
 project_model = { package = "ra_ap_project_model", version = "0.0.330" }

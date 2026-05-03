@@ -105,6 +105,11 @@ public class RustTask<TResult>
             StateMachine = null;
             return;
         }
+        if (exception is ReturnException<TResult> e)
+        {
+            SetResult(e.Value);
+            return;
+        }
         if (State != TaskState.Running) throw new InvalidOperationException($"Task is not running: {State}");
         Exception = ExceptionDispatchInfo.Capture(exception);
         State = TaskState.Failed;

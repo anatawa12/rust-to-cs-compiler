@@ -1,20 +1,23 @@
 mod ext;
 
-use hir::{AssocItem, Crate, HasName, HasSource, HirDisplay, Impl, ModuleDef, Name, Semantics};
+use crate::ext::ModuleExt;
+use cfg::{CfgAtom, CfgDiff};
 use hir::db::{DefDatabase, HirDatabase};
-use hir_def::DefWithBodyId;
+use hir::{AssocItem, Crate, HasName, HasSource, HirDisplay, ModuleDef, Name, Semantics, Symbol};
 use ide_db::base_db::{all_crates, CrateDisplayName, SourceDatabase};
 use ide_db::{FxHashMap, RootDatabase};
 use load_cargo::{load_workspace, LoadCargoConfig};
 use project_model::{CargoConfig, ProjectManifest, ProjectWorkspace};
 use vfs::AbsPathBuf;
-use crate::ext::ModuleExt;
 
 fn load_workspace_from_cargo(path: &str, env: &FxHashMap<String, Option<String>>) -> (RootDatabase, Vec<Crate>) {
     println!("discover_single");
     let manifest = ProjectManifest::discover_single(&AbsPathBuf::assert(path.into())).unwrap();
 
-    let cargo_config = CargoConfig::default();
+    let mut cargo_config = CargoConfig::default();
+    cargo_config.cfg_overrides.global = CfgDiff::new(vec![
+        CfgAtom::Flag(Symbol::intern("r2cs")),
+    ], vec![]);
     println!("ProjectWorkspace::load");
     let ws = ProjectWorkspace::load(manifest, &cargo_config, &|_| {}).unwrap();
 

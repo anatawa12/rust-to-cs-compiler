@@ -20,6 +20,7 @@ idiomatic C#
 ```
 
 対象コードは **自分たちのRustコードのみ**。
+unsafeは完全に禁止されている。
 
 ---
 
@@ -28,7 +29,7 @@ idiomatic C#
 使用IR
 
 ```
-THIR
+HIR of rust analyzer
 ```
 
 理由
@@ -40,21 +41,7 @@ async/await情報保持
 
 MIRは使用しない。
 
----
-
-# 必要解析
-
-独自解析で以下を実装
-
-```
-MovePath解析
-DropFlag
-Temporary lifetime
-Closure capture
-Stack ref escape
-Borrow escape
-Struct borrow detection
-```
+rust analyzer api
 
 ---
 
@@ -147,111 +134,15 @@ match guard 等の特殊スコープは **Rustの動作を再現する**。
 
 ---
 
-# Ref
+# Ref, fields, and local variables
 
-共通表現
+全ての変数・フィールドは`Slot<T>`にラップされている。
 
-```
-Ref<T> = (object? target, nint offset)
-```
-
-意味
-
-| case          | target     | offset           |
-|---------------| ---------- | ---------------- |
-| on-heap field | object     | field offset     |
-| stack         | null       | absolute pointer |
-
-# Unsized Ref
-
-## slices
-
-sliceが最後のフィールドであるstructも同様
-
-```
-LenRef<T> = (object? target, nint offset, nint len)
-```
-
-## dyn Trait
-
-dyn traitが最後のフィールドであるstructも同様
-
-```
-DynRef<T> = (object? target, nint offset, T vtable)
-```
-
-Tは`trait interfaces for static members`。
-実際に作る際には defualt(structs for trait static memers)を渡す。
-
-trait interfaces for static membersのdyn部分はRef<Void>で関数内でRef<s_Struct>に強制キャストする
-
----
-
-## stack borrow
-
-条件
-
-```
-awaitを跨がない
-closure captureされない
-return escapeしない
-```
-
-成立する場合
-
-```
-&local → pointer
-```
-
-実装
-
-```
-target = null
-offset = stack address
-```
-
-それ以外
-
-```
-class Var<T>
-```
-
-> **Note**: `async fn` 内のローカル変数は、コンパイラが生成する async state machine（ヒープオブジェクト）に
-> 格納されるため、実態はスタック上に存在しない。
-> stack borrow 解析では `async fn` のローカルを「スタック変数ではない」として扱い、
-> `await` を跨ぐ判定とは独立して stack borrow に分類しないこと。
-> これらの変数への参照は heap borrow として `Var<T>` 経由で扱う。
-
----
-
-# Raw pointer
-
-```
-*const T
-*mut T
-```
-
-内部表現
-
-```
-Pointer<T>
-LenPointer<T>
-DynPointer<T>
-```
-
-中身はRef<T>と同様
-
-制限
-
-```
-strict provenance
-```
-
-禁止
-
-```
-expose_addr
-with_addr
+```c#
+class Slot<T> : IDisposable {
+    public T value;
+    public bool dropped; // partial dropするときに外部から操作される
+}
 ```
 
 ---
@@ -264,18 +155,11 @@ with_addr
 
 # struct / enum
 
-Rust `struct` ・ `enum` は C# `struct` にマップする。
-
-ただし以下の型は **ヒープオブジェクトとして実装される**
-
-```
-closure environment
-async state machine
-```
-
----
+Rust `struct` ・ `enum` は C# `class` にマップする。
 
 # Enum
+
+enum はパターンマッチングを適用しやすいように
 
 Rust
 
@@ -289,13 +173,14 @@ enum E {
 C#
 
 ```
-struct s_E {
-    public int tag;
-    public x f_0;
+class s_E {
+    private s_E() {}
+    class v_A {}
+    class v_B {
+        public Slot<s_x> f_0;
+    }
 }
 ```
-
-(f_0はAのときに使われない)
 
 ---
 
@@ -333,11 +218,7 @@ panic!()
 C#
 
 ```
-throw PanicException
-```
-
-```
-class PanicException : Exception
+throw Helpers.Panic(message)
 ```
 
 Dropは finally で実行。
@@ -476,16 +357,7 @@ Drop(captured_places)
 
 ## Closure と Fn/FnMut/FnOnce トレイト
 
-closure クラスは、対応する `Fn` / `FnMut` / `FnOnce` の trait interface を実装する。
-
-| Rust trait | C# interface        | 制約                                      |
-|------------|---------------------|-------------------------------------------|
-| `FnOnce`   | `t_FnOnce<Args, R>` | `Call(Args) -> R`（一度だけ呼び出し可能） |
-| `FnMut`    | `t_FnMut<Args, R>`  | `CallMut(ref self, Args) -> R`            |
-| `Fn`       | `t_Fn<Args, R>`     | `CallRef(in self, Args) -> R`             |
-
-`Fn : FnMut : FnOnce` の継承関係を C# interface 継承で表現する。
-具体的には `t_Fn<Args,R> : t_FnMut<Args,R> : t_FnOnce<Args,R>`。
+closure は、ラムダ式にする。
 
 ---
 
@@ -502,7 +374,7 @@ async fn
 C#
 
 ```
-async Task
+async RustTask
 ```
 
 await保持。
@@ -521,7 +393,7 @@ Rustの
 Future drop = cancel
 ```
 
-は再現しない。
+はほぼ再現しない。
 
 ```
 unused async result
@@ -539,31 +411,6 @@ unused async result
 stack ref pointer
 Ref<T> access
 raw pointer
-```
-
----
-
-# mem::zeroed
-
-以下の型のみ許可
-
-```
-C# struct に変換される型
-```
-
-禁止
-
-```
-closure environment
-async state machine
-trait object
-Box
-```
-
-変換
-
-```
-mem::zeroed<T>() → default(T)
 ```
 
 ---
