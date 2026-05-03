@@ -4,3 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+hir = { package = "ra_ap_hir", version = "0.0.330" }
+ide_db = { package = "ra_ap_ide_db", version = "0.0.330" }
+load-cargo = { package = "ra_ap_load-cargo", version = "0.0.330" }
+project_model = { package = "ra_ap_project_model", version = "0.0.330" }
+tracing-subscriber = "0.3.23"
+vfs = { package = "ra_ap_vfs", version = "0.0.330" }
