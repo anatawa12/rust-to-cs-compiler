@@ -7,7 +7,7 @@ use hir::{AssocItem, Crate, HasName, HasSource, HirDisplay, ModuleDef, Name, Sem
 use ide_db::base_db::{all_crates, CrateDisplayName, SourceDatabase};
 use ide_db::{FxHashMap, RootDatabase};
 use load_cargo::{load_workspace, LoadCargoConfig};
-use project_model::{CargoConfig, ProjectManifest, ProjectWorkspace};
+use project_model::{CargoConfig, CargoFeatures, ProjectManifest, ProjectWorkspace};
 use vfs::AbsPathBuf;
 
 fn load_workspace_from_cargo(path: &str, env: &FxHashMap<String, Option<String>>) -> (RootDatabase, Vec<Crate>) {
@@ -15,6 +15,10 @@ fn load_workspace_from_cargo(path: &str, env: &FxHashMap<String, Option<String>>
     let manifest = ProjectManifest::discover_single(&AbsPathBuf::assert(path.into())).unwrap();
 
     let mut cargo_config = CargoConfig::default();
+    cargo_config.features = CargoFeatures::Selected {
+        features: vec![],
+        no_default_features: true,
+    };
     cargo_config.cfg_overrides.global = CfgDiff::new(vec![
         CfgAtom::Flag(Symbol::intern("r2cs")),
     ], vec![]);
