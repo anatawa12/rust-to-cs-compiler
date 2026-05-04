@@ -1,15 +1,16 @@
 /// Generates C# expressions and statements from Rust HIR bodies.
 use std::collections::HashMap;
 
-use hir::{DefWithBody, GenericDef, HasName, db::HirDatabase};
+use hir::{Local, db::HirDatabase};
 use hir_def::{
-    DefWithBodyId,
+    DefWithBodyId, VariantId,
     expr_store::Body,
     hir::{
         Array, BinaryOp, BindingId, Expr, ExprId, Literal, Pat, PatId, RangeOp, Statement,
         UnaryOp,
     },
 };
+use hir_ty::InferenceResult;
 
 use super::{names, output::Output, ty};
 
@@ -17,6 +18,8 @@ use super::{names, output::Output, ty};
 pub struct BodyGen<'db> {
     db: &'db dyn HirDatabase,
     body: &'db Body,
+    def_id: DefWithBodyId,
+    infer: &'db InferenceResult,
     /// Mapping from BindingId to the C# local name allocated for it.
     bindings: HashMap<BindingId, String>,
     /// Counter per original Rust name for uniqueness.
@@ -26,10 +29,13 @@ pub struct BodyGen<'db> {
 }
 
 impl<'db> BodyGen<'db> {
-    pub fn new(db: &'db dyn HirDatabase, body: &'db Body, is_async: bool) -> Self {
+    pub fn new(db: &'db dyn HirDatabase, def_id: DefWithBodyId, body: &'db Body, is_async: bool) -> Self {
+        let infer = InferenceResult::of(db, def_id);
         Self {
             db,
             body,
+            def_id,
+            infer,
             bindings: HashMap::new(),
             name_counts: HashMap::new(),
             is_async,
@@ -50,6 +56,13 @@ impl<'db> BodyGen<'db> {
             .get(&id)
             .cloned()
             .unwrap_or_else(|| format!("/* unbound {:?} */unknown", id))
+    }
+
+    fn binding_cs_type(&self, id: BindingId) -> String {
+        let local = Local::from((self.def_id, id));
+        let local_ty = local.ty(self.db);
+        let cs = ty::rust_type_to_cs(&local_ty, self.db);
+        if cs == "void" { "object".to_string() } else { cs }
     }
 
     /// Emit the full function body block.
@@ -173,76 +186,69 @@ impl<'db> BodyGen<'db> {
         tail: Option<ExprId>,
         is_tail: bool,
     ) {
-        // Collect locals introduced in this block for drop tracking
-        let mut drop_locals: Vec<String> = Vec::new();
-
         for stmt in statements {
             match stmt {
                 Statement::Let { pat, type_ref: _, initializer, else_branch } => {
-                    // Allocate bindings for pattern
                     let bindings = self.collect_bindings_in_pat(*pat);
 
                     if let Some(init) = initializer {
                         let init_str = self.emit_expr_str(*init);
-                        // Simple case: single binding
                         if bindings.len() == 1 {
-                            let cs_name = self.alloc_binding(bindings[0]);
-                            drop_locals.push(cs_name.clone());
-                            out.writeln(&format!("var {} = new r2CsRuntime.Slot<object>({});", cs_name, init_str));
+                            let bid = bindings[0];
+                            let cs_type = self.binding_cs_type(bid);
+                            let cs_name = self.alloc_binding(bid);
+                            out.writeln(&format!(
+                                "var {} = new r2CsRuntime.Slot<{}>({});",
+                                cs_name, cs_type, init_str
+                            ));
                         } else if bindings.is_empty() {
-                            // Wildcard or unit pattern
                             out.writeln(&format!("{};", init_str));
                         } else {
-                            // Destructuring: use temp and then bind
                             let tmp = format!("__tmp_{:?}", pat.into_raw());
                             out.writeln(&format!("var {} = {};", tmp, init_str));
                             for b in &bindings {
+                                let cs_type = self.binding_cs_type(*b);
                                 let cs_name = self.alloc_binding(*b);
-                                drop_locals.push(cs_name.clone());
                                 let rust_name = self.body[*b].name.as_str().to_string();
                                 out.writeln(&format!(
-                                    "var {} = new r2CsRuntime.Slot<object>({}.{});",
-                                    cs_name, tmp,
+                                    "var {} = new r2CsRuntime.Slot<{}>({}.{});",
+                                    cs_name,
+                                    cs_type,
+                                    tmp,
                                     names::field_name(&rust_name)
                                 ));
                             }
                         }
                     } else {
-                        // No initializer: declare with default
                         for b in &bindings {
+                            let cs_type = self.binding_cs_type(*b);
                             let cs_name = self.alloc_binding(*b);
-                            drop_locals.push(cs_name.clone());
-                            out.writeln(&format!("var {} = new r2CsRuntime.Slot<object>(default!);", cs_name));
+                            out.writeln(&format!(
+                                "var {} = new r2CsRuntime.Slot<{}>(default!);",
+                                cs_name, cs_type
+                            ));
                         }
                     }
 
-                    if let Some(else_e) = else_branch {
+                    if let Some(_else_e) = else_branch {
                         out.writeln("// let-else not fully supported");
-                        // TODO: proper let-else generation
                     }
                 }
-                Statement::Expr { expr, has_semi } => {
+                Statement::Expr { expr, has_semi: _ } => {
                     self.emit_expr_as_stmt(out, *expr, false);
                 }
-                Statement::Item(_) => {
-                    // inner items — skip for now
-                }
+                Statement::Item(_) => {}
             }
         }
 
-        // Tail expression (the value of the block)
         if let Some(tail_expr) = tail {
-            // Drop locals before returning the tail value
-            // For now, just emit the expression
             let tail_str = self.emit_expr_str(tail_expr);
             if is_tail {
                 if tail_str != "()" && !tail_str.is_empty() {
                     out.writeln(&format!("return {};", tail_str));
                 }
-            } else {
-                if tail_str != "()" && !tail_str.is_empty() {
-                    out.writeln(&format!("{};", tail_str));
-                }
+            } else if tail_str != "()" && !tail_str.is_empty() {
+                out.writeln(&format!("{};", tail_str));
             }
         }
     }
@@ -254,7 +260,6 @@ impl<'db> BodyGen<'db> {
             Expr::Missing => "/* missing */default!".to_string(),
             Expr::Literal(lit) => self.emit_literal(lit),
             Expr::Path(path) => {
-                // Try to resolve the path to a binding or call
                 let segments: Vec<String> = path
                     .segments()
                     .iter()
@@ -262,16 +267,13 @@ impl<'db> BodyGen<'db> {
                     .collect();
                 if segments.len() == 1 {
                     let name = &segments[0];
-                    // Check if it's a local variable (binding) - search by Rust name
                     if let Some(cs_name) = self.find_local_by_rust_name(name) {
                         return format!("{}.value", cs_name);
                     }
-                    // Otherwise treat as function/type name
                     names::method_name(name)
                 } else if segments.is_empty() {
                     "/* empty path */default!".to_string()
                 } else {
-                    // Multi-segment path: module::function or Type::method
                     let last = segments.last().unwrap();
                     let rest = &segments[..segments.len() - 1];
                     format!("{}.{}", rest.join("."), names::method_name(last))
@@ -288,6 +290,11 @@ impl<'db> BodyGen<'db> {
                 format!("{}.{}({})", recv_str, method_cs, args_str.join(", "))
             }
             Expr::Call { callee, args } => {
+                // Detect tuple-struct / enum-variant constructor calls
+                if let Some(variant_id) = self.infer.variant_resolution_for_expr(*callee) {
+                    let args_clone: Vec<ExprId> = args.iter().copied().collect();
+                    return self.emit_constructor_call(variant_id, &args_clone);
+                }
                 let callee_str = self.emit_expr_str(*callee);
                 let args_str: Vec<String> = args.iter().map(|a| self.emit_expr_str(*a)).collect();
                 format!("{}({})", callee_str, args_str.join(", "))
@@ -350,40 +357,32 @@ impl<'db> BodyGen<'db> {
                 op_str
             }
             Expr::Ref { expr: inner, .. } => {
-                // References in C# are just the value
                 self.emit_expr_str(*inner)
             }
             Expr::Box { expr: inner } => {
-                // Box::new(x) → just x (reference semantics)
                 self.emit_expr_str(*inner)
             }
             Expr::Cast { expr: inner, .. } => {
-                // TODO: proper cast type
                 format!("(/* cast */) {}", self.emit_expr_str(*inner))
             }
             Expr::If { condition, then_branch, else_branch } => {
                 if let Some(else_e) = else_branch {
-                    // Ternary if possible
                     let cond = self.emit_expr_str(*condition);
                     let then_s = self.emit_expr_str(*then_branch);
                     let else_s = self.emit_expr_str(*else_e);
                     format!("({} ? {} : {})", cond, then_s, else_s)
                 } else {
-                    // if without else as expression: not valid in C# outside a block
                     let cond = self.emit_expr_str(*condition);
-                    let then_s = self.emit_expr_str(*then_branch);
                     format!("/* if expr */ {}", cond)
                 }
             }
             Expr::Block { statements, tail, .. } => {
-                // Blocks as expressions: use an IIFE via Tr() or inline
                 if statements.is_empty() {
                     if let Some(t) = tail {
                         return self.emit_expr_str(*t);
                     }
                     return "default!".to_string();
                 }
-                // For blocks with statements, we need a lambda
                 "/* block expr */ default!".to_string()
             }
             Expr::Tuple { exprs } => {
@@ -395,6 +394,9 @@ impl<'db> BodyGen<'db> {
                 }
             }
             Expr::RecordLit { path, fields, .. } => {
+                // Use variant resolution to get field types
+                let maybe_variant = self.infer.variant_resolution_for_expr(expr_id);
+
                 let type_name = path
                     .as_ref()
                     .map(|p| {
@@ -404,12 +406,14 @@ impl<'db> BodyGen<'db> {
                         names::struct_name(segs.last().unwrap_or(&"Unknown".to_string()))
                     })
                     .unwrap_or_else(|| "/* anon */Unknown".to_string());
+
                 let field_inits: Vec<String> = fields
                     .iter()
                     .map(|f| {
                         let cs_f = names::field_name(f.name.as_str());
                         let val = self.emit_expr_str(f.expr);
-                        format!("{} = new r2CsRuntime.Slot<object>({})", cs_f, val)
+                        let cs_ty = self.field_slot_type_from_variant(maybe_variant, f.name.as_str());
+                        format!("{} = new r2CsRuntime.Slot<{}>({})", cs_f, cs_ty, val)
                     })
                     .collect();
                 format!("new {}() {{ {} }}", type_name, field_inits.join(", "))
@@ -420,7 +424,6 @@ impl<'db> BodyGen<'db> {
                 format!("{}[{}]", base_str, idx_str)
             }
             Expr::Range { lhs, rhs, range_type } => {
-                // Emit a range comment — range types need std mapping
                 let lhs_s = lhs.map(|e| self.emit_expr_str(e)).unwrap_or_default();
                 let rhs_s = rhs.map(|e| self.emit_expr_str(e)).unwrap_or_default();
                 let dots = match range_type {
@@ -443,7 +446,6 @@ impl<'db> BodyGen<'db> {
                 }
             }
             Expr::Closure { args, body: closure_body, .. } => {
-                // Emit as lambda
                 let params: Vec<String> = args.iter().enumerate()
                     .map(|(i, p)| {
                         let bindings = self.collect_bindings_in_pat(*p);
@@ -455,7 +457,6 @@ impl<'db> BodyGen<'db> {
                         }
                     })
                     .collect();
-                // Allocate bindings for closure params
                 for p in args.iter() {
                     let bindings = self.collect_bindings_in_pat(*p);
                     for b in bindings {
@@ -466,7 +467,6 @@ impl<'db> BodyGen<'db> {
                 format!("({}) => {}", params.join(", "), body_str)
             }
             Expr::Yeet { expr: inner } => {
-                // ? operator's internal representation — propagate error
                 let val = inner.map(|e| self.emit_expr_str(e)).unwrap_or_else(|| "default!".to_string());
                 format!("throw r2CsRuntime.Helpers.Returns<object>({})", val)
             }
@@ -475,13 +475,11 @@ impl<'db> BodyGen<'db> {
                 format!("/* return-expr */ throw r2CsRuntime.Helpers.Returns<object>({})", val)
             }
             Expr::Let { pat, expr: let_expr } => {
-                // let pattern = expr used as condition (if let)
                 let val = self.emit_expr_str(*let_expr);
                 let check = self.emit_pat_check(&val, *pat);
                 check
             }
             Expr::Unsafe { statements, tail, .. } => {
-                // Treat unsafe blocks like regular blocks
                 if statements.is_empty() {
                     if let Some(t) = tail {
                         return self.emit_expr_str(*t);
@@ -491,7 +489,6 @@ impl<'db> BodyGen<'db> {
                 "/* unsafe block */ default!".to_string()
             }
             Expr::Match { .. } | Expr::Loop { .. } => {
-                // Block-like expressions used as values: wrap as lambda
                 "/* block-expr-value */ default!".to_string()
             }
             Expr::Break { expr: val, .. } => {
@@ -499,7 +496,6 @@ impl<'db> BodyGen<'db> {
             }
             Expr::Continue { .. } => "default!".to_string(),
             Expr::Become { expr: inner } => {
-                // tail-call → just call
                 self.emit_expr_str(*inner)
             }
             Expr::Yield { expr: inner } => {
@@ -510,8 +506,64 @@ impl<'db> BodyGen<'db> {
             Expr::OffsetOf(_) | Expr::InlineAsm(_) => {
                 "/* asm/offsetof */ default!".to_string()
             }
-            _ => "/* unhandled */ default!".to_string()
         }
+    }
+
+    /// Emit a tuple-struct or enum-variant constructor call.
+    fn emit_constructor_call(&mut self, variant_id: VariantId, args: &[ExprId]) -> String {
+        match variant_id {
+            VariantId::StructId(sid) => {
+                let s = hir::Struct::from(sid);
+                let cs_name = names::struct_name(s.name(self.db).as_str());
+                let fields = s.fields(self.db);
+                if fields.is_empty() || args.is_empty() {
+                    return format!("new {}()", cs_name);
+                }
+                let inits = self.build_positional_field_inits(&fields, args);
+                format!("new {}() {{ {} }}", cs_name, inits.join(", "))
+            }
+            VariantId::EnumVariantId(vid) => {
+                let v = hir::EnumVariant::from(vid);
+                let cs_name = names::variant_name(v.name(self.db).as_str());
+                let fields = v.fields(self.db);
+                if fields.is_empty() || args.is_empty() {
+                    return format!("new {}()", cs_name);
+                }
+                let inits = self.build_positional_field_inits(&fields, args);
+                format!("new {}() {{ {} }}", cs_name, inits.join(", "))
+            }
+            VariantId::UnionId(_) => "default! /* union ctor */".to_string(),
+        }
+    }
+
+    fn build_positional_field_inits(&mut self, fields: &[hir::Field], args: &[ExprId]) -> Vec<String> {
+        fields.iter().zip(args.iter()).map(|(field, &arg_id)| {
+            let field_ty = field.ty(self.db).to_type(self.db);
+            let cs_ty = {
+                let t = ty::rust_type_to_cs(&field_ty, self.db);
+                if t == "void" { "object".to_string() } else { t }
+            };
+            let f_name = names::field_name(field.name(self.db).as_str());
+            let val = self.emit_expr_str(arg_id);
+            format!("{} = new r2CsRuntime.Slot<{}>({})", f_name, cs_ty, val)
+        }).collect()
+    }
+
+    /// Look up the Slot<T> inner type for a named field from variant resolution.
+    fn field_slot_type_from_variant(&self, maybe_variant: Option<VariantId>, field_name: &str) -> String {
+        let Some(vid) = maybe_variant else { return "object".to_string(); };
+        let variant_fields: Vec<hir::Field> = match vid {
+            VariantId::StructId(sid) => hir::Struct::from(sid).fields(self.db),
+            VariantId::EnumVariantId(evid) => hir::EnumVariant::from(evid).fields(self.db),
+            VariantId::UnionId(_) => return "object".to_string(),
+        };
+        variant_fields.iter()
+            .find(|f| f.name(self.db).as_str() == field_name)
+            .map(|f| {
+                let t = ty::rust_type_to_cs(&f.ty(self.db).to_type(self.db), self.db);
+                if t == "void" { "object".to_string() } else { t }
+            })
+            .unwrap_or_else(|| "object".to_string())
     }
 
     fn emit_literal(&self, lit: &Literal) -> String {
@@ -532,11 +584,11 @@ impl<'db> BodyGen<'db> {
         let pat = &self.body[pat_id];
         match pat {
             Pat::Wild | Pat::Missing => "true".to_string(),
-            Pat::Bind { id, subpat } => {
+            Pat::Bind { subpat, .. } => {
                 if let Some(sub) = subpat {
                     self.emit_pat_check(scrutinee, *sub)
                 } else {
-                    "true".to_string() // plain binding always matches
+                    "true".to_string()
                 }
             }
             Pat::TupleStruct { path, args, .. } => {
@@ -560,7 +612,6 @@ impl<'db> BodyGen<'db> {
                     let cs_variant = names::variant_name(variant);
                     format!("{} is {}", scrutinee, cs_variant)
                 } else {
-                    // Could be a const or a binding
                     "true".to_string()
                 }
             }
@@ -587,7 +638,6 @@ impl<'db> BodyGen<'db> {
                 format!("({})", parts.join(" || "))
             }
             Pat::Tuple { args, .. } => {
-                // Tuple pattern: check all sub-patterns
                 let checks: Vec<String> = args.iter().enumerate()
                     .map(|(i, p)| {
                         let sub_scrutinee = format!("{}.Item{}", scrutinee, i + 1);
@@ -606,10 +656,11 @@ impl<'db> BodyGen<'db> {
         let pat = self.body[pat_id].clone();
         match pat {
             Pat::Bind { id, subpat } => {
+                let cs_type = self.binding_cs_type(id);
                 let cs_name = self.alloc_binding(id);
                 out.writeln(&format!(
-                    "var {} = new r2CsRuntime.Slot<object>({});",
-                    cs_name, scrutinee
+                    "var {} = new r2CsRuntime.Slot<{}>({});",
+                    cs_name, cs_type, scrutinee
                 ));
                 if let Some(sub) = subpat {
                     self.emit_pat_bindings(out, scrutinee, sub);
@@ -698,7 +749,6 @@ impl<'db> BodyGen<'db> {
                 }
             }
             Pat::Or(pats) => {
-                // Take bindings from first alternative only
                 if let Some(first) = pats.first() {
                     self.collect_bindings_recursive(*first, result);
                 }
@@ -716,7 +766,6 @@ impl<'db> BodyGen<'db> {
     }
 
     fn find_local_by_rust_name(&self, rust_name: &str) -> Option<String> {
-        // Find the most recently allocated binding with this Rust name
         for (id, cs_name) in &self.bindings {
             let binding = &self.body[*id];
             if binding.name.as_str() == rust_name {

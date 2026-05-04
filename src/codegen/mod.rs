@@ -6,19 +6,25 @@ pub mod ty;
 
 use std::collections::HashMap;
 
-use hir::{Adt, AssocItem, Crate, DefWithBody, GenericDef, HasName, Impl, ModuleDef, db::HirDatabase};
-use crate::codegen::decl::is_adt_r2cs_native;
+use hir::{Adt, AssocItem, Crate, DefWithBody, GenericDef, HasName, Impl, ModuleDef, db::HirDatabase, Semantics, Name, Module};
+use crate::codegen::decl::{
+    is_adt_cfg_disabled, is_adt_r2cs_native, is_impl_cfg_disabled, is_module_cfg_disabled,
+};
 use hir_def::{DefWithBodyId, expr_store::Body};
-
+use crate::codegen::names::mod_name;
 use self::output::Output;
 
 pub struct CodeGenerator<'db> {
     db: &'db dyn HirDatabase,
+    sm: Semantics<'db, dyn HirDatabase>,
 }
 
 impl<'db> CodeGenerator<'db> {
     pub fn new(db: &'db dyn HirDatabase) -> Self {
-        Self { db }
+        Self {
+            db,
+            sm: Semantics::new_dyn(db),
+        }
     }
 
     /// Generate C# code for all declarations in a crate.
@@ -46,58 +52,78 @@ impl<'db> CodeGenerator<'db> {
         let mut adt_impls: HashMap<String, Vec<Impl>> = HashMap::new();
 
         for module in krate.modules(db) {
+            if is_module_cfg_disabled(module, db) { continue; }
             for impl_ in module.impl_defs(db) {
                 let self_ty = impl_.self_ty(db);
                 if let Some(adt) = self_ty.as_adt() {
                     let key = adt_key(adt, db);
                     adt_impls.entry(key).or_default().push(impl_);
                 }
-                // impls on non-ADT types (e.g. primitives, trait objects) are emitted separately
             }
         }
 
-        // Emit traits first (no impl needed)
-        for module in krate.modules(db) {
-            for def in module.declarations(db) {
-                if let ModuleDef::Trait(t) = def {
-                    decl::emit_trait(&mut out, t, db);
-                }
-            }
-        }
-
-        // Emit type aliases and free functions
-        for module in krate.modules(db) {
-            for def in module.declarations(db) {
-                if let ModuleDef::Function(f) = def {
-                    // Top-level functions go in a static class per module
-                    let mod_name = module.name(db)
-                        .map(|n| names::mod_name(n.as_str()))
-                        .unwrap_or_else(|| names::mod_name(&crate_name));
-                    out.writeln(&format!("// function {} in module {}", f.name(db).as_str(), mod_name));
-                    decl::emit_function(&mut out, f, db, None);
-                }
-            }
-        }
-
-        // Emit each ADT with its impl blocks
-        for module in krate.modules(db) {
-            for def in module.declarations(db) {
-                match def {
-                    ModuleDef::Adt(adt) => {
-                        let key = adt_key(adt, db);
-                        let impls = adt_impls.get(&key).cloned().unwrap_or_default();
-                        self.emit_adt_with_impls(&mut out, adt, &impls);
-                    }
-                    _ => {}
-                }
-            }
-        }
+        self.emit_module(&mut out, krate.root_module(db), Some(&crate_name), &adt_impls);
 
         out.finish()
     }
 
+    fn emit_module(&self, out: &mut Output, module: Module, name_override: Option<&str>, adt_impls: &HashMap<String, Vec<Impl>>) {
+        let db = self.db;
+        if is_module_cfg_disabled(module, db) { return; }
+
+        let module_name = mod_name(module.name(db).as_ref().map(Name::as_str).or(name_override).unwrap());
+        out.write(&format!("public static partial class {} ", module_name));
+        out.open_brace();
+
+        // Emit traits first (no impl needed)
+        for def in module.declarations(db) {
+            if let ModuleDef::Trait(t) = def {
+                decl::emit_trait(out, t, db);
+            }
+        }
+
+        // Emit type aliases and free functions
+        for def in module.declarations(db) {
+            if let ModuleDef::Function(f) = def {
+                let mod_name = module.name(db)
+                    .map(|n| names::mod_name(n.as_str()))
+                    .unwrap_or_else(|| names::mod_name(&module.krate(db).display_name(db).unwrap().as_str()));
+                out.writeln(&format!("// function {} in module {}", f.name(db).as_str(), mod_name));
+                decl::emit_function(out, f, db, None);
+            }
+        }
+
+        // Emit each ADT with its impl blocks
+        for def in module.declarations(db) {
+            match def {
+                ModuleDef::Adt(adt) => {
+                    let key = adt_key(adt, db);
+                    let impls = adt_impls.get(&key).cloned().unwrap_or_default();
+                    self.emit_adt_with_impls(out, adt, &impls);
+                }
+                _ => {}
+            }
+        }
+
+        // Emit submodules
+        for def in module.declarations(db) {
+            match def {
+                ModuleDef::Module(module) => {
+                    self.emit_module(out, module, None, adt_impls);
+                }
+                _ => {}
+            }
+        }
+
+        out.close_brace();
+    }
+
     fn emit_adt_with_impls(&self, out: &mut Output, adt: Adt, impls: &[Impl]) {
         let db = self.db;
+
+        if is_adt_cfg_disabled(adt, db) {
+            return;
+        }
 
         if is_adt_r2cs_native(adt, db) {
             let cs_name = match adt {
@@ -205,6 +231,9 @@ impl<'db> CodeGenerator<'db> {
 
     fn emit_impl_methods(&self, out: &mut Output, impl_: Impl) {
         let db = self.db;
+        if is_impl_cfg_disabled(impl_, db) {
+            return;
+        }
         for item in impl_.items(db) {
             if let AssocItem::Function(f) = item {
                 decl::emit_function(out, f, db, Some(impl_));

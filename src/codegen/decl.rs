@@ -1,7 +1,7 @@
 /// Generates C# type declarations from Rust HIR types.
 use hir::{
-    Adt, AssocItem, DefWithBody, Enum, GenericDef, HasName, HasSource, Impl, Struct, Trait,
-    db::HirDatabase,
+    Adt, AssocItem, DefWithBody, Enum, GenericDef, HasAttrs, HasCrate, HasName, HasSource, Impl,
+    Struct, Trait, db::HirDatabase,
 };
 use hir_def::{DefWithBodyId, expr_store::Body};
 use syntax::ast::HasAttrs as AstHasAttrs;
@@ -22,6 +22,46 @@ pub fn is_adt_r2cs_native(adt: Adt, db: &dyn HirDatabase) -> bool {
 
 pub fn is_fn_r2cs_native(f: hir::Function, db: &dyn HirDatabase) -> bool {
     f.source(db).map_or(false, |src| ast_has_r2cs_native(&src.value))
+}
+
+/// Returns true if the item's `#[cfg(...)]` condition evaluates to false under
+/// the current crate's CfgOptions (i.e., the item should be excluded).
+/// Items with no cfg attribute, or with an undecidable cfg, are included.
+pub fn is_adt_cfg_disabled(adt: Adt, db: &dyn HirDatabase) -> bool {
+    cfg_disabled(adt.attrs(db), adt.krate(db), db)
+}
+
+pub fn is_fn_cfg_disabled(f: hir::Function, db: &dyn HirDatabase) -> bool {
+    cfg_disabled(f.attrs(db), f.krate(db), db)
+}
+
+pub fn is_impl_cfg_disabled(impl_: Impl, db: &dyn HirDatabase) -> bool {
+    cfg_disabled(impl_.attrs(db), impl_.krate(db), db)
+}
+
+/// Returns true when this module or any of its ancestor modules carries a `#[cfg(...)]`
+/// that evaluates to false.  Items nested inside cfg-gated modules have no cfg attribute
+/// of their own, so we must walk the full parent chain.
+pub fn is_module_cfg_disabled(module: hir::Module, db: &dyn HirDatabase) -> bool {
+    let mut cur = module;
+    loop {
+        if cfg_disabled(cur.attrs(db), cur.krate(db), db) {
+            return true;
+        }
+        match cur.parent(db) {
+            Some(parent) => cur = parent,
+            None => return false,
+        }
+    }
+}
+
+fn cfg_disabled(attrs: hir::AttrsWithOwner, krate: hir::Crate, db: &dyn HirDatabase) -> bool {
+    match attrs.cfgs(db) {
+        Some(cfg_expr) => {
+            krate.cfg(db).check(cfg_expr) == Some(false)
+        },
+        None => false,
+    }
 }
 
 fn ast_has_r2cs_native(node: &impl AstHasAttrs) -> bool {
@@ -190,6 +230,9 @@ pub fn emit_function(
     db: &dyn HirDatabase,
     impl_ctx: Option<Impl>,
 ) {
+    if is_fn_cfg_disabled(f, db) {
+        return;
+    }
     if is_fn_r2cs_native(f, db) {
         let m_name = names::method_name(f.name(db).as_str());
         out.writeln(&format!("// [r2cs_native] {} — add implementation in r2CsNative/", m_name));
@@ -216,8 +259,7 @@ pub fn emit_function(
 
     out.writeln(&format!("// method on {}", cs_self));
     out.writeln(&format!(
-        "public {}{}{}{} {}({}) {{",
-        is_static_kw, async_kw, cs_ret, generics, m_name, params
+        "public {is_static_kw}{async_kw}{cs_ret} {m_name}{generics}({params}) {{",
     ));
     out.indent();
 
@@ -225,7 +267,7 @@ pub fn emit_function(
     let def_with_body = DefWithBody::Function(f);
     if let Ok(id) = DefWithBodyId::try_from(def_with_body) {
         let body = Body::of(db, id);
-        let mut body_gen = BodyGen::new(db, body, is_async);
+        let mut body_gen = BodyGen::new(db, id, body, is_async);
         body_gen.emit_body(out);
     } else {
         out.writeln("throw new System.NotImplementedException(\"builtin-derive\");");
