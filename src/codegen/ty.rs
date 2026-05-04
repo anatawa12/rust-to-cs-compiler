@@ -6,15 +6,10 @@ use super::{CodeGenerator, names};
 
 impl<'db> CodeGenerator<'db> {
     pub fn rust_type_to_cs(&self, ty: &Type<'db>) -> String {
-        self.rust_type_to_cs_inner(ty, self.db, false)
+        self.rust_type_to_cs_inner(ty, false)
     }
 
-    fn rust_type_to_cs_inner(
-        &self,
-        ty: &Type<'db>,
-        db: &'db dyn HirDatabase,
-        in_slot: bool,
-    ) -> String {
+    fn rust_type_to_cs_inner(&self, ty: &Type<'db>, in_slot: bool) -> String {
         let db = self.db;
         if ty.is_unit() || ty.is_never() {
             return "void".to_string();
@@ -27,22 +22,22 @@ impl<'db> CodeGenerator<'db> {
 
         // Reference → just the inner type (C# is reference semantics; we use Slot<T> for mutability)
         if let Some((inner, _mutability)) = ty.as_reference() {
-            return self.rust_type_to_cs_inner(&inner, db, in_slot);
+            return self.rust_type_to_cs_inner(&inner, in_slot);
         }
 
         // Raw pointer → Ref<T>
         if let Some((inner, _)) = ty.as_raw_ptr() {
-            return format!("Ref<{}>", self.rust_type_to_cs_inner(&inner, db, false));
+            return format!("Ref<{}>", self.rust_type_to_cs_inner(&inner, false));
         }
 
         // Slice
         if let Some(inner) = ty.as_slice() {
-            return format!("{}[]", self.rust_type_to_cs_inner(&inner, db, false));
+            return format!("{}[]", self.rust_type_to_cs_inner(&inner, false));
         }
 
         // Array
         if let Some((inner, _size)) = ty.as_array(db) {
-            return format!("{}[]", self.rust_type_to_cs_inner(&inner, db, false));
+            return format!("{}[]", self.rust_type_to_cs_inner(&inner, false));
         }
 
         // Tuple
@@ -53,7 +48,7 @@ impl<'db> CodeGenerator<'db> {
             }
             let parts: Vec<String> = fields
                 .iter()
-                .map(|t| self.rust_type_to_cs_inner(t, db, false))
+                .map(|t| self.rust_type_to_cs_inner(t, false))
                 .collect();
             return format!("({})", parts.join(", "));
         }
@@ -73,7 +68,7 @@ impl<'db> CodeGenerator<'db> {
             let type_args: Vec<String> = args
                 .iter()
                 .filter_map(|a| a.as_ref())
-                .map(|a| self.rust_type_to_cs_inner(a, db, false))
+                .map(|a| self.rust_type_to_cs_inner(a, false))
                 .filter(|s| s != "void")
                 .collect();
             if type_args.is_empty() {
@@ -152,20 +147,20 @@ impl<'db> CodeGenerator<'db> {
                 let inner = args.first()?.as_ref()?;
                 Some(format!(
                     "System.Collections.Generic.List<{}>",
-                    self.rust_type_to_cs_inner(inner, db, false)
+                    self.rust_type_to_cs_inner(inner, false)
                 ))
             }
             "Box" => {
                 let inner = args.first()?.as_ref()?;
-                Some(self.rust_type_to_cs_inner(inner, db, false))
+                Some(self.rust_type_to_cs_inner(inner, false))
             }
             "Arc" | "Rc" | "Mutex" | "RwLock" => {
                 let inner = args.first()?.as_ref()?;
-                Some(self.rust_type_to_cs_inner(inner, db, false))
+                Some(self.rust_type_to_cs_inner(inner, false))
             }
             "Option" => {
                 let inner = args.first()?.as_ref()?;
-                let t = self.rust_type_to_cs_inner(inner, db, false);
+                let t = self.rust_type_to_cs_inner(inner, false);
                 Some(format!("s_Option<{}>", t))
             }
             "Result" => {
@@ -173,8 +168,8 @@ impl<'db> CodeGenerator<'db> {
                 let err = args.get(1)?.as_ref()?;
                 Some(format!(
                     "s_Result<{}, {}>",
-                    self.rust_type_to_cs_inner(ok, db, false),
-                    self.rust_type_to_cs_inner(err, db, false)
+                    self.rust_type_to_cs_inner(ok, false),
+                    self.rust_type_to_cs_inner(err, false)
                 ))
             }
             "HashMap" | "BTreeMap" | "IndexMap" | "AHashMap" => {
@@ -182,15 +177,15 @@ impl<'db> CodeGenerator<'db> {
                 let v = args.get(1)?.as_ref()?;
                 Some(format!(
                     "System.Collections.Generic.Dictionary<{}, {}>",
-                    self.rust_type_to_cs_inner(k, db, false),
-                    self.rust_type_to_cs_inner(v, db, false)
+                    self.rust_type_to_cs_inner(k, false),
+                    self.rust_type_to_cs_inner(v, false)
                 ))
             }
             "HashSet" | "BTreeSet" | "IndexSet" => {
                 let inner = args.first()?.as_ref()?;
                 Some(format!(
                     "System.Collections.Generic.HashSet<{}>",
-                    self.rust_type_to_cs_inner(inner, db, false)
+                    self.rust_type_to_cs_inner(inner, false)
                 ))
             }
             "PathBuf" | "Path" | "OsString" | "OsStr" | "CString" | "CStr" => {
@@ -203,7 +198,7 @@ impl<'db> CodeGenerator<'db> {
             "RustTask" => {
                 // Already mapped
                 let inner = args.first()?.as_ref()?;
-                let t = self.rust_type_to_cs_inner(inner, db, false);
+                let t = self.rust_type_to_cs_inner(inner, false);
                 if t == "void" {
                     Some("r2CsRuntime.RustTask<int>".to_string()) // unit tasks use int
                 } else {

@@ -8,7 +8,11 @@ pub struct Output {
 
 impl Output {
     pub fn new() -> Self {
-        Self { buf: String::new(), indent: 0, at_line_start: true }
+        Self {
+            buf: String::new(),
+            indent: 0,
+            at_line_start: true,
+        }
     }
 
     pub fn indent(&mut self) {
@@ -55,11 +59,6 @@ impl Output {
     pub fn close_brace(&mut self) {
         self.dedent();
         self.writeln("}");
-    }
-
-    pub fn close_brace_no_nl(&mut self) {
-        self.dedent();
-        self.write("}");
     }
 
     pub fn finish(self) -> String {

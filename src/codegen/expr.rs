@@ -11,7 +11,7 @@ use hir_def::{
 };
 use hir_ty::InferenceResult;
 
-use super::{CodeGenerator, names, output::Output, ty};
+use super::{CodeGenerator, names, output::Output};
 
 /// Generates C# for the body of a single function.
 pub struct BodyGen<'db> {

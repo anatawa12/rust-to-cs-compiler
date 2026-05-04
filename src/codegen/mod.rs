@@ -12,22 +12,16 @@ use crate::codegen::decl::{
 };
 use crate::codegen::names::mod_name;
 use hir::{
-    Adt, AssocItem, Crate, DefWithBody, GenericDef, HasName, Impl, Module, ModuleDef, Name,
-    Semantics, db::HirDatabase,
+    Adt, AssocItem, Crate, GenericDef, Impl, Module, ModuleDef, Name, Semantics, db::HirDatabase,
 };
-use hir_def::{DefWithBodyId, expr_store::Body};
 
 pub struct CodeGenerator<'db> {
     db: &'db dyn HirDatabase,
-    sm: Semantics<'db, dyn HirDatabase>,
 }
 
 impl<'db> CodeGenerator<'db> {
     pub fn new(db: &'db dyn HirDatabase) -> Self {
-        Self {
-            db,
-            sm: Semantics::new_dyn(db),
-        }
+        Self { db }
     }
 
     /// Generate C# code for all declarations in a crate.

@@ -1,12 +1,12 @@
 /// Generates C# type declarations from Rust HIR types.
 use hir::{
-    Adt, AssocItem, DefWithBody, Enum, GenericDef, HasAttrs, HasCrate, HasName, HasSource, Impl,
-    Struct, Trait, db::HirDatabase,
+    Adt, AssocItem, DefWithBody, Enum, GenericDef, HasAttrs, HasCrate, HasSource, Impl, Struct,
+    Trait, db::HirDatabase,
 };
 use hir_def::{DefWithBodyId, expr_store::Body};
 use syntax::ast::HasAttrs as AstHasAttrs;
 
-use super::{CodeGenerator, expr::BodyGen, names, output::Output, ty};
+use super::{CodeGenerator, expr::BodyGen, names, output::Output};
 
 /// Returns true if the item carries `#[r2cs_native]` or `#[r2cs::native]`.
 /// Checks the raw source AST so that `#[cfg_attr(r2cs, r2cs_native)]` —
