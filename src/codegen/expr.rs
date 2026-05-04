@@ -6,16 +6,16 @@ use hir_def::{
     DefWithBodyId, VariantId,
     expr_store::Body,
     hir::{
-        Array, BinaryOp, BindingId, Expr, ExprId, Literal, Pat, PatId, RangeOp, Statement,
-        UnaryOp,
+        Array, BinaryOp, BindingId, Expr, ExprId, Literal, Pat, PatId, RangeOp, Statement, UnaryOp,
     },
 };
 use hir_ty::InferenceResult;
 
-use super::{names, output::Output, ty};
+use super::{CodeGenerator, names, output::Output, ty};
 
 /// Generates C# for the body of a single function.
 pub struct BodyGen<'db> {
+    cg: &'db CodeGenerator<'db>,
     db: &'db dyn HirDatabase,
     body: &'db Body,
     def_id: DefWithBodyId,
@@ -28,11 +28,25 @@ pub struct BodyGen<'db> {
     is_async: bool,
 }
 
+impl<'db> std::ops::Deref for BodyGen<'db> {
+    type Target = CodeGenerator<'db>;
+
+    fn deref(&self) -> &Self::Target {
+        self.cg
+    }
+}
+
 impl<'db> BodyGen<'db> {
-    pub fn new(db: &'db dyn HirDatabase, def_id: DefWithBodyId, body: &'db Body, is_async: bool) -> Self {
-        let infer = InferenceResult::of(db, def_id);
+    pub fn new(
+        cg: &'db CodeGenerator<'db>,
+        def_id: DefWithBodyId,
+        body: &'db Body,
+        is_async: bool,
+    ) -> Self {
+        let infer = InferenceResult::of(cg.db, def_id);
         Self {
-            db,
+            cg,
+            db: cg.db,
             body,
             def_id,
             infer,
@@ -61,8 +75,12 @@ impl<'db> BodyGen<'db> {
     fn binding_cs_type(&self, id: BindingId) -> String {
         let local = Local::from((self.def_id, id));
         let local_ty = local.ty(self.db);
-        let cs = ty::rust_type_to_cs(&local_ty, self.db);
-        if cs == "void" { "object".to_string() } else { cs }
+        let cs = self.rust_type_to_cs(&local_ty);
+        if cs == "void" {
+            "object".to_string()
+        } else {
+            cs
+        }
     }
 
     /// Emit the full function body block.
@@ -75,7 +93,9 @@ impl<'db> BodyGen<'db> {
     fn emit_expr_as_stmt(&mut self, out: &mut Output, expr_id: ExprId, is_tail: bool) {
         let expr = &self.body[expr_id];
         match expr {
-            Expr::Block { statements, tail, .. } => {
+            Expr::Block {
+                statements, tail, ..
+            } => {
                 self.emit_block_contents(out, statements, *tail, is_tail);
             }
             Expr::Return { expr: ret_expr } => {
@@ -84,7 +104,11 @@ impl<'db> BodyGen<'db> {
                     .unwrap_or_else(|| "0".to_string());
                 out.writeln(&format!("return {};", val));
             }
-            Expr::If { condition, then_branch, else_branch } => {
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
                 let cond = self.emit_expr_str(*condition);
                 out.writeln(&format!("if ({}) {{", cond));
                 out.indent();
@@ -114,9 +138,16 @@ impl<'db> BodyGen<'db> {
                 out.dedent();
                 out.writeln("}");
             }
-            Expr::Match { expr: match_expr, arms } => {
+            Expr::Match {
+                expr: match_expr,
+                arms,
+            } => {
                 let scrutinee = self.emit_expr_str(*match_expr);
-                out.writeln(&format!("var __match_{:?} = {};", match_expr.into_raw(), scrutinee));
+                out.writeln(&format!(
+                    "var __match_{:?} = {};",
+                    match_expr.into_raw(),
+                    scrutinee
+                ));
                 let tmp = format!("__match_{:?}", match_expr.into_raw());
                 for (i, arm) in arms.iter().enumerate() {
                     let is_last = i == arms.len() - 1;
@@ -146,7 +177,10 @@ impl<'db> BodyGen<'db> {
                     }
                 }
             }
-            Expr::Break { expr: break_expr, label } => {
+            Expr::Break {
+                expr: break_expr,
+                label,
+            } => {
                 let label_str = label
                     .map(|l| {
                         let lbl = &self.body[l];
@@ -188,7 +222,12 @@ impl<'db> BodyGen<'db> {
     ) {
         for stmt in statements {
             match stmt {
-                Statement::Let { pat, type_ref: _, initializer, else_branch } => {
+                Statement::Let {
+                    pat,
+                    type_ref: _,
+                    initializer,
+                    else_branch,
+                } => {
                     let bindings = self.collect_bindings_in_pat(*pat);
 
                     if let Some(init) = initializer {
@@ -279,11 +318,19 @@ impl<'db> BodyGen<'db> {
                     format!("{}.{}", rest.join("."), names::method_name(last))
                 }
             }
-            Expr::Field { expr: field_expr, name } => {
+            Expr::Field {
+                expr: field_expr,
+                name,
+            } => {
                 let receiver = self.emit_expr_str(*field_expr);
                 format!("{}.{}.value", receiver, names::field_name(name.as_str()))
             }
-            Expr::MethodCall { receiver, method_name, args, .. } => {
+            Expr::MethodCall {
+                receiver,
+                method_name,
+                args,
+                ..
+            } => {
                 let recv_str = self.emit_expr_str(*receiver);
                 let method_cs = names::method_name(method_name.as_str());
                 let args_str: Vec<String> = args.iter().map(|a| self.emit_expr_str(*a)).collect();
@@ -312,20 +359,39 @@ impl<'db> BodyGen<'db> {
                 let rhs_str = self.emit_expr_str(*rhs);
                 let op_str = match op {
                     None => "/* op= */ =".to_string(),
-                    Some(BinaryOp::ArithOp(a)) => format!("{:?}", a).to_lowercase()
-                        .replace("add", "+").replace("sub", "-")
-                        .replace("mul", "*").replace("div", "/").replace("rem", "%")
-                        .replace("shl", "<<").replace("shr", ">>")
-                        .replace("bitxor", "^").replace("bitor", "|").replace("bitand", "&"),
+                    Some(BinaryOp::ArithOp(a)) => format!("{:?}", a)
+                        .to_lowercase()
+                        .replace("add", "+")
+                        .replace("sub", "-")
+                        .replace("mul", "*")
+                        .replace("div", "/")
+                        .replace("rem", "%")
+                        .replace("shl", "<<")
+                        .replace("shr", ">>")
+                        .replace("bitxor", "^")
+                        .replace("bitor", "|")
+                        .replace("bitand", "&"),
                     Some(BinaryOp::CmpOp(c)) => {
                         use hir_def::hir::{CmpOp, Ordering};
                         match c {
                             CmpOp::Eq { negated: false } => "==".to_string(),
                             CmpOp::Eq { negated: true } => "!=".to_string(),
-                            CmpOp::Ord { ordering: Ordering::Less, strict: true } => "<".to_string(),
-                            CmpOp::Ord { ordering: Ordering::Less, strict: false } => "<=".to_string(),
-                            CmpOp::Ord { ordering: Ordering::Greater, strict: true } => ">".to_string(),
-                            CmpOp::Ord { ordering: Ordering::Greater, strict: false } => ">=".to_string(),
+                            CmpOp::Ord {
+                                ordering: Ordering::Less,
+                                strict: true,
+                            } => "<".to_string(),
+                            CmpOp::Ord {
+                                ordering: Ordering::Less,
+                                strict: false,
+                            } => "<=".to_string(),
+                            CmpOp::Ord {
+                                ordering: Ordering::Greater,
+                                strict: true,
+                            } => ">".to_string(),
+                            CmpOp::Ord {
+                                ordering: Ordering::Greater,
+                                strict: false,
+                            } => ">=".to_string(),
                         }
                     }
                     Some(BinaryOp::LogicOp(l)) => {
@@ -336,9 +402,13 @@ impl<'db> BodyGen<'db> {
                         }
                     }
                     Some(BinaryOp::Assignment { op: None }) => "=".to_string(),
-                    Some(BinaryOp::Assignment { op: Some(a) }) => format!("{:?}=", a).to_lowercase()
-                        .replace("add", "+=").replace("sub", "-=")
-                        .replace("mul", "*=").replace("div", "/=").replace("rem", "%="),
+                    Some(BinaryOp::Assignment { op: Some(a) }) => format!("{:?}=", a)
+                        .to_lowercase()
+                        .replace("add", "+=")
+                        .replace("sub", "-=")
+                        .replace("mul", "*=")
+                        .replace("div", "/=")
+                        .replace("rem", "%="),
                 };
                 format!("({} {} {})", lhs_str, op_str, rhs_str)
             }
@@ -356,16 +426,16 @@ impl<'db> BodyGen<'db> {
                 };
                 op_str
             }
-            Expr::Ref { expr: inner, .. } => {
-                self.emit_expr_str(*inner)
-            }
-            Expr::Box { expr: inner } => {
-                self.emit_expr_str(*inner)
-            }
+            Expr::Ref { expr: inner, .. } => self.emit_expr_str(*inner),
+            Expr::Box { expr: inner } => self.emit_expr_str(*inner),
             Expr::Cast { expr: inner, .. } => {
                 format!("(/* cast */) {}", self.emit_expr_str(*inner))
             }
-            Expr::If { condition, then_branch, else_branch } => {
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
                 if let Some(else_e) = else_branch {
                     let cond = self.emit_expr_str(*condition);
                     let then_s = self.emit_expr_str(*then_branch);
@@ -376,7 +446,9 @@ impl<'db> BodyGen<'db> {
                     format!("/* if expr */ {}", cond)
                 }
             }
-            Expr::Block { statements, tail, .. } => {
+            Expr::Block {
+                statements, tail, ..
+            } => {
                 if statements.is_empty() {
                     if let Some(t) = tail {
                         return self.emit_expr_str(*t);
@@ -400,7 +472,9 @@ impl<'db> BodyGen<'db> {
                 let type_name = path
                     .as_ref()
                     .map(|p| {
-                        let segs: Vec<String> = p.segments().iter()
+                        let segs: Vec<String> = p
+                            .segments()
+                            .iter()
                             .map(|s| s.name.as_str().to_string())
                             .collect();
                         names::struct_name(segs.last().unwrap_or(&"Unknown".to_string()))
@@ -412,7 +486,8 @@ impl<'db> BodyGen<'db> {
                     .map(|f| {
                         let cs_f = names::field_name(f.name.as_str());
                         let val = self.emit_expr_str(f.expr);
-                        let cs_ty = self.field_slot_type_from_variant(maybe_variant, f.name.as_str());
+                        let cs_ty =
+                            self.field_slot_type_from_variant(maybe_variant, f.name.as_str());
                         format!("{} = new r2CsRuntime.Slot<{}>({})", cs_f, cs_ty, val)
                     })
                     .collect();
@@ -423,30 +498,45 @@ impl<'db> BodyGen<'db> {
                 let idx_str = self.emit_expr_str(*index);
                 format!("{}[{}]", base_str, idx_str)
             }
-            Expr::Range { lhs, rhs, range_type } => {
+            Expr::Range {
+                lhs,
+                rhs,
+                range_type,
+            } => {
                 let lhs_s = lhs.map(|e| self.emit_expr_str(e)).unwrap_or_default();
                 let rhs_s = rhs.map(|e| self.emit_expr_str(e)).unwrap_or_default();
                 let dots = match range_type {
                     RangeOp::Exclusive => "..",
                     RangeOp::Inclusive => "..=",
                 };
-                format!("/* range {}{}{} */ new s_Range({}, {})", lhs_s, dots, rhs_s, lhs_s, rhs_s)
+                format!(
+                    "/* range {}{}{} */ new s_Range({}, {})",
+                    lhs_s, dots, rhs_s, lhs_s, rhs_s
+                )
             }
-            Expr::Array(arr) => {
-                match arr {
-                    Array::ElementList { elements } => {
-                        let parts: Vec<String> = elements.iter().map(|e| self.emit_expr_str(*e)).collect();
-                        format!("new object[] {{ {} }}", parts.join(", "))
-                    }
-                    Array::Repeat { initializer, repeat } => {
-                        let val = self.emit_expr_str(*initializer);
-                        let len = self.emit_expr_str(*repeat);
-                        format!("new object[{}] /* fill {} */", len, val)
-                    }
+            Expr::Array(arr) => match arr {
+                Array::ElementList { elements } => {
+                    let parts: Vec<String> =
+                        elements.iter().map(|e| self.emit_expr_str(*e)).collect();
+                    format!("new object[] {{ {} }}", parts.join(", "))
                 }
-            }
-            Expr::Closure { args, body: closure_body, .. } => {
-                let params: Vec<String> = args.iter().enumerate()
+                Array::Repeat {
+                    initializer,
+                    repeat,
+                } => {
+                    let val = self.emit_expr_str(*initializer);
+                    let len = self.emit_expr_str(*repeat);
+                    format!("new object[{}] /* fill {} */", len, val)
+                }
+            },
+            Expr::Closure {
+                args,
+                body: closure_body,
+                ..
+            } => {
+                let params: Vec<String> = args
+                    .iter()
+                    .enumerate()
                     .map(|(i, p)| {
                         let bindings = self.collect_bindings_in_pat(*p);
                         if bindings.len() == 1 {
@@ -467,19 +557,31 @@ impl<'db> BodyGen<'db> {
                 format!("({}) => {}", params.join(", "), body_str)
             }
             Expr::Yeet { expr: inner } => {
-                let val = inner.map(|e| self.emit_expr_str(e)).unwrap_or_else(|| "default!".to_string());
+                let val = inner
+                    .map(|e| self.emit_expr_str(e))
+                    .unwrap_or_else(|| "default!".to_string());
                 format!("throw r2CsRuntime.Helpers.Returns<object>({})", val)
             }
             Expr::Return { expr: inner } => {
-                let val = inner.map(|e| self.emit_expr_str(e)).unwrap_or_else(|| "0 /* unit */".to_string());
-                format!("/* return-expr */ throw r2CsRuntime.Helpers.Returns<object>({})", val)
+                let val = inner
+                    .map(|e| self.emit_expr_str(e))
+                    .unwrap_or_else(|| "0 /* unit */".to_string());
+                format!(
+                    "/* return-expr */ throw r2CsRuntime.Helpers.Returns<object>({})",
+                    val
+                )
             }
-            Expr::Let { pat, expr: let_expr } => {
+            Expr::Let {
+                pat,
+                expr: let_expr,
+            } => {
                 let val = self.emit_expr_str(*let_expr);
                 let check = self.emit_pat_check(&val, *pat);
                 check
             }
-            Expr::Unsafe { statements, tail, .. } => {
+            Expr::Unsafe {
+                statements, tail, ..
+            } => {
                 if statements.is_empty() {
                     if let Some(t) = tail {
                         return self.emit_expr_str(*t);
@@ -488,24 +590,18 @@ impl<'db> BodyGen<'db> {
                 }
                 "/* unsafe block */ default!".to_string()
             }
-            Expr::Match { .. } | Expr::Loop { .. } => {
-                "/* block-expr-value */ default!".to_string()
-            }
-            Expr::Break { expr: val, .. } => {
-                val.map(|e| self.emit_expr_str(e)).unwrap_or_else(|| "default!".to_string())
-            }
+            Expr::Match { .. } | Expr::Loop { .. } => "/* block-expr-value */ default!".to_string(),
+            Expr::Break { expr: val, .. } => val
+                .map(|e| self.emit_expr_str(e))
+                .unwrap_or_else(|| "default!".to_string()),
             Expr::Continue { .. } => "default!".to_string(),
-            Expr::Become { expr: inner } => {
-                self.emit_expr_str(*inner)
-            }
-            Expr::Yield { expr: inner } => {
-                inner.map(|e| self.emit_expr_str(e)).unwrap_or_else(|| "default!".to_string())
-            }
+            Expr::Become { expr: inner } => self.emit_expr_str(*inner),
+            Expr::Yield { expr: inner } => inner
+                .map(|e| self.emit_expr_str(e))
+                .unwrap_or_else(|| "default!".to_string()),
             Expr::Const(inner) => self.emit_expr_str(*inner),
             Expr::Underscore => "_".to_string(),
-            Expr::OffsetOf(_) | Expr::InlineAsm(_) => {
-                "/* asm/offsetof */ default!".to_string()
-            }
+            Expr::OffsetOf(_) | Expr::InlineAsm(_) => "/* asm/offsetof */ default!".to_string(),
         }
     }
 
@@ -536,31 +632,46 @@ impl<'db> BodyGen<'db> {
         }
     }
 
-    fn build_positional_field_inits(&mut self, fields: &[hir::Field], args: &[ExprId]) -> Vec<String> {
-        fields.iter().zip(args.iter()).map(|(field, &arg_id)| {
-            let field_ty = field.ty(self.db).to_type(self.db);
-            let cs_ty = {
-                let t = ty::rust_type_to_cs(&field_ty, self.db);
-                if t == "void" { "object".to_string() } else { t }
-            };
-            let f_name = names::field_name(field.name(self.db).as_str());
-            let val = self.emit_expr_str(arg_id);
-            format!("{} = new r2CsRuntime.Slot<{}>({})", f_name, cs_ty, val)
-        }).collect()
+    fn build_positional_field_inits(
+        &mut self,
+        fields: &[hir::Field],
+        args: &[ExprId],
+    ) -> Vec<String> {
+        fields
+            .iter()
+            .zip(args.iter())
+            .map(|(field, &arg_id)| {
+                let field_ty = field.ty(self.db).to_type(self.db);
+                let cs_ty = {
+                    let t = self.rust_type_to_cs(&field_ty);
+                    if t == "void" { "object".to_string() } else { t }
+                };
+                let f_name = names::field_name(field.name(self.db).as_str());
+                let val = self.emit_expr_str(arg_id);
+                format!("{} = new r2CsRuntime.Slot<{}>({})", f_name, cs_ty, val)
+            })
+            .collect()
     }
 
     /// Look up the Slot<T> inner type for a named field from variant resolution.
-    fn field_slot_type_from_variant(&self, maybe_variant: Option<VariantId>, field_name: &str) -> String {
-        let Some(vid) = maybe_variant else { return "object".to_string(); };
+    fn field_slot_type_from_variant(
+        &self,
+        maybe_variant: Option<VariantId>,
+        field_name: &str,
+    ) -> String {
+        let Some(vid) = maybe_variant else {
+            return "object".to_string();
+        };
         let variant_fields: Vec<hir::Field> = match vid {
             VariantId::StructId(sid) => hir::Struct::from(sid).fields(self.db),
             VariantId::EnumVariantId(evid) => hir::EnumVariant::from(evid).fields(self.db),
             VariantId::UnionId(_) => return "object".to_string(),
         };
-        variant_fields.iter()
+        variant_fields
+            .iter()
             .find(|f| f.name(self.db).as_str() == field_name)
             .map(|f| {
-                let t = ty::rust_type_to_cs(&f.ty(self.db).to_type(self.db), self.db);
+                let t = self.rust_type_to_cs(&f.ty(self.db).to_type(self.db));
                 if t == "void" { "object".to_string() } else { t }
             })
             .unwrap_or_else(|| "object".to_string())
@@ -573,7 +684,10 @@ impl<'db> BodyGen<'db> {
             Literal::Uint(v, _) => v.to_string(),
             Literal::Float(f, _) => f.to_string(),
             Literal::Char(c) => format!("'{}'", c.escape_default()),
-            Literal::String(s) => format!("\"{}\"", s.as_str().replace('\\', "\\\\").replace('"', "\\\"")),
+            Literal::String(s) => format!(
+                "\"{}\"",
+                s.as_str().replace('\\', "\\\\").replace('"', "\\\"")
+            ),
             Literal::ByteString(_) => "/* byte string */ new byte[] {}".to_string(),
             Literal::CString(_) => "/* cstring */ \"\"".to_string(),
         }
@@ -593,7 +707,9 @@ impl<'db> BodyGen<'db> {
             }
             Pat::TupleStruct { path, args, .. } => {
                 if let Some(p) = path {
-                    let segs: Vec<String> = p.segments().iter()
+                    let segs: Vec<String> = p
+                        .segments()
+                        .iter()
                         .map(|s| s.name.as_str().to_string())
                         .collect();
                     let variant_name = segs.last().unwrap_or(&"Unknown".to_string()).clone();
@@ -604,7 +720,9 @@ impl<'db> BodyGen<'db> {
                 }
             }
             Pat::Path(p) => {
-                let segs: Vec<String> = p.segments().iter()
+                let segs: Vec<String> = p
+                    .segments()
+                    .iter()
                     .map(|s| s.name.as_str().to_string())
                     .collect();
                 if segs.len() > 1 {
@@ -617,7 +735,9 @@ impl<'db> BodyGen<'db> {
             }
             Pat::Record { path, args, .. } => {
                 if let Some(p) = path {
-                    let segs: Vec<String> = p.segments().iter()
+                    let segs: Vec<String> = p
+                        .segments()
+                        .iter()
                         .map(|s| s.name.as_str().to_string())
                         .collect();
                     let variant = segs.last().unwrap_or(&"Unknown".to_string()).clone();
@@ -632,20 +752,27 @@ impl<'db> BodyGen<'db> {
                 format!("{} == {}", scrutinee, lit_str)
             }
             Pat::Or(pats) => {
-                let parts: Vec<String> = pats.iter()
+                let parts: Vec<String> = pats
+                    .iter()
                     .map(|p| self.emit_pat_check(scrutinee, *p))
                     .collect();
                 format!("({})", parts.join(" || "))
             }
             Pat::Tuple { args, .. } => {
-                let checks: Vec<String> = args.iter().enumerate()
+                let checks: Vec<String> = args
+                    .iter()
+                    .enumerate()
                     .map(|(i, p)| {
                         let sub_scrutinee = format!("{}.Item{}", scrutinee, i + 1);
                         self.emit_pat_check(&sub_scrutinee, *p)
                     })
                     .collect();
                 let combined: Vec<String> = checks.into_iter().filter(|s| s != "true").collect();
-                if combined.is_empty() { "true".to_string() } else { format!("({})", combined.join(" && ")) }
+                if combined.is_empty() {
+                    "true".to_string()
+                } else {
+                    format!("({})", combined.join(" && "))
+                }
             }
             _ => "true".to_string(),
         }
@@ -668,7 +795,9 @@ impl<'db> BodyGen<'db> {
             }
             Pat::TupleStruct { path, args, .. } => {
                 if let Some(p) = &path {
-                    let segs: Vec<String> = p.segments().iter()
+                    let segs: Vec<String> = p
+                        .segments()
+                        .iter()
                         .map(|s| s.name.as_str().to_string())
                         .collect();
                     let variant = segs.last().unwrap_or(&"Unknown".to_string()).clone();
@@ -683,7 +812,9 @@ impl<'db> BodyGen<'db> {
             }
             Pat::Record { path, args, .. } => {
                 if let Some(p) = &path {
-                    let segs: Vec<String> = p.segments().iter()
+                    let segs: Vec<String> = p
+                        .segments()
+                        .iter()
                         .map(|s| s.name.as_str().to_string())
                         .collect();
                     let variant = segs.last().unwrap_or(&"Unknown".to_string()).clone();
@@ -712,7 +843,9 @@ impl<'db> BodyGen<'db> {
         let pat = &self.body[pat_id];
         match pat {
             Pat::Bind { id, .. } => {
-                let cs_name = self.bindings.get(id)
+                let cs_name = self
+                    .bindings
+                    .get(id)
                     .cloned()
                     .unwrap_or_else(|| "/* unbound */unknown".to_string());
                 format!("{}.value", cs_name)
@@ -753,7 +886,11 @@ impl<'db> BodyGen<'db> {
                     self.collect_bindings_recursive(*first, result);
                 }
             }
-            Pat::Slice { prefix, slice, suffix } => {
+            Pat::Slice {
+                prefix,
+                slice,
+                suffix,
+            } => {
                 for p in prefix.iter().chain(slice.iter()).chain(suffix.iter()) {
                     self.collect_bindings_recursive(*p, result);
                 }

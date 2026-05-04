@@ -6,13 +6,16 @@ pub mod ty;
 
 use std::collections::HashMap;
 
-use hir::{Adt, AssocItem, Crate, DefWithBody, GenericDef, HasName, Impl, ModuleDef, db::HirDatabase, Semantics, Name, Module};
+use self::output::Output;
 use crate::codegen::decl::{
     is_adt_cfg_disabled, is_adt_r2cs_native, is_impl_cfg_disabled, is_module_cfg_disabled,
 };
-use hir_def::{DefWithBodyId, expr_store::Body};
 use crate::codegen::names::mod_name;
-use self::output::Output;
+use hir::{
+    Adt, AssocItem, Crate, DefWithBody, GenericDef, HasName, Impl, Module, ModuleDef, Name,
+    Semantics, db::HirDatabase,
+};
+use hir_def::{DefWithBodyId, expr_store::Body};
 
 pub struct CodeGenerator<'db> {
     db: &'db dyn HirDatabase,
@@ -52,44 +55,73 @@ impl<'db> CodeGenerator<'db> {
         let mut adt_impls: HashMap<String, Vec<Impl>> = HashMap::new();
 
         for module in krate.modules(db) {
-            if is_module_cfg_disabled(module, db) { continue; }
+            if is_module_cfg_disabled(module, db) {
+                continue;
+            }
             for impl_ in module.impl_defs(db) {
                 let self_ty = impl_.self_ty(db);
                 if let Some(adt) = self_ty.as_adt() {
-                    let key = adt_key(adt, db);
+                    let key = self.adt_key(adt, db);
                     adt_impls.entry(key).or_default().push(impl_);
                 }
             }
         }
 
-        self.emit_module(&mut out, krate.root_module(db), Some(&crate_name), &adt_impls);
+        self.emit_module(
+            &mut out,
+            krate.root_module(db),
+            Some(&crate_name),
+            &adt_impls,
+        );
 
         out.finish()
     }
 
-    fn emit_module(&self, out: &mut Output, module: Module, name_override: Option<&str>, adt_impls: &HashMap<String, Vec<Impl>>) {
+    fn emit_module(
+        &self,
+        out: &mut Output,
+        module: Module,
+        name_override: Option<&str>,
+        adt_impls: &HashMap<String, Vec<Impl>>,
+    ) {
         let db = self.db;
-        if is_module_cfg_disabled(module, db) { return; }
+        if is_module_cfg_disabled(module, db) {
+            return;
+        }
 
-        let module_name = mod_name(module.name(db).as_ref().map(Name::as_str).or(name_override).unwrap());
+        let module_name = mod_name(
+            module
+                .name(db)
+                .as_ref()
+                .map(Name::as_str)
+                .or(name_override)
+                .unwrap(),
+        );
         out.write(&format!("public static partial class {} ", module_name));
         out.open_brace();
 
         // Emit traits first (no impl needed)
         for def in module.declarations(db) {
             if let ModuleDef::Trait(t) = def {
-                decl::emit_trait(out, t, db);
+                self.emit_trait(out, t, db);
             }
         }
 
         // Emit type aliases and free functions
         for def in module.declarations(db) {
             if let ModuleDef::Function(f) = def {
-                let mod_name = module.name(db)
+                let mod_name = module
+                    .name(db)
                     .map(|n| names::mod_name(n.as_str()))
-                    .unwrap_or_else(|| names::mod_name(&module.krate(db).display_name(db).unwrap().as_str()));
-                out.writeln(&format!("// function {} in module {}", f.name(db).as_str(), mod_name));
-                decl::emit_function(out, f, db, None);
+                    .unwrap_or_else(|| {
+                        names::mod_name(&module.krate(db).display_name(db).unwrap().as_str())
+                    });
+                out.writeln(&format!(
+                    "// function {} in module {}",
+                    f.name(db).as_str(),
+                    mod_name
+                ));
+                self.emit_function(out, f, None);
             }
         }
 
@@ -97,7 +129,7 @@ impl<'db> CodeGenerator<'db> {
         for def in module.declarations(db) {
             match def {
                 ModuleDef::Adt(adt) => {
-                    let key = adt_key(adt, db);
+                    let key = self.adt_key(adt, db);
                     let impls = adt_impls.get(&key).cloned().unwrap_or_default();
                     self.emit_adt_with_impls(out, adt, &impls);
                 }
@@ -131,7 +163,10 @@ impl<'db> CodeGenerator<'db> {
                 Adt::Enum(e) => names::struct_name(e.name(db).as_str()),
                 Adt::Union(u) => names::struct_name(u.name(db).as_str()),
             };
-            out.writeln(&format!("// [r2cs_native] {} — add implementation in r2CsNative/", cs_name));
+            out.writeln(&format!(
+                "// [r2cs_native] {} — add implementation in r2CsNative/",
+                cs_name
+            ));
             out.blank_line();
             return;
         }
@@ -142,14 +177,14 @@ impl<'db> CodeGenerator<'db> {
             if let Some(trait_) = impl_.trait_(db) {
                 let name = trait_.name(db);
                 let cs_iface = names::trait_name(name.as_str());
-                let self_cs = ty::rust_type_to_cs(&impl_.self_ty(db), db);
+                let self_cs = self.rust_type_to_cs(&impl_.self_ty(db));
                 // Simple form without checking generic params
                 trait_interfaces.push(format!("{}<{}>", cs_iface, self_cs));
             }
         }
 
         let gen_params = GenericDef::from(adt).params(db);
-        let (tp_names, _) = ty::generic_params_cs(&gen_params, db);
+        let (tp_names, _) = self.generic_params_cs(&gen_params, db);
         let generics = if tp_names.is_empty() {
             String::new()
         } else {
@@ -171,18 +206,26 @@ impl<'db> CodeGenerator<'db> {
 
         match adt {
             Adt::Struct(s) => {
-                out.writeln(&format!("public partial class {}{}{}", cs_name, generics, interfaces_part));
+                out.writeln(&format!(
+                    "public partial class {}{}{}",
+                    cs_name, generics, interfaces_part
+                ));
                 out.open_brace();
 
                 // Fields
                 for field in s.fields(db) {
                     let f_ty_ns = field.ty(db);
                     let f_ty = f_ty_ns.to_type(db);
-                    let cs_ty = ty::rust_type_to_cs(&f_ty, db);
+                    let cs_ty = self.rust_type_to_cs(&f_ty);
                     let f_name = names::field_name(field.name(db).as_str());
-                    out.writeln(&format!("public Slot<{}> {} = new(default!);", cs_ty, f_name));
+                    out.writeln(&format!(
+                        "public Slot<{}> {} = new(default!);",
+                        cs_ty, f_name
+                    ));
                 }
-                if !s.fields(db).is_empty() { out.blank_line(); }
+                if !s.fields(db).is_empty() {
+                    out.blank_line();
+                }
 
                 // Methods from all impl blocks
                 for impl_ in impls {
@@ -193,7 +236,10 @@ impl<'db> CodeGenerator<'db> {
                 out.blank_line();
             }
             Adt::Enum(e) => {
-                out.writeln(&format!("public abstract partial class {}{}{}", cs_name, generics, interfaces_part));
+                out.writeln(&format!(
+                    "public abstract partial class {}{}{}",
+                    cs_name, generics, interfaces_part
+                ));
                 out.open_brace();
                 out.writeln(&format!("private {}() {{}}", cs_name));
                 out.blank_line();
@@ -202,14 +248,20 @@ impl<'db> CodeGenerator<'db> {
                 for variant in e.variants(db) {
                     let v_name = names::variant_name(variant.name(db).as_str());
                     let fields = variant.fields(db);
-                    out.writeln(&format!("public sealed partial class {} : {}{}", v_name, cs_name, generics));
+                    out.writeln(&format!(
+                        "public sealed partial class {} : {}{}",
+                        v_name, cs_name, generics
+                    ));
                     out.open_brace();
                     for field in &fields {
                         let f_ty_ns = field.ty(db);
                         let f_ty = f_ty_ns.to_type(db);
-                        let cs_ty = ty::rust_type_to_cs(&f_ty, db);
+                        let cs_ty = self.rust_type_to_cs(&f_ty);
                         let f_name = names::field_name(field.name(db).as_str());
-                        out.writeln(&format!("public Slot<{}> {} = new(default!);", cs_ty, f_name));
+                        out.writeln(&format!(
+                            "public Slot<{}> {} = new(default!);",
+                            cs_ty, f_name
+                        ));
                     }
                     out.close_brace();
                     out.blank_line();
@@ -236,17 +288,17 @@ impl<'db> CodeGenerator<'db> {
         }
         for item in impl_.items(db) {
             if let AssocItem::Function(f) = item {
-                decl::emit_function(out, f, db, Some(impl_));
+                self.emit_function(out, f, Some(impl_));
             }
         }
     }
-}
 
-fn adt_key(adt: Adt, db: &dyn HirDatabase) -> String {
-    let (kind, name) = match adt {
-        Adt::Struct(s) => ("struct", s.name(db).as_str().to_string()),
-        Adt::Enum(e) => ("enum", e.name(db).as_str().to_string()),
-        Adt::Union(u) => ("union", u.name(db).as_str().to_string()),
-    };
-    format!("{}::{}", kind, name)
+    fn adt_key(&self, adt: Adt, db: &dyn HirDatabase) -> String {
+        let (kind, name) = match adt {
+            Adt::Struct(s) => ("struct", s.name(db).as_str().to_string()),
+            Adt::Enum(e) => ("enum", e.name(db).as_str().to_string()),
+            Adt::Union(u) => ("union", u.name(db).as_str().to_string()),
+        };
+        format!("{}::{}", kind, name)
+    }
 }
