@@ -12,19 +12,47 @@ use crate::codegen::decl::{
 };
 use crate::codegen::names::mod_name;
 use hir::{
-    Adt, AssocItem, Crate, GenericDef, Impl, Module, ModuleDef, Name, Semantics, db::HirDatabase,
+    Adt, AssocItem, Crate, GenericDef, HirFileId, Impl, Module, ModuleDef, Name, Semantics,
+    db::HirDatabase,
 };
+use ide_db::line_index;
+use syntax::SyntaxNode;
+use vfs::Vfs;
 
 pub struct CodeGenerator<'db> {
     db: &'db dyn HirDatabase,
+    vfs: &'db Vfs,
     root_namespace: String,
 }
 
 impl<'db> CodeGenerator<'db> {
-    pub fn new(db: &'db dyn HirDatabase, root_namespace: String) -> Self {
-        Self { db, root_namespace }
+    pub fn new(db: &'db dyn HirDatabase, vfs: &'db Vfs, root_namespace: String) -> Self {
+        Self {
+            db,
+            vfs,
+            root_namespace,
+        }
     }
 
+    pub fn location_with_file(&self, f: HirFileId, node: SyntaxNode) -> String {
+        match f {
+            HirFileId::FileId(f) => {
+                let file_id = f.file_id(self.db);
+                let path = self.vfs.file_path(file_id);
+                let line_index = line_index(self.db, file_id);
+                let range = node.text_range();
+                let line_col = line_index.line_col(range.start());
+
+                return format!("{}:{}:{}", path, line_col.line, line_col.col);
+            }
+            HirFileId::MacroFile(m) => {
+                return "macro".to_string();
+            }
+        }
+    }
+}
+
+impl<'db> CodeGenerator<'db> {
     /// Generate C# code for all declarations in a crate.
     pub fn emit_crate(&self, krate: Crate) -> String {
         let db = self.db;

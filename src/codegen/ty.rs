@@ -1,8 +1,9 @@
+use super::{CodeGenerator, names};
+use crate::codegen::names::mod_name;
 /// Converts Rust HIR types to C# type strings.
 use hir::db::HirDatabase;
-use hir::{Adt, BuiltinType, Type};
-
-use super::{CodeGenerator, names};
+use hir::{Adt, BuiltinType, Module, Type};
+use hir_def::resolver::HasResolver;
 
 impl<'db> CodeGenerator<'db> {
     pub fn rust_type_to_cs(&self, ty: &Type<'db>) -> String {
@@ -60,11 +61,14 @@ impl<'db> CodeGenerator<'db> {
             if let Some(mapped) = self.map_std_type(&rust_adt_name, &args, db) {
                 return mapped;
             }
-            let cs_name = match adt {
-                Adt::Struct(s) => names::struct_name(s.name(db).as_str()),
-                Adt::Enum(e) => names::struct_name(e.name(db).as_str()),
-                Adt::Union(u) => names::struct_name(u.name(db).as_str()),
+
+            let cs_path = {
+                let mut path = self.module_class_ref(adt.module(db));
+                path.push('.');
+                path.push_str(&names::struct_name(adt.name(db).as_str()));
+                path
             };
+
             let type_args: Vec<String> = args
                 .iter()
                 .filter_map(|a| a.as_ref())
@@ -72,9 +76,9 @@ impl<'db> CodeGenerator<'db> {
                 .filter(|s| s != "void")
                 .collect();
             if type_args.is_empty() {
-                cs_name
+                cs_path
             } else {
-                format!("{}<{}>", cs_name, type_args.join(", "))
+                format!("{}<{}>", cs_path, type_args.join(", "))
             }
         } else if let Some(trait_) = ty.as_dyn_trait() {
             // dyn Trait → T_TraitName (dyn interface)
@@ -109,19 +113,21 @@ impl<'db> CodeGenerator<'db> {
             "i16" => "short",
             "i32" => "int",
             "i64" => "long",
-            "i128" => "System.Int128",
+            "i128" => "global::System.Int128",
             "isize" => "nint",
             "u8" => "byte",
             "u16" => "ushort",
             "u32" => "uint",
             "u64" => "ulong",
-            "u128" => "System.UInt128",
+            "u128" => "global::System.UInt128",
             "usize" => "nuint",
-            "f16" => "System.Half",
+            "f16" => "global::System.Half",
             "f32" => "float",
             "f64" => "double",
-            "f128" => "/* f128 */ double",
-            _ => "object",
+            _ => {
+                eprintln!("Unsupported builtin type: {}", name.as_str());
+                "object"
+            }
         }
         .to_string()
     }
@@ -235,5 +241,39 @@ impl<'db> CodeGenerator<'db> {
         }
 
         (type_params, constraints)
+    }
+
+    fn module_class_ref(&self, module: Module) -> String {
+        if let Some(parent) = module.parent(self.db) {
+            let mut path = self.module_class_ref(parent);
+            let module_name = module.name(self.db);
+            let module_name = module_name.as_ref().map(|m| m.as_str()).unwrap_or_else(|| {
+                let src = module.definition_source(self.db);
+
+                eprintln!(
+                    "Unsupported: module (crate) does not have a name in {path} at {:?}",
+                    self.location_with_file(src.file_id, src.value.node())
+                );
+                return "unnamed_mod";
+            });
+            path.push('.');
+            path.push_str(&mod_name(module_name));
+            path
+        } else {
+            if !module.is_crate_root(self.db) {
+                eprintln!("Unsupported: non-crate root module without parent module: {module:?}")
+            }
+            let crate_name = module.krate(self.db).display_name(self.db);
+            let crate_name = crate_name.as_ref().map(|x| x.as_str()).unwrap_or_else(|| {
+                eprintln!("Unsupported: module (crate) does not have a name");
+                return "unnamed_crate";
+            });
+            let mut path = String::new();
+            path.push_str("global::");
+            path.push_str(&self.root_namespace);
+            path.push_str(".");
+            path.push_str(mod_name(&crate_name).as_str());
+            path
+        }
     }
 }

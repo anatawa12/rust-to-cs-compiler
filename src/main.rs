@@ -7,12 +7,12 @@ use ide_db::base_db::{CrateDisplayName, all_crates};
 use ide_db::{FxHashMap, RootDatabase};
 use load_cargo::{LoadCargoConfig, load_workspace};
 use project_model::{CargoConfig, CargoFeatures, ProjectManifest, ProjectWorkspace};
-use vfs::AbsPathBuf;
+use vfs::{AbsPathBuf, Vfs};
 
 fn load_workspace_from_cargo(
     path: &str,
     env: &FxHashMap<String, Option<String>>,
-) -> (RootDatabase, Vec<Crate>) {
+) -> (RootDatabase, Vfs, Vec<Crate>) {
     let manifest = ProjectManifest::discover_single(&AbsPathBuf::assert(path.into())).unwrap();
 
     let mut cargo_config = CargoConfig::default();
@@ -32,14 +32,14 @@ fn load_workspace_from_cargo(
         proc_macro_processes: 10,
     };
 
-    let (db, _vfs, _proc_macro) = load_workspace(ws, env, &load_config).unwrap();
+    let (db, vfs, _proc_macro) = load_workspace(ws, env, &load_config).unwrap();
 
     let crates = all_crates(&db)
         .into_iter()
         .map(|k| Crate::from(k.clone()))
         .collect();
 
-    (db, crates)
+    (db, vfs, crates)
 }
 
 fn main() {
@@ -47,7 +47,7 @@ fn main() {
         .canonicalize()
         .unwrap();
 
-    let (db, crates) = load_workspace_from_cargo(
+    let (db, vfs, crates) = load_workspace_from_cargo(
         manifest_path.to_string_lossy().as_ref(),
         &FxHashMap::default(),
     );
@@ -61,7 +61,7 @@ fn main() {
             }
             eprintln!("Transpiling crate: {}", name.unwrap());
 
-            let generator = codegen::CodeGenerator::new(db, "VrcGetVpm".into());
+            let generator = codegen::CodeGenerator::new(db, &vfs, "VrcGetVpm".into());
             let output = generator.emit_crate(*krate);
             println!("{}", output);
         }
