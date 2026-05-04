@@ -17,11 +17,12 @@ use hir::{
 
 pub struct CodeGenerator<'db> {
     db: &'db dyn HirDatabase,
+    root_namespace: String,
 }
 
 impl<'db> CodeGenerator<'db> {
-    pub fn new(db: &'db dyn HirDatabase) -> Self {
-        Self { db }
+    pub fn new(db: &'db dyn HirDatabase, root_namespace: String) -> Self {
+        Self { db, root_namespace }
     }
 
     /// Generate C# code for all declarations in a crate.
@@ -41,8 +42,7 @@ impl<'db> CodeGenerator<'db> {
             .display_name(db)
             .map(|n| n.as_str().to_string())
             .unwrap_or_else(|| "r2cs_generated".to_string());
-        let ns_name = names::pascal(&crate_name);
-        out.writeln(&format!("namespace {};", ns_name));
+        out.writeln(&format!("namespace {};", self.root_namespace));
         out.blank_line();
 
         // Collect all impls keyed by ADT (by display name as a quick proxy)

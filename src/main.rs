@@ -61,7 +61,7 @@ fn main() {
             }
             eprintln!("Transpiling crate: {}", name.unwrap());
 
-            let generator = codegen::CodeGenerator::new(db);
+            let generator = codegen::CodeGenerator::new(db, "VrcGetVpm".into());
             let output = generator.emit_crate(*krate);
             println!("{}", output);
         }
