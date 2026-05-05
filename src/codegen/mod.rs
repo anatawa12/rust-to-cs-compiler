@@ -24,15 +24,22 @@ use vfs::{FileId, Vfs};
 pub struct CodeGenerator<'db> {
     db: &'db dyn HirDatabase,
     vfs: &'db Vfs,
+    krate: Crate,
     sem: Semantics<'db, dyn HirDatabase>,
     root_namespace: String,
 }
 
 impl<'db> CodeGenerator<'db> {
-    pub fn new(db: &'db dyn HirDatabase, vfs: &'db Vfs, root_namespace: String) -> Self {
+    pub fn new(
+        db: &'db dyn HirDatabase,
+        vfs: &'db Vfs,
+        krate: Crate,
+        root_namespace: String,
+    ) -> Self {
         Self {
             db,
             vfs,
+            krate,
             sem: Semantics::new_dyn(db),
             root_namespace,
         }
@@ -178,7 +185,7 @@ impl<'db> CodeGenerator<'db> {
                     .unwrap_or_else(|| {
                         names::mod_name(&module.krate(db).display_name(db).unwrap().as_str())
                     });
-                out.wln(&format!(
+                out.wln(format!(
                     "// function {} in module {}",
                     f.name(db).as_str(),
                     mod_name
@@ -189,13 +196,10 @@ impl<'db> CodeGenerator<'db> {
 
         // Emit each ADT with its impl blocks
         for def in module.declarations(db) {
-            match def {
-                ModuleDef::Adt(adt) => {
-                    let key = self.adt_key(adt, db);
-                    let impls = adt_impls.get(&key).cloned().unwrap_or_default();
-                    self.emit_adt_with_impls(out, adt, &impls);
-                }
-                _ => {}
+            if let ModuleDef::Adt(adt) = def {
+                let key = self.adt_key(adt, db);
+                let impls = adt_impls.get(&key).cloned().unwrap_or_default();
+                self.emit_adt_with_impls(out, adt, &impls);
             }
         }
 
@@ -225,10 +229,11 @@ impl<'db> CodeGenerator<'db> {
                 Adt::Enum(e) => names::struct_name(e.name(db).as_str()),
                 Adt::Union(u) => names::struct_name(u.name(db).as_str()),
             };
-            out.wln(&format!(
+            out.wln(format!(
                 "// [r2cs_native] {} — add implementation in r2CsNative/",
                 cs_name
             ));
+            out.wln(format!("public partial class {cs_name} {{}}"));
             out.blank_line();
             return;
         }
@@ -294,19 +299,19 @@ impl<'db> CodeGenerator<'db> {
                 out.blank_line();
             }
             Adt::Enum(e) => {
-                out.wln(&format!(
+                out.wln(format!(
                     "public abstract partial class {}{}{}",
                     cs_name, generics, interfaces_part
                 ));
                 out.open_brace();
-                out.wln(&format!("private {}() {{}}", cs_name));
+                out.wln(format!("private {}() {{}}", cs_name));
                 out.blank_line();
 
                 // Variants
                 for variant in e.variants(db) {
                     let v_name = names::variant_name(variant.name(db).as_str());
                     let fields = variant.fields(db);
-                    out.wln(&format!(
+                    out.wln(format!(
                         "public sealed partial class {v_name} : {cs_name}{generics}",
                     ));
                     out.open_brace();
@@ -315,32 +320,43 @@ impl<'db> CodeGenerator<'db> {
                         let f_ty = f_ty_ns.to_type(db);
                         let cs_ty = self.rust_type_to_cs(&f_ty);
                         let f_name = names::field_name(field.name(db).as_str());
-                        out.wln(&format!(
+                        out.wln(format!(
                             "public Slot<{}> {} = new(default!);",
                             cs_ty, f_name
                         ));
                     }
-                    if variant.kind(self.db) == StructKind::Tuple {
-                        out.wln(&format!(
-                            "public {v_name}({params})",
-                            params = fields
-                                .iter()
-                                .map(|field| {
-                                    format!(
-                                        "{} {}",
-                                        self.rust_type_to_cs(&field.ty(db).to_type(db)),
-                                        names::field_name(field.name(db).as_str())
-                                    )
-                                })
-                                .join(", ")
-                        ));
-                        out.open_brace();
+                    match variant.kind(self.db) {
+                        StructKind::Record => {}
+                        StructKind::Tuple => {
+                            out.wln(format!(
+                                "public {v_name}({params})",
+                                params = fields
+                                    .iter()
+                                    .map(|field| {
+                                        format!(
+                                            "{} {}",
+                                            self.rust_type_to_cs(&field.ty(db).to_type(db)),
+                                            names::field_name(field.name(db).as_str())
+                                        )
+                                    })
+                                    .join(", ")
+                            ));
+                            out.open_brace();
 
-                        for field in &fields {
-                            let f_name = names::field_name(field.name(db).as_str());
-                            out.wln(&format!("this.{f_name} = new({f_name});"));
+                            for field in &fields {
+                                let f_name = names::field_name(field.name(db).as_str());
+                                out.wln(&format!("this.{f_name} = new({f_name});"));
+                            }
+                            out.close_brace();
                         }
-                        out.close_brace();
+                        StructKind::Unit => {
+                            out.w("private ").w(&v_name).wln("(){}");
+                            out.w("public static ")
+                                .w(&v_name)
+                                .w(" instance = new ")
+                                .w(&v_name)
+                                .wln("();");
+                        }
                     }
                     out.close_brace();
                     out.blank_line();

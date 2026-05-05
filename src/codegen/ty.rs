@@ -2,10 +2,12 @@ use super::{CodeGenerator, names};
 use crate::codegen::names::mod_name;
 /// Converts Rust HIR types to C# type strings.
 use hir::db::HirDatabase;
+use hir::next_solver::GenericArgs;
 use hir::{Adt, BuiltinType, Module, Name, Trait, Type};
-use hir_def::resolver::HasResolver;
+use hir_def::AdtId;
 use hir_ty::display::HirDisplay;
-use syntax::SyntaxNodePtr;
+use hir_ty::next_solver::{DbInterner, Ty};
+use ide_db::base_db;
 
 impl<'db> CodeGenerator<'db> {
     pub fn rust_type_to_cs(&self, ty: &Type<'db>) -> String {
@@ -92,14 +94,21 @@ impl<'db> CodeGenerator<'db> {
                 names::generic_param(&name)
             }
         } else if let Some(impl_traits) = ty.as_impl_traits(db) {
-            let traits = impl_traits.collect::<Vec<_>>();
+            let traits = impl_traits
+                // remove marker traits including lang items like Send, Sized
+                .filter(|&t| !t.items_with_supertraits(db).is_empty())
+                .collect::<Vec<_>>();
             if traits.len() > 1 {
-                eprintln!("Multiple traits are used: {:?}", ty);
+                eprintln!(
+                    "Multiple traits are used: {}",
+                    ty.display(db, self.krate.to_display_target(db))
+                );
             }
             if traits.is_empty() {
                 eprintln!("empty impl traits: {:?}", ty);
                 "object".to_string()
             } else {
+                //ty.normalize_trait_assoc_type()
                 self.trait_itf_cs(traits[0])
             }
         } else {
@@ -109,8 +118,16 @@ impl<'db> CodeGenerator<'db> {
             } else if ty.is_closure() {
                 "Action".to_string()
             } else {
-                eprintln!("Unsupported type: {:?}", ty);
-                format!("object /*Unsupported type:  {ty:?}*/").to_string()
+                eprintln!(
+                    "Unsupported type: {}: {ty:?}\n{}",
+                    ty.display(self.db, self.krate.to_display_target(self.db)),
+                    std::backtrace::Backtrace::disabled()
+                );
+                format!(
+                    "object /*Unsupported type: {} */",
+                    ty.display(self.db, self.krate.to_display_target(self.db))
+                )
+                .to_string()
             }
         }
     }
@@ -311,6 +328,14 @@ impl<'db> CodeGenerator<'db> {
         path
     }
 
+    pub fn enum_variant_cs1(&self, v: hir::EnumVariant, generic: GenericArgs<'db>) -> String {
+        let mut path =
+            self.rust_type_to_cs(&self.adt_with_generic(v.parent_enum(self.db).into(), generic));
+        path.push('.');
+        path.push_str(&names::variant_name(v.name(self.db).as_str()));
+        path
+    }
+
     pub fn enum_variant_cs(&self, v: hir::EnumVariant) -> String {
         let mut path = self.rust_type_to_cs(&v.parent_enum(self.db).ty(self.db));
         path.push('.');
@@ -318,10 +343,162 @@ impl<'db> CodeGenerator<'db> {
         path
     }
 
+    pub fn new_type(&self, ty: Ty<'db>) -> Type<'db> {
+        Type::from_ty(ty, self.db, self.krate.base())
+    }
+
+    pub fn adt_with_generic(&self, adt: Adt, args: GenericArgs<'db>) -> Type<'db> {
+        let id = AdtId::from(adt);
+        let interner = DbInterner::new_no_crate(self.db);
+        let ty = Ty::new_adt(interner, id, args);
+        self.new_type(ty)
+    }
+
+    pub fn generic_args_to_types(
+        &self,
+        generic: GenericArgs<'db>,
+    ) -> impl IntoIterator<Item = Type<'db>> {
+        generic.as_slice().iter().filter_map(|x| match x.kind() {
+            hir_ty::next_solver::GenericArgKind::Type(t) => Some(self.new_type(t)),
+            _ => None,
+        })
+    }
+
     pub fn constructable_name_cs(&self, c: Constructable) -> String {
         match c {
             Constructable::Struct(s) => self.adt_name_cs(s.into()),
             Constructable::EnumVariant(v) => self.enum_variant_cs(v.into()),
+        }
+    }
+}
+
+pub trait TyFromType<'db> {
+    fn ns_ty(&self) -> &hir::next_solver::Ty<'db>;
+    fn from_ty(
+        ty: hir::next_solver::Ty<'db>,
+        db: &'db dyn HirDatabase,
+        krate: base_db::Crate,
+    ) -> Self;
+}
+
+mod ty_and_type {
+    use crate::codegen::ty::TyFromType;
+    use hir::{BuiltinType, Crate};
+    use hir_def::CallableDefId;
+    use hir_def::resolver::{HasResolver, Resolver};
+    use hir_ty::ParamEnvAndCrate;
+    use hir_ty::db::HirDatabase;
+    use hir_ty::next_solver::{ParamEnv, Ty};
+    use ide_db::base_db;
+    use ide_db::base_db::{CrateOrigin, LangCrateOrigin, all_crates};
+
+    pub struct TypeMap<'db> {
+        env: hir_ty::ParamEnvAndCrate<'db>,
+        ty: hir::next_solver::Ty<'db>,
+    }
+
+    impl<'db> TyFromType<'db> for hir::Type<'db> {
+        fn ns_ty(&self) -> &hir::next_solver::Ty<'db> {
+            // SAFETY:  This is NOT safe in rust guaranteed behavior,
+            //          but known implementation allows us to do so.
+            unsafe { &std::mem::transmute::<&Self, &TypeMap<'db>>(self).ty }
+        }
+
+        fn from_ty(ty: Ty<'db>, db: &'db dyn HirDatabase, krate: base_db::Crate) -> Self {
+            unsafe {
+                std::mem::transmute::<TypeMap<'db>, Self>(TypeMap {
+                    env: ty_env(db, krate, ty),
+                    ty,
+                })
+            }
+        }
+    }
+
+    fn ty_env<'db>(
+        db: &'db dyn HirDatabase,
+        krate: base_db::Crate,
+        ty: hir::next_solver::Ty,
+    ) -> ParamEnvAndCrate<'db> {
+        use hir_def::builtin_type as bt;
+        use hir_ty::next_solver::{GenericArgKind, TyKind};
+        use hir_ty::primitive::{FloatTy, IntTy, UintTy};
+
+        match ty.inner().internee {
+            // builtin types
+            TyKind::Bool
+            | TyKind::Char
+            | TyKind::Int(_)
+            | TyKind::Uint(_)
+            | TyKind::Float(_)
+            | TyKind::Str => empty_param_env(core_crate(db)),
+
+            TyKind::Adt(a, _) => param_env_from_resolver(db, &a.inner().id.resolver(db)),
+            TyKind::Foreign(f) => param_env_from_resolver(db, &f.0.resolver(db)),
+            TyKind::Slice(e) => ty_env(db, krate, e),
+            TyKind::Array(e, c) => ty_env(db, krate, e),
+            TyKind::Pat(t, _) => ty_env(db, krate, t),
+            TyKind::RawPtr(e, _) => ty_env(db, krate, e),
+            TyKind::Ref(_, e, _) => ty_env(db, krate, e),
+            TyKind::FnDef(f, _) => match f.0 {
+                CallableDefId::FunctionId(f) => param_env_from_resolver(db, &f.resolver(db)),
+                CallableDefId::StructId(s) => param_env_from_resolver(db, &s.resolver(db)),
+                CallableDefId::EnumVariantId(e) => param_env_from_resolver(db, &e.resolver(db)),
+            },
+
+            // unknown types are fell backed to current drate with emtpy
+            _ => empty_param_env(krate),
+            /*
+            TyKind::FnPtr(_, _) => empty_param_env(krate),
+            TyKind::UnsafeBinder(_) => empty_param_env(krate),
+            TyKind::Dynamic(_, _) => empty_param_env(krate),
+            TyKind::Closure(_, _) => {}
+            TyKind::CoroutineClosure(_, _) => {}
+            TyKind::Coroutine(_, _) => {}
+            TyKind::CoroutineWitness(_, _) => {}
+            TyKind::Never => {}
+            TyKind::Tuple(_) => {}
+            TyKind::Alias(_) => {}
+            TyKind::Param(_) => {}
+            TyKind::Bound(_, _) => {}
+            TyKind::Placeholder(_) => {}
+            TyKind::Infer(_) => {}
+            TyKind::Error(_) => {}
+            // */
+        }
+    }
+
+    fn core_crate(db: &dyn HirDatabase) -> base_db::Crate {
+        all_crates(db)
+            .iter()
+            .copied()
+            .find(|&krate| {
+                matches!(
+                    krate.data(db).origin,
+                    CrateOrigin::Lang(LangCrateOrigin::Core)
+                )
+            })
+            .map(base_db::Crate::from)
+            .unwrap_or_else(|| all_crates(db)[0])
+    }
+
+    fn param_env_from_resolver<'db>(
+        db: &'db dyn HirDatabase,
+        resolver: &Resolver<'_>,
+    ) -> ParamEnvAndCrate<'db> {
+        ParamEnvAndCrate {
+            param_env: resolver
+                .generic_def()
+                .map_or_else(ParamEnv::empty, |generic_def| {
+                    db.trait_environment(generic_def.into())
+                }),
+            krate: resolver.krate(),
+        }
+    }
+
+    fn empty_param_env<'db>(krate: base_db::Crate) -> ParamEnvAndCrate<'db> {
+        ParamEnvAndCrate {
+            param_env: ParamEnv::empty(),
+            krate,
         }
     }
 }

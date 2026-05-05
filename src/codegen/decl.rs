@@ -243,32 +243,6 @@ impl CodeGenerator<'_> {
         let is_async = f.is_async(db);
         let ret_ty = f.async_ret_type(db).unwrap_or(f.ret_type(db));
         let cs_ret = self.cs_ret_type(is_async, &ret_ty);
-        if (is_async) {
-            /*
-            eprintln!("async: {:?}", ret_ty);
-            eprintln!(
-                "async: {:?}",
-                ret_ty
-                    .ty
-                    .display_source_code(self.db, f.module(self.db).into(), true)
-            );
-            let ret_ty1 = ret_ty.as_impl_traits();
-            eprintln!("async: {:?}", ret_ty.as_type_param(self.db).unwrap(),);
-
-            //GenericPredicates::query_all(self.db, param.id.parent())
-            eprintln!(
-                "async: {:?}",
-                ret_ty
-                    .as_type_param(self.db)
-                    .unwrap()
-                    .trait_bounds(self.db)
-                    .into_iter()
-                    .next()
-                    .unwrap()
-                    .display_source_code(self.db, f.module(self.db).into(), true)
-            );
-            // */
-        }
         let async_kw = if is_async { "async " } else { "" };
         let m_name = names::method_name(f.name(db).as_str());
         let has_self = f.has_self_param(db);

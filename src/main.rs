@@ -57,12 +57,13 @@ fn main() {
     hir::attach_db(db, || {
         for krate in &crates {
             let name = krate.display_name(db);
+            //println!("crate map: {name:?}: {krate:?}");
             if name != Some(CrateDisplayName::from_canonical_name("vrc_get_vpm")) {
                 continue;
             }
             eprintln!("Transpiling crate: {}", name.unwrap());
 
-            let generator = codegen::CodeGenerator::new(db, &vfs, "VrcGetVpm".into());
+            let generator = codegen::CodeGenerator::new(db, &vfs, *krate, "VrcGetVpm".into());
             let output = generator.emit_crate(*krate);
             println!("{}", output);
         }

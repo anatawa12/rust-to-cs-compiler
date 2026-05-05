@@ -3,21 +3,23 @@ use std::collections::HashMap;
 
 use super::{CodeGenerator, names, output::Code};
 use crate::codegen::ty::Constructable;
-use hir::{AssocItem, Function, Local, Name, PathKind, db::HirDatabase};
+use hir::{AssocItem, Function, Local, Name, PathKind, StructKind, db::HirDatabase};
 use hir_def::expr_store::scope::ExprScopes;
 use hir_def::expr_store::{BodySourceMap, HygieneId};
 use hir_def::resolver::{
     HasResolver, ResolveValueResult, Resolver, TypeNs, ValueNs, resolver_for_scope,
 };
 use hir_def::{
-    CallableDefId, DefWithBodyId, HasModule, ItemContainerId, VariantId,
+    AdtId, CallableDefId, DefWithBodyId, HasModule, ItemContainerId, VariantId,
     expr_store::Body,
     hir::{
         Array, BinaryOp, BindingId, Expr, ExprId, Literal, Pat, PatId, RangeOp, Statement, UnaryOp,
     },
 };
 use hir_ty::InferenceResult;
-use hir_ty::next_solver::TyKind;
+use hir_ty::display::HirDisplay;
+use hir_ty::next_solver::infer::{DbInternerInferExt, InferCtxtBuilder};
+use hir_ty::next_solver::{DbInterner, GenericArgKind, TyKind};
 
 /// Generates C# for the body of a single function.
 pub struct BodyGen<'db> {
@@ -390,11 +392,34 @@ impl<'db> BodyGen<'db> {
             Expr::Path(path) if true => {
                 let resolver =
                     resolver_for_scope(self.db, self.def_id, self.scopes.scope_for(expr_id));
+                let infer = self.infer.expr_ty(expr_id);
                 match resolver.resolve_path_in_value_ns_with_prefix_info(
                     self.db,
                     path,
                     self.body.expr_or_pat_path_hygiene(expr_id.into()),
                 ) {
+                    Some((_, _)) if let TyKind::FnDef(f, generic) = infer.inner().internee => {
+                        match f.0 {
+                            CallableDefId::FunctionId(f) => {
+                                self.fn_path_cs(hir::Function::from(f)).into()
+                            }
+                            CallableDefId::StructId(s) => {
+                                fcode!(
+                                    "new {}",
+                                    self.rust_type_to_cs(
+                                        &self
+                                            .adt_with_generic(hir::Struct::from(s).into(), generic)
+                                    )
+                                )
+                            }
+                            CallableDefId::EnumVariantId(v) => {
+                                fcode!(
+                                    "new {}",
+                                    self.enum_variant_cs1(hir::EnumVariant::from(v), generic)
+                                )
+                            }
+                        }
+                    }
                     Some((ResolveValueResult::ValueNs(value_ns), _)) => match value_ns {
                         ValueNs::ImplSelf(_) => {
                             eprintln!("ImplSelf at {}", self.expr_location(expr_id));
@@ -414,30 +439,42 @@ impl<'db> BodyGen<'db> {
                             format!("new {}", self.adt_name_cs(hir::Struct::from(s).into())).into()
                         }
                         ValueNs::EnumVariantId(v) => {
-                            format!("new {}", self.enum_variant_cs(hir::EnumVariant::from(v)))
-                                .into()
+                            let variant = hir::EnumVariant::from(v);
+                            match variant.kind(self.db) {
+                                StructKind::Unit
+                                    if let TyKind::Adt(d, generic) = infer.inner().internee
+                                        && let AdtId::EnumId(e) = d.inner().id
+                                        && e == variant.parent_enum(self.db).into() =>
+                                {
+                                    fcode!(
+                                        "{}.instance",
+                                        self.enum_variant_cs1(hir::EnumVariant::from(v), generic)
+                                    )
+                                }
+                                kind => {
+                                    eprintln!(
+                                        "Unexpected struct kind and infer for enum variant path at {loc}\n\
+                                        \tkind: {kind:?}\n\
+                                        \ttype: {type}",
+                                        loc = self.expr_location(expr_id),
+                                        type = self.new_type(infer).display(
+                                            self.db,
+                                            self.krate.to_display_target(self.db)
+                                        )
+                                    );
+
+                                    fcode!(
+                                        "new /* unexpected struct kind and infer */ {}",
+                                        self.enum_variant_cs(hir::EnumVariant::from(v))
+                                    )
+                                }
+                            }
                         }
                         ValueNs::GenericParam(_) => {
                             eprintln!("GenericParam at {}", self.expr_location(expr_id));
                             "(GenericParam)".into()
                         }
                     },
-                    Some((ResolveValueResult::Partial(_, _), _))
-                        if let TyKind::FnDef(f, _generic) =
-                            self.infer.expr_ty(expr_id).inner().internee =>
-                    {
-                        match f.0 {
-                            CallableDefId::FunctionId(f) => {
-                                self.fn_path_cs(hir::Function::from(f)).into()
-                            }
-                            CallableDefId::StructId(s) => {
-                                fcode!("new {}", self.adt_name_cs(hir::Struct::from(s).into()))
-                            }
-                            CallableDefId::EnumVariantId(v) => {
-                                fcode!("new {}", self.enum_variant_cs(hir::EnumVariant::from(v)))
-                            }
-                        }
-                    }
                     Some((
                         ResolveValueResult::Partial(
                             ty @ (TypeNs::AdtId(_) | TypeNs::BuiltinType(_) | TypeNs::SelfType(_)),
