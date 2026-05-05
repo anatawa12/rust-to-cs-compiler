@@ -201,6 +201,16 @@ macro_rules! code {
         $crate::codegen::output::code!(@args [$output] [$($($rem)*)?]);
     };
 
+    (@args [$output: expr] [indent $(, $($rem:tt)*)?]) => {
+        $output.indent();
+        $crate::codegen::output::code!(@args [$output] [$($($rem)*)?]);
+    };
+
+    (@args [$output: expr] [dedent $(, $($rem:tt)*)?]) => {
+        $output.dedent();
+        $crate::codegen::output::code!(@args [$output] [$($($rem)*)?]);
+    };
+
     (@args [$output: expr] [$arg:expr $(, $($rem:tt)*)?]) => {
         $output.w(&$arg);
         $crate::codegen::output::code!(@args [$output] [$($($rem)*)?]);

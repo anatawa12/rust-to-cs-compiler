@@ -727,7 +727,16 @@ impl<'db> BodyGen<'db> {
                     let val = self.emit_expr_str(f.expr);
                     code!(cs_f, " = new r2CsRuntime.Slot<", cs_ty, ">(", val, ")")
                 });
-                code!("new ", type_name, "() { ", join(field_inits, ", "), " }")
+                code!(
+                    "new ",
+                    type_name,
+                    "() {\n",
+                    indent,
+                    join(field_inits, ", \n"),
+                    "\n",
+                    dedent,
+                    "}"
+                )
             }
             Expr::Index { base, index } => {
                 let base_str = self.emit_expr_str(*base);
