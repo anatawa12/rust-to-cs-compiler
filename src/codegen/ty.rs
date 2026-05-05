@@ -2,8 +2,10 @@ use super::{CodeGenerator, names};
 use crate::codegen::names::mod_name;
 /// Converts Rust HIR types to C# type strings.
 use hir::db::HirDatabase;
-use hir::{Adt, BuiltinType, Module, Type};
+use hir::{Adt, BuiltinType, Module, Name, Trait, Type};
 use hir_def::resolver::HasResolver;
+use hir_ty::display::HirDisplay;
+use syntax::SyntaxNodePtr;
 
 impl<'db> CodeGenerator<'db> {
     pub fn rust_type_to_cs(&self, ty: &Type<'db>) -> String {
@@ -12,7 +14,10 @@ impl<'db> CodeGenerator<'db> {
 
     fn rust_type_to_cs_inner(&self, ty: &Type<'db>, in_slot: bool) -> String {
         let db = self.db;
-        if ty.is_unit() || ty.is_never() {
+        if ty.is_unit() {
+            return "global::System.ValueTuple".to_string();
+        }
+        if ty.is_never() {
             return "void".to_string();
         }
 
@@ -45,7 +50,7 @@ impl<'db> CodeGenerator<'db> {
         if ty.is_tuple() {
             let fields = ty.tuple_fields(db);
             if fields.is_empty() {
-                return "void".to_string();
+                return "global::System.ValueTuple".to_string();
             }
             let parts: Vec<String> = fields
                 .iter()
@@ -62,12 +67,7 @@ impl<'db> CodeGenerator<'db> {
                 return mapped;
             }
 
-            let cs_path = {
-                let mut path = self.module_class_ref(adt.module(db));
-                path.push('.');
-                path.push_str(&names::struct_name(adt.name(db).as_str()));
-                path
-            };
+            let cs_path = self.adt_name_cs(adt);
 
             let type_args: Vec<String> = args
                 .iter()
@@ -91,6 +91,17 @@ impl<'db> CodeGenerator<'db> {
             } else {
                 names::generic_param(&name)
             }
+        } else if let Some(impl_traits) = ty.as_impl_traits(db) {
+            let traits = impl_traits.collect::<Vec<_>>();
+            if traits.len() > 1 {
+                eprintln!("Multiple traits are used: {:?}", ty);
+            }
+            if traits.is_empty() {
+                eprintln!("empty impl traits: {:?}", ty);
+                "object".to_string()
+            } else {
+                self.trait_itf_cs(traits[0])
+            }
         } else {
             // Closure types, fn pointers, etc. — use Action/Func
             if ty.is_fn() {
@@ -98,7 +109,8 @@ impl<'db> CodeGenerator<'db> {
             } else if ty.is_closure() {
                 "Action".to_string()
             } else {
-                "object".to_string()
+                eprintln!("Unsupported type: {:?}", ty);
+                format!("object /*Unsupported type:  {ty:?}*/").to_string()
             }
         }
     }
@@ -163,20 +175,6 @@ impl<'db> CodeGenerator<'db> {
             "Arc" | "Rc" | "Mutex" | "RwLock" => {
                 let inner = args.first()?.as_ref()?;
                 Some(self.rust_type_to_cs_inner(inner, false))
-            }
-            "Option" => {
-                let inner = args.first()?.as_ref()?;
-                let t = self.rust_type_to_cs_inner(inner, false);
-                Some(format!("s_Option<{}>", t))
-            }
-            "Result" => {
-                let ok = args.first()?.as_ref()?;
-                let err = args.get(1)?.as_ref()?;
-                Some(format!(
-                    "s_Result<{}, {}>",
-                    self.rust_type_to_cs_inner(ok, false),
-                    self.rust_type_to_cs_inner(err, false)
-                ))
             }
             "HashMap" | "BTreeMap" | "IndexMap" | "AHashMap" => {
                 let k = args.first()?.as_ref()?;
@@ -243,16 +241,23 @@ impl<'db> CodeGenerator<'db> {
         (type_params, constraints)
     }
 
-    fn module_class_ref(&self, module: Module) -> String {
+    pub fn trait_itf_cs(&self, t: Trait) -> String {
+        let mut path = self.module_class_cs(t.module(self.db));
+        path.push('.');
+        path.push_str(&names::trait_name(t.name(self.db).as_str()));
+        path
+    }
+
+    pub fn module_class_cs(&self, module: Module) -> String {
         if let Some(parent) = module.parent(self.db) {
-            let mut path = self.module_class_ref(parent);
+            let mut path = self.module_class_cs(parent);
             let module_name = module.name(self.db);
             let module_name = module_name.as_ref().map(|m| m.as_str()).unwrap_or_else(|| {
                 let src = module.definition_source(self.db);
 
                 eprintln!(
                     "Unsupported: module (crate) does not have a name in {path} at {:?}",
-                    self.location_with_file(src.file_id, src.value.node())
+                    self.location_with_file(src)
                 );
                 return "unnamed_mod";
             });
@@ -274,6 +279,65 @@ impl<'db> CodeGenerator<'db> {
             path.push_str(".");
             path.push_str(mod_name(&crate_name).as_str());
             path
+        }
+    }
+
+    pub fn fn_path_cs(&self, adt: hir::Function) -> String {
+        let mut path = self.module_class_cs(adt.module(self.db));
+        path.push('.');
+        path.push_str(&names::method_name(adt.name(self.db).as_str()));
+        path
+    }
+
+    pub fn const_path_cs(&self, adt: hir::Const) -> String {
+        let mut path = self.module_class_cs(adt.module(self.db));
+        path.push('.');
+        path.push_str(&names::method_name(
+            adt.name(self.db)
+                .as_ref()
+                .map(Name::as_str)
+                .unwrap_or_else(|| {
+                    eprintln!("Unnamed const at of {}", path);
+                    "(unnamed_const)"
+                }),
+        ));
+        path
+    }
+
+    pub fn adt_name_cs(&self, adt: hir::Adt) -> String {
+        let mut path = self.module_class_cs(adt.module(self.db));
+        path.push('.');
+        path.push_str(&names::struct_name(adt.name(self.db).as_str()));
+        path
+    }
+
+    pub fn enum_variant_cs(&self, v: hir::EnumVariant) -> String {
+        let mut path = self.rust_type_to_cs(&v.parent_enum(self.db).ty(self.db));
+        path.push('.');
+        path.push_str(&names::variant_name(v.name(self.db).as_str()));
+        path
+    }
+
+    pub fn constructable_name_cs(&self, c: Constructable) -> String {
+        match c {
+            Constructable::Struct(s) => self.adt_name_cs(s.into()),
+            Constructable::EnumVariant(v) => self.enum_variant_cs(v.into()),
+        }
+    }
+}
+
+// TODO: Generic Args
+#[derive(Debug, Clone, Copy)]
+pub enum Constructable {
+    Struct(hir::Struct),
+    EnumVariant(hir::EnumVariant),
+}
+
+impl Constructable {
+    pub fn fields(self, db: &dyn HirDatabase) -> Vec<hir::Field> {
+        match self {
+            Constructable::Struct(s) => s.fields(db),
+            Constructable::EnumVariant(v) => v.fields(db),
         }
     }
 }

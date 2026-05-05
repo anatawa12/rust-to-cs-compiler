@@ -1411,6 +1411,7 @@ dependencies = [
 name = "rust-to-cs-compiler"
 version = "0.1.0"
 dependencies = [
+ "itertools",
  "ra_ap_cfg",
  "ra_ap_hir",
  "ra_ap_hir_def",

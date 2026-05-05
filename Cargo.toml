@@ -14,3 +14,4 @@ load-cargo = { package = "ra_ap_load-cargo", version = "0.0.330" }
 project_model = { package = "ra_ap_project_model", version = "0.0.330" }
 tracing-subscriber = "0.3.23"
 vfs = { package = "ra_ap_vfs", version = "0.0.330" }
+itertools = "0.14.0"

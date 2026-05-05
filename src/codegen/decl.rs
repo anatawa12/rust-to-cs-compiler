@@ -1,34 +1,27 @@
+use super::{CodeGenerator, expr::BodyGen, names, output::Output};
 /// Generates C# type declarations from Rust HIR types.
 use hir::{
     Adt, AssocItem, DefWithBody, Enum, GenericDef, HasAttrs, HasCrate, HasSource, Impl, Struct,
     Trait, db::HirDatabase,
 };
 use hir_def::{DefWithBodyId, expr_store::Body};
+use hir_ty::GenericPredicates;
+use hir_ty::display::HirDisplay;
 use syntax::ast::HasAttrs as AstHasAttrs;
-
-use super::{CodeGenerator, expr::BodyGen, names, output::Output};
+use vfs::FileExcluded::No;
 
 /// Returns true if the item carries `#[r2cs_native]` or `#[r2cs::native]`.
 /// Checks the raw source AST so that `#[cfg_attr(r2cs, r2cs_native)]` —
 /// which rust-analyzer resolves to `#[r2cs_native]` when cfg(r2cs) is active —
 /// is detected correctly.
 pub fn is_adt_r2cs_native(adt: Adt, db: &dyn HirDatabase) -> bool {
-    match adt {
-        Adt::Struct(s) => s
-            .source(db)
-            .map_or(false, |src| ast_has_r2cs_native(&src.value)),
-        Adt::Enum(e) => e
-            .source(db)
-            .map_or(false, |src| ast_has_r2cs_native(&src.value)),
-        Adt::Union(u) => u
-            .source(db)
-            .map_or(false, |src| ast_has_r2cs_native(&src.value)),
-    }
+    adt.source(db)
+        .is_some_and(|src| ast_has_r2cs_native(&src.value))
 }
 
 pub fn is_fn_r2cs_native(f: hir::Function, db: &dyn HirDatabase) -> bool {
     f.source(db)
-        .map_or(false, |src| ast_has_r2cs_native(&src.value))
+        .is_some_and(|src| ast_has_r2cs_native(&src.value))
 }
 
 /// Returns true if the item's `#[cfg(...)]` condition evaluates to false under
@@ -71,15 +64,15 @@ fn cfg_disabled(attrs: hir::AttrsWithOwner, krate: hir::Crate, db: &dyn HirDatab
 
 fn ast_has_r2cs_native(node: &impl AstHasAttrs) -> bool {
     node.attrs().any(|attr| {
-        attr.path().map_or(false, |path| {
+        attr.path().is_some_and(|path| {
             let segs: Vec<_> = path.segments().collect();
             match segs.len() {
                 1 => segs[0]
                     .name_ref()
-                    .map_or(false, |n| n.text() == "r2cs_native"),
+                    .is_some_and(|n| n.text() == "r2cs_native"),
                 2 => {
-                    segs[0].name_ref().map_or(false, |n| n.text() == "r2cs")
-                        && segs[1].name_ref().map_or(false, |n| n.text() == "native")
+                    segs[0].name_ref().is_some_and(|n| n.text() == "r2cs")
+                        && segs[1].name_ref().is_some_and(|n| n.text() == "native")
                 }
                 _ => false,
             }
@@ -251,8 +244,34 @@ impl CodeGenerator<'_> {
         }
 
         let is_async = f.is_async(db);
-        let ret_ty = f.ret_type(db);
+        let ret_ty = f.async_ret_type(db).unwrap_or(f.ret_type(db));
         let cs_ret = self.cs_ret_type(is_async, &ret_ty);
+        if (is_async) {
+            /*
+            eprintln!("async: {:?}", ret_ty);
+            eprintln!(
+                "async: {:?}",
+                ret_ty
+                    .ty
+                    .display_source_code(self.db, f.module(self.db).into(), true)
+            );
+            let ret_ty1 = ret_ty.as_impl_traits();
+            eprintln!("async: {:?}", ret_ty.as_type_param(self.db).unwrap(),);
+
+            //GenericPredicates::query_all(self.db, param.id.parent())
+            eprintln!(
+                "async: {:?}",
+                ret_ty
+                    .as_type_param(self.db)
+                    .unwrap()
+                    .trait_bounds(self.db)
+                    .into_iter()
+                    .next()
+                    .unwrap()
+                    .display_source_code(self.db, f.module(self.db).into(), true)
+            );
+            // */
+        }
         let async_kw = if is_async { "async " } else { "" };
         let m_name = names::method_name(f.name(db).as_str());
         let has_self = f.has_self_param(db);
@@ -277,8 +296,8 @@ impl CodeGenerator<'_> {
         // Try to generate a real body using BodyGen
         let def_with_body = DefWithBody::Function(f);
         if let Ok(id) = DefWithBodyId::try_from(def_with_body) {
-            let body = Body::of(db, id);
-            let mut body_gen = BodyGen::new(self, id, body, is_async);
+            let (body, source_map) = Body::with_source_map(db, id);
+            let mut body_gen = BodyGen::new(self, id, body, source_map, is_async);
             body_gen.emit_body(out);
         } else {
             out.writeln("throw new System.NotImplementedException(\"builtin-derive\");");
@@ -291,12 +310,7 @@ impl CodeGenerator<'_> {
 
     fn cs_ret_type(&self, is_async: bool, ret_ty: &hir::Type<'_>) -> String {
         if is_async {
-            let t = self.rust_type_to_cs(ret_ty);
-            if t == "void" {
-                "r2CsRuntime.RustTask<int>".to_string()
-            } else {
-                format!("r2CsRuntime.RustTask<{}>", t)
-            }
+            format!("r2CsRuntime.RustTask<{}>", self.rust_type_to_cs(&ret_ty))
         } else if ret_ty.is_unit() {
             "void".to_string()
         } else {

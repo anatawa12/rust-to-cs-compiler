@@ -4,24 +4,26 @@ pub mod names;
 pub mod output;
 pub mod ty;
 
-use std::collections::HashMap;
-
 use self::output::Output;
 use crate::codegen::decl::{
     is_adt_cfg_disabled, is_adt_r2cs_native, is_impl_cfg_disabled, is_module_cfg_disabled,
 };
 use crate::codegen::names::mod_name;
 use hir::{
-    Adt, AssocItem, Crate, GenericDef, HirFileId, Impl, Module, ModuleDef, Name, Semantics,
-    db::HirDatabase,
+    Adt, AssocItem, Crate, GenericDef, HirFileId, Impl, InFile, Module, ModuleDef, Name, Semantics,
+    StructKind, db::HirDatabase,
 };
 use ide_db::line_index;
-use syntax::SyntaxNode;
-use vfs::Vfs;
+use itertools::Itertools;
+use std::collections::HashMap;
+use std::env::var;
+use syntax::{SyntaxNode, SyntaxNodePtr};
+use vfs::{FileId, Vfs};
 
 pub struct CodeGenerator<'db> {
     db: &'db dyn HirDatabase,
     vfs: &'db Vfs,
+    sem: Semantics<'db, dyn HirDatabase>,
     root_namespace: String,
 }
 
@@ -30,24 +32,61 @@ impl<'db> CodeGenerator<'db> {
         Self {
             db,
             vfs,
+            sem: Semantics::new_dyn(db),
             root_namespace,
         }
     }
 
-    pub fn location_with_file(&self, f: HirFileId, node: SyntaxNode) -> String {
-        match f {
-            HirFileId::FileId(f) => {
-                let file_id = f.file_id(self.db);
-                let path = self.vfs.file_path(file_id);
-                let line_index = line_index(self.db, file_id);
-                let range = node.text_range();
-                let line_col = line_index.line_col(range.start());
+    pub fn location_with_file(
+        &self,
+        f: InFile<impl as_syntax_node_ptr::IntoSyntaxNodePtr>,
+    ) -> String {
+        let loc = self.sem.diagnostics_display_range(f.map(|x| x.into_ptr()));
 
-                return format!("{}:{}:{}", path, line_col.line, line_col.col);
-            }
-            HirFileId::MacroFile(m) => {
-                return "macro".to_string();
-            }
+        let path = self.vfs.file_path(loc.file_id);
+        let line_index = line_index(self.db, loc.file_id);
+        let line_col = line_index.line_col(loc.range.start());
+
+        format!("{}:{}:{}", path, line_col.line + 1, line_col.col + 1)
+    }
+}
+
+pub mod as_syntax_node_ptr {
+    use hir_def::expr_store::ExprOrPatPtr;
+    use hir_def::nameres::ModuleSource;
+    use syntax::{AstNode, AstPtr, SyntaxNode, SyntaxNodePtr};
+
+    pub trait IntoSyntaxNodePtr {
+        fn into_ptr(self) -> SyntaxNodePtr;
+    }
+
+    macro_rules! impls {
+        (
+            $(
+                |$self: tt: $ty: ty| $body: expr
+            ),*
+            $(,)?
+        ) => {
+            $(
+                impl IntoSyntaxNodePtr for $ty {
+                    #[inline]
+                    fn into_ptr($self) -> SyntaxNodePtr {
+                        $body
+                    }
+                }
+            )*
+        };
+    }
+
+    impls!(
+        |self: SyntaxNodePtr| self,
+        |self: SyntaxNode| SyntaxNodePtr::new(&self),
+        |self: ModuleSource| self.node().into_ptr()
+    );
+
+    impl<T: AstNode> IntoSyntaxNodePtr for AstPtr<T> {
+        fn into_ptr(self) -> SyntaxNodePtr {
+            self.syntax_node_ptr()
         }
     }
 }
@@ -198,7 +237,7 @@ impl<'db> CodeGenerator<'db> {
         for impl_ in impls {
             if let Some(trait_) = impl_.trait_(db) {
                 let name = trait_.name(db);
-                let cs_iface = names::trait_name(name.as_str());
+                let cs_iface = self.trait_itf_cs(trait_);
                 let self_cs = self.rust_type_to_cs(&impl_.self_ty(db));
                 // Simple form without checking generic params
                 trait_interfaces.push(format!("{}<{}>", cs_iface, self_cs));
@@ -214,11 +253,7 @@ impl<'db> CodeGenerator<'db> {
         };
 
         // Build class header
-        let cs_name = match adt {
-            Adt::Struct(s) => names::struct_name(s.name(db).as_str()),
-            Adt::Enum(e) => names::struct_name(e.name(db).as_str()),
-            Adt::Union(u) => names::struct_name(u.name(db).as_str()),
-        };
+        let cs_name = names::struct_name(adt.name(db).as_str());
 
         let interfaces_part = if trait_interfaces.is_empty() {
             String::new()
@@ -271,8 +306,7 @@ impl<'db> CodeGenerator<'db> {
                     let v_name = names::variant_name(variant.name(db).as_str());
                     let fields = variant.fields(db);
                     out.writeln(&format!(
-                        "public sealed partial class {} : {}{}",
-                        v_name, cs_name, generics
+                        "public sealed partial class {v_name} : {cs_name}{generics}",
                     ));
                     out.open_brace();
                     for field in &fields {
@@ -284,6 +318,28 @@ impl<'db> CodeGenerator<'db> {
                             "public Slot<{}> {} = new(default!);",
                             cs_ty, f_name
                         ));
+                    }
+                    if variant.kind(self.db) == StructKind::Tuple {
+                        out.writeln(&format!(
+                            "public {v_name}({params})",
+                            params = fields
+                                .iter()
+                                .map(|field| {
+                                    format!(
+                                        "{} {}",
+                                        self.rust_type_to_cs(&field.ty(db).to_type(db)),
+                                        names::field_name(field.name(db).as_str())
+                                    )
+                                })
+                                .join(", ")
+                        ));
+                        out.open_brace();
+
+                        for field in &fields {
+                            let f_name = names::field_name(field.name(db).as_str());
+                            out.writeln(&format!("this.{f_name} = new({f_name});"));
+                        }
+                        out.close_brace();
                     }
                     out.close_brace();
                     out.blank_line();

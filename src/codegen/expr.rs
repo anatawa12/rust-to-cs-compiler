@@ -1,23 +1,30 @@
 /// Generates C# expressions and statements from Rust HIR bodies.
 use std::collections::HashMap;
 
-use hir::{Local, db::HirDatabase};
+use super::{CodeGenerator, names, output::Output};
+use crate::codegen::ty::Constructable;
+use hir::{AssocItem, Function, Local, Name, PathKind, db::HirDatabase};
+use hir_def::expr_store::scope::ExprScopes;
+use hir_def::expr_store::{BodySourceMap, HygieneId};
+use hir_def::resolver::{
+    HasResolver, ResolveValueResult, Resolver, TypeNs, ValueNs, resolver_for_scope,
+};
 use hir_def::{
-    DefWithBodyId, VariantId,
+    CallableDefId, DefWithBodyId, HasModule, ItemContainerId, VariantId,
     expr_store::Body,
     hir::{
         Array, BinaryOp, BindingId, Expr, ExprId, Literal, Pat, PatId, RangeOp, Statement, UnaryOp,
     },
 };
 use hir_ty::InferenceResult;
-
-use super::{CodeGenerator, names, output::Output};
+use hir_ty::next_solver::TyKind;
 
 /// Generates C# for the body of a single function.
 pub struct BodyGen<'db> {
     cg: &'db CodeGenerator<'db>,
-    db: &'db dyn HirDatabase,
     body: &'db Body,
+    source_map: &'db BodySourceMap,
+    scopes: &'db ExprScopes,
     def_id: DefWithBodyId,
     infer: &'db InferenceResult,
     /// Mapping from BindingId to the C# local name allocated for it.
@@ -41,19 +48,74 @@ impl<'db> BodyGen<'db> {
         cg: &'db CodeGenerator<'db>,
         def_id: DefWithBodyId,
         body: &'db Body,
+        source_map: &'db BodySourceMap,
         is_async: bool,
     ) -> Self {
-        let infer = InferenceResult::of(cg.db, def_id);
+        let infer = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            InferenceResult::of(cg.db, def_id)
+        })) {
+            Ok(infer) => infer,
+            Err(e) => {
+                eprintln!(
+                    "processing {def_id:?} {} {}",
+                    match def_id {
+                        DefWithBodyId::FunctionId(f) => {
+                            let f = hir::Function::from(f);
+                            format!(
+                                "{} in {}",
+                                f.name(cg.db).as_str(),
+                                cg.module_class_cs(f.module(cg.db))
+                            )
+                        }
+                        DefWithBodyId::StaticId(f) =>
+                            hir::Static::from(f).name(cg.db).as_str().to_string(),
+                        DefWithBodyId::ConstId(f) => hir::Const::from(f)
+                            .name(cg.db)
+                            .as_ref()
+                            .map(|x| x.as_str())
+                            .unwrap_or("unknown")
+                            .to_string(),
+                        DefWithBodyId::VariantId(f) =>
+                            hir::EnumVariant::from(f).name(cg.db).as_str().to_string(),
+                    },
+                    source_map
+                        .expr_syntax(body.root_expr())
+                        .map(|x| cg.location_with_file(x))
+                        .unwrap_or_else(|_| "Unknown location".into())
+                );
+                std::panic::resume_unwind(e);
+            }
+        };
         Self {
             cg,
-            db: cg.db,
             body,
+            source_map,
+            scopes: ExprScopes::of(cg.db, def_id),
             def_id,
             infer,
             bindings: HashMap::new(),
             name_counts: HashMap::new(),
             is_async,
         }
+    }
+
+    pub fn expr_location(&self, expr_id: ExprId) -> String {
+        self.source_map
+            .expr_syntax(expr_id)
+            .map(|x| self.location_with_file(x))
+            .unwrap_or_else(|_| "Unknown location".into())
+    }
+
+    pub fn source(&self, expr_id: ExprId) -> &str {
+        self.source_map
+            .expr_syntax(expr_id)
+            .map(|f| {
+                let loc = self
+                    .sem
+                    .diagnostics_display_range(f.map(|x| x.syntax_node_ptr()));
+                &self.db.file_text(loc.file_id).text(self.db)[loc.range]
+            })
+            .unwrap_or("Unknown location")
     }
 
     fn alloc_binding(&mut self, id: BindingId) -> String {
@@ -85,6 +147,30 @@ impl<'db> BodyGen<'db> {
 
     /// Emit the full function body block.
     pub fn emit_body(&mut self, out: &mut Output) {
+        if let Some(self_id) = self.body.self_param {
+            self.bindings.insert(self_id, "this".into());
+        }
+        for &x in &self.body.params {
+            match self.body[x] {
+                Pat::Bind { id, subpat } => {
+                    self.alloc_binding(id);
+                }
+                Pat::Missing => {}
+                Pat::Wild => {}
+                Pat::Tuple { .. } => {}
+                Pat::Or(_) => {}
+                Pat::Record { .. } => {}
+                Pat::Range { .. } => {}
+                Pat::Slice { .. } => {}
+                Pat::Path(_) => {}
+                Pat::Lit(_) => {}
+                Pat::TupleStruct { .. } => {}
+                Pat::Ref { .. } => {}
+                Pat::Box { .. } => {}
+                Pat::ConstBlock(_) => {}
+                Pat::Expr(_) => {}
+            }
+        }
         let root = self.body.root_expr();
         self.emit_expr_as_stmt(out, root, true);
     }
@@ -187,8 +273,8 @@ impl<'db> BodyGen<'db> {
                         format!(" {}", names::camel(lbl.name.as_str()))
                     })
                     .unwrap_or_default();
-                if let Some(e) = break_expr {
-                    let val = self.emit_expr_str(*e);
+                if let &Some(e) = break_expr {
+                    let val = self.emit_expr_str(e);
                     out.writeln(&format!("/* break {} */", val)); // TODO: break-with-value
                 } else {
                     out.writeln(&format!("break{};", label_str));
@@ -298,26 +384,135 @@ impl<'db> BodyGen<'db> {
         match expr {
             Expr::Missing => "/* missing */default!".to_string(),
             Expr::Literal(lit) => self.emit_literal(lit),
-            Expr::Path(path) => {
-                let segments: Vec<String> = path
-                    .segments()
-                    .iter()
-                    .map(|s| s.name.as_str().to_string())
-                    .collect();
-                if segments.len() == 1 {
-                    let name = &segments[0];
-                    if let Some(cs_name) = self.find_local_by_rust_name(name) {
-                        return format!("{}.value", cs_name);
+            Expr::Path(path) if true => {
+                let resolver =
+                    resolver_for_scope(self.db, self.def_id, self.scopes.scope_for(expr_id));
+                match resolver.resolve_path_in_value_ns_with_prefix_info(
+                    self.db,
+                    path,
+                    self.body.expr_or_pat_path_hygiene(expr_id.into()),
+                ) {
+                    Some((ResolveValueResult::ValueNs(value_ns), _)) => match value_ns {
+                        ValueNs::ImplSelf(_) => {
+                            eprintln!("ImplSelf at {}", self.expr_location(expr_id));
+                            "(ImplSelf)".into()
+                        }
+                        ValueNs::LocalBinding(binding) => self.binding_name(binding),
+                        ValueNs::FunctionId(f) => self.fn_path_cs(hir::Function::from(f)),
+                        ValueNs::ConstId(c) => self.const_path_cs(hir::Const::from(c)),
+                        ValueNs::StaticId(s) => {
+                            let c = hir::Static::from(s);
+                            let mut path = self.module_class_cs(c.module(self.db));
+                            path.push('.');
+                            path.push_str(c.name(self.db).as_str());
+                            path
+                        }
+                        ValueNs::StructId(s) => {
+                            format!("new {}", self.adt_name_cs(hir::Struct::from(s).into()))
+                        }
+                        ValueNs::EnumVariantId(v) => {
+                            format!("new {}", self.enum_variant_cs(hir::EnumVariant::from(v)))
+                        }
+                        ValueNs::GenericParam(_) => {
+                            eprintln!("GenericParam at {}", self.expr_location(expr_id));
+                            "(GenericParam)".into()
+                        }
+                    },
+                    Some((ResolveValueResult::Partial(_, _), _))
+                        if let TyKind::FnDef(f, _generic) =
+                            self.infer.expr_ty(expr_id).inner().internee =>
+                    {
+                        match f.0 {
+                            CallableDefId::FunctionId(f) => self.fn_path_cs(hir::Function::from(f)),
+                            CallableDefId::StructId(s) => {
+                                format!("new {}", self.adt_name_cs(hir::Struct::from(s).into()))
+                            }
+                            CallableDefId::EnumVariantId(v) => {
+                                format!("new {}", self.enum_variant_cs(hir::EnumVariant::from(v)))
+                            }
+                        }
                     }
-                    names::method_name(name)
-                } else if segments.is_empty() {
-                    "/* empty path */default!".to_string()
-                } else {
-                    let last = segments.last().unwrap();
-                    let rest = &segments[..segments.len() - 1];
-                    format!("{}.{}", rest.join("."), names::method_name(last))
+                    Some((
+                        ResolveValueResult::Partial(
+                            ty @ (TypeNs::AdtId(_) | TypeNs::BuiltinType(_) | TypeNs::SelfType(_)),
+                            i,
+                        ),
+                        _,
+                    )) if i == path.segments().len() - 1 => {
+                        let name = path.segments().last().unwrap().name;
+
+                        let ty = match ty {
+                            TypeNs::AdtId(adt) => hir::Adt::from(adt).ty(self.db),
+                            TypeNs::BuiltinType(builtin) => {
+                                hir::BuiltinType::from(builtin).ty(self.db)
+                            }
+                            TypeNs::SelfType(s) => hir::Impl::from(s).self_ty(self.db),
+                            _ => unreachable!(),
+                        };
+                        for impl_ in hir::Impl::all_for_type(self.db, ty) {
+                            if impl_.trait_(self.db).is_none()
+                                && let Some(&item) = impl_
+                                    .items(self.db)
+                                    .iter()
+                                    .find(|i| i.name(self.db).as_ref() == Some(name))
+                            {
+                                return match item {
+                                    AssocItem::Function(f) => self.fn_path_cs(f),
+                                    AssocItem::Const(c) => self.const_path_cs(c),
+                                    AssocItem::TypeAlias(a) => self.rust_type_to_cs(&a.ty(self.db)),
+                                };
+                            }
+                        }
+
+                        eprintln!(
+                            "Unresolved Partial path {:?} at {} ({path:?})",
+                            self.source(expr_id),
+                            self.expr_location(expr_id)
+                        );
+                        "(PartialPath)".into()
+                    }
+                    Some((ResolveValueResult::Partial(p, x), inf)) => {
+                        eprintln!(
+                            "Partial path {:?} ({p:?}, {x:?}, {inf:?}) at {} ({path:?})",
+                            self.source(expr_id),
+                            self.expr_location(expr_id)
+                        );
+                        "(PartialPath)".into()
+                    }
+                    None => {
+                        eprintln!("Failed to resolve path at {}", self.expr_location(expr_id));
+                        "(UnknownPath)".into()
+                    }
                 }
             }
+            Expr::Path(path) => match path {
+                _ if let PathKind::Super(0) = path.kind()
+                    && path.segments().is_empty() =>
+                {
+                    "this".to_string()
+                }
+                path => {
+                    let segments: Vec<String> = path
+                        .segments()
+                        .iter()
+                        .map(|s| s.name.as_str().to_string())
+                        .collect();
+                    if segments.len() == 1 {
+                        let name = &segments[0];
+                        if let Some(cs_name) = self.find_local_by_rust_name(name) {
+                            return format!("{}.value", cs_name);
+                        }
+                        names::method_name(name)
+                    } else if segments.is_empty() {
+                        eprintln!("empty path: {path:?}");
+                        "/* empty path */default!".to_string()
+                    } else {
+                        let last = segments.last().unwrap();
+                        let rest = &segments[..segments.len() - 1];
+                        format!("{}.{}", rest.join("."), names::method_name(last))
+                    }
+                }
+            },
             Expr::Field {
                 expr: field_expr,
                 name,
@@ -333,17 +528,17 @@ impl<'db> BodyGen<'db> {
             } => {
                 let recv_str = self.emit_expr_str(*receiver);
                 let method_cs = names::method_name(method_name.as_str());
-                let args_str: Vec<String> = args.iter().map(|a| self.emit_expr_str(*a)).collect();
+                let args_str: Vec<String> = args.iter().map(|&a| self.emit_expr_str(a)).collect();
                 format!("{}.{}({})", recv_str, method_cs, args_str.join(", "))
             }
             Expr::Call { callee, args } => {
                 // Detect tuple-struct / enum-variant constructor calls
-                if let Some(variant_id) = self.infer.variant_resolution_for_expr(*callee) {
-                    let args_clone: Vec<ExprId> = args.iter().copied().collect();
-                    return self.emit_constructor_call(variant_id, &args_clone);
-                }
+                //if let Some(variant_id) = self.infer.variant_resolution_for_expr(*callee) {
+                //    let args_clone: Vec<ExprId> = args.iter().copied().collect();
+                //    return self.emit_constructor_call(variant_id, &args_clone);
+                //}
                 let callee_str = self.emit_expr_str(*callee);
-                let args_str: Vec<String> = args.iter().map(|a| self.emit_expr_str(*a)).collect();
+                let args_str: Vec<String> = args.iter().map(|&a| self.emit_expr_str(a)).collect();
                 format!("{}({})", callee_str, args_str.join(", "))
             }
             Expr::Await { expr: inner } => {
@@ -450,8 +645,8 @@ impl<'db> BodyGen<'db> {
                 statements, tail, ..
             } => {
                 if statements.is_empty() {
-                    if let Some(t) = tail {
-                        return self.emit_expr_str(*t);
+                    if let &Some(t) = tail {
+                        return self.emit_expr_str(t);
                     }
                     return "default!".to_string();
                 }
@@ -461,34 +656,74 @@ impl<'db> BodyGen<'db> {
                 if exprs.is_empty() {
                     "/* unit */0".to_string()
                 } else {
-                    let parts: Vec<String> = exprs.iter().map(|e| self.emit_expr_str(*e)).collect();
+                    let parts: Vec<String> = exprs.iter().map(|&e| self.emit_expr_str(e)).collect();
                     format!("({})", parts.join(", "))
                 }
             }
             Expr::RecordLit { path, fields, .. } => {
-                // Use variant resolution to get field types
-                let maybe_variant = self.infer.variant_resolution_for_expr(expr_id);
+                let c = if let Some(path) = path {
+                    let resolver =
+                        resolver_for_scope(self.db, self.def_id, self.scopes.scope_for(expr_id));
+                    if let Some(path) = resolver.resolve_path_in_type_ns_fully(self.db, path) {
+                        match path {
+                            TypeNs::SelfType(t) => Constructable::Struct(
+                                (hir::Impl::from(t).self_ty(self.db).as_adt())
+                                    .unwrap()
+                                    .as_struct()
+                                    .unwrap(),
+                            ),
+                            TypeNs::AdtId(adt) => {
+                                Constructable::Struct(hir::Adt::from(adt).as_struct().unwrap())
+                            }
+                            TypeNs::EnumVariantId(v) => {
+                                Constructable::EnumVariant(hir::EnumVariant::from(v))
+                            }
+                            TypeNs::TypeAliasId(t) => Constructable::Struct(
+                                hir::TypeAlias::from(t)
+                                    .ty(self.db)
+                                    .as_adt()
+                                    .unwrap()
+                                    .as_struct()
+                                    .unwrap(),
+                            ),
+                            _ => {
+                                eprintln!(
+                                    "Bad type for struct construction path in {}",
+                                    self.expr_location(expr_id)
+                                );
+                                return format!(
+                                    "(_BadTypeConstruction/*{:?}*/)",
+                                    self.source(expr_id)
+                                );
+                            }
+                        }
+                    } else {
+                        eprintln!("Failed to resolve path in {}", self.expr_location(expr_id));
 
-                let type_name = path
-                    .as_ref()
-                    .map(|p| {
-                        let segs: Vec<String> = p
-                            .segments()
-                            .iter()
-                            .map(|s| s.name.as_str().to_string())
-                            .collect();
-                        names::struct_name(segs.last().unwrap_or(&"Unknown".to_string()))
-                    })
-                    .unwrap_or_else(|| "/* anon */Unknown".to_string());
+                        return format!("(Unresolved Construction/*{:?}*/)", self.source(expr_id));
+                    }
+                } else {
+                    eprintln!(
+                        "Struct construction without type in {}",
+                        self.expr_location(expr_id)
+                    );
+                    return format!("(TypelessConstruction/*{:?}*/)", self.source(expr_id));
+                };
+                let type_name = self.constructable_name_cs(c);
 
                 let field_inits: Vec<String> = fields
                     .iter()
                     .map(|f| {
                         let cs_f = names::field_name(f.name.as_str());
+                        let field = c
+                            .fields(self.db)
+                            .into_iter()
+                            .find(|x| x.name(self.db) == f.name);
+                        let cs_ty = field
+                            .map(|f| self.rust_type_to_cs(&f.ty(self.db).to_type(self.db)))
+                            .unwrap_or_else(|| "object /*unknown field type*/".into());
                         let val = self.emit_expr_str(f.expr);
-                        let cs_ty =
-                            self.field_slot_type_from_variant(maybe_variant, f.name.as_str());
-                        format!("{} = new r2CsRuntime.Slot<{}>({})", cs_f, cs_ty, val)
+                        format!("{cs_f} = new r2CsRuntime.Slot<{cs_ty}>({val})")
                     })
                     .collect();
                 format!("new {}() {{ {} }}", type_name, field_inits.join(", "))
@@ -517,20 +752,20 @@ impl<'db> BodyGen<'db> {
             Expr::Array(arr) => match arr {
                 Array::ElementList { elements } => {
                     let parts: Vec<String> =
-                        elements.iter().map(|e| self.emit_expr_str(*e)).collect();
+                        elements.iter().map(|&e| self.emit_expr_str(e)).collect();
                     format!("new object[] {{ {} }}", parts.join(", "))
                 }
-                Array::Repeat {
+                &Array::Repeat {
                     initializer,
                     repeat,
                 } => {
-                    let val = self.emit_expr_str(*initializer);
-                    let len = self.emit_expr_str(*repeat);
+                    let val = self.emit_expr_str(initializer);
+                    let len = self.emit_expr_str(repeat);
                     format!("new object[{}] /* fill {} */", len, val)
                 }
             },
-            Expr::Closure {
-                args,
+            &Expr::Closure {
+                ref args,
                 body: closure_body,
                 ..
             } => {
@@ -553,7 +788,7 @@ impl<'db> BodyGen<'db> {
                         self.alloc_binding(b);
                     }
                 }
-                let body_str = self.emit_expr_str(*closure_body);
+                let body_str = self.emit_expr_str(closure_body);
                 format!("({}) => {}", params.join(", "), body_str)
             }
             Expr::Yeet { expr: inner } => {
@@ -571,20 +806,20 @@ impl<'db> BodyGen<'db> {
                     val
                 )
             }
-            Expr::Let {
+            &Expr::Let {
                 pat,
                 expr: let_expr,
             } => {
-                let val = self.emit_expr_str(*let_expr);
-                let check = self.emit_pat_check(&val, *pat);
+                let val = self.emit_expr_str(let_expr);
+                let check = self.emit_pat_check(&val, pat);
                 check
             }
             Expr::Unsafe {
                 statements, tail, ..
             } => {
                 if statements.is_empty() {
-                    if let Some(t) = tail {
-                        return self.emit_expr_str(*t);
+                    if let &Some(t) = tail {
+                        return self.emit_expr_str(t);
                     }
                     return "default!".to_string();
                 }
@@ -595,11 +830,11 @@ impl<'db> BodyGen<'db> {
                 .map(|e| self.emit_expr_str(e))
                 .unwrap_or_else(|| "default!".to_string()),
             Expr::Continue { .. } => "default!".to_string(),
-            Expr::Become { expr: inner } => self.emit_expr_str(*inner),
-            Expr::Yield { expr: inner } => inner
+            &Expr::Become { expr: inner } => self.emit_expr_str(inner),
+            &Expr::Yield { expr: inner } => inner
                 .map(|e| self.emit_expr_str(e))
                 .unwrap_or_else(|| "default!".to_string()),
-            Expr::Const(inner) => self.emit_expr_str(*inner),
+            &Expr::Const(inner) => self.emit_expr_str(inner),
             Expr::Underscore => "_".to_string(),
             Expr::OffsetOf(_) | Expr::InlineAsm(_) => "/* asm/offsetof */ default!".to_string(),
         }

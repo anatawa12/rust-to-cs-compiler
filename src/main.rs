@@ -6,7 +6,7 @@ use hir::{Crate, Symbol};
 use ide_db::base_db::{CrateDisplayName, all_crates};
 use ide_db::{FxHashMap, RootDatabase};
 use load_cargo::{LoadCargoConfig, load_workspace};
-use project_model::{CargoConfig, CargoFeatures, ProjectManifest, ProjectWorkspace};
+use project_model::{CargoConfig, CargoFeatures, ProjectManifest, ProjectWorkspace, RustLibSource};
 use vfs::{AbsPathBuf, Vfs};
 
 fn load_workspace_from_cargo(
@@ -16,6 +16,7 @@ fn load_workspace_from_cargo(
     let manifest = ProjectManifest::discover_single(&AbsPathBuf::assert(path.into())).unwrap();
 
     let mut cargo_config = CargoConfig::default();
+    cargo_config.sysroot = Some(RustLibSource::Discover);
     cargo_config.features = CargoFeatures::Selected {
         features: vec![],
         no_default_features: true,
