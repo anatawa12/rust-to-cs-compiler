@@ -1,4 +1,4 @@
-use super::{CodeGenerator, expr::BodyGen, names, output::Output};
+use super::{CodeGenerator, expr::BodyGen, names, output::Code};
 /// Generates C# type declarations from Rust HIR types.
 use hir::{
     Adt, AssocItem, DefWithBody, Enum, GenericDef, HasAttrs, HasCrate, HasSource, Impl, Struct,
@@ -82,14 +82,14 @@ fn ast_has_r2cs_native(node: &impl AstHasAttrs) -> bool {
 
 impl CodeGenerator<'_> {
     /// Emit a struct → C# class.
-    pub fn emit_struct(&self, out: &mut Output, s: Struct, db: &dyn HirDatabase) {
+    pub fn emit_struct(&self, out: &mut Code, s: Struct, db: &dyn HirDatabase) {
         let name = s.name(db);
         let cs_name = names::struct_name(name.as_str());
         let gen_params = GenericDef::from(s).params(db);
         let (tp_names, _) = self.generic_params_cs(&gen_params, db);
         let generics = self.format_generics(&tp_names);
 
-        out.writeln(&format!("public class {}{}", cs_name, generics));
+        out.wln(&format!("public class {}{}", cs_name, generics));
         out.open_brace();
 
         for field in s.fields(db) {
@@ -97,7 +97,7 @@ impl CodeGenerator<'_> {
             let f_ty_ns = field.ty(db);
             let f_ty = f_ty_ns.to_type(db);
             let cs_ty = self.rust_type_to_cs(&f_ty);
-            out.writeln(&format!("public r2CsRuntime.Slot<{}> {};", cs_ty, f_name));
+            out.wln(&format!("public r2CsRuntime.Slot<{}> {};", cs_ty, f_name));
         }
 
         out.close_brace();
@@ -105,33 +105,30 @@ impl CodeGenerator<'_> {
     }
 
     /// Emit an enum → C# sealed class hierarchy.
-    pub fn emit_enum(&self, out: &mut Output, e: Enum, db: &dyn HirDatabase) {
+    pub fn emit_enum(&self, out: &mut Code, e: Enum, db: &dyn HirDatabase) {
         let name = e.name(db);
         let cs_name = names::struct_name(name.as_str());
         let gen_params = GenericDef::from(e).params(db);
         let (tp_names, _) = self.generic_params_cs(&gen_params, db);
         let generics = self.format_generics(&tp_names);
 
-        out.writeln(&format!("public class {}{}", cs_name, generics));
+        out.wln(format!("public class {}{}", cs_name, generics));
         out.open_brace();
-        out.writeln(&format!("private {}() {{}}", cs_name));
+        out.wln(format!("private {}() {{}}", cs_name));
         out.blank_line();
 
         for variant in e.variants(db) {
             let v_name = names::variant_name(variant.name(db).as_str());
             let fields = variant.fields(db);
 
-            out.writeln(&format!(
-                "public class {} : {}{}",
-                v_name, cs_name, generics
-            ));
+            out.wln(format!("public class {} : {}{}", v_name, cs_name, generics));
             out.open_brace();
             for field in &fields {
                 let f_ty_ns = field.ty(db);
                 let f_ty = f_ty_ns.to_type(db);
                 let cs_ty = self.rust_type_to_cs(&f_ty);
                 let f_name = names::field_name(field.name(db).as_str());
-                out.writeln(&format!("public r2CsRuntime.Slot<{}> {};", cs_ty, f_name));
+                out.wln(format!("public r2CsRuntime.Slot<{}> {};", cs_ty, f_name));
             }
             out.close_brace();
             out.blank_line();
@@ -142,7 +139,7 @@ impl CodeGenerator<'_> {
     }
 
     /// Emit a trait → C# interface (non-dyn form, with Self F-bound).
-    pub fn emit_trait(&self, out: &mut Output, t: Trait, db: &dyn HirDatabase) {
+    pub fn emit_trait(&self, out: &mut Code, t: Trait, db: &dyn HirDatabase) {
         let name = t.name(db);
         let cs_iface = names::trait_name(name.as_str());
         let cs_dyn_iface = names::dyn_trait_name(name.as_str());
@@ -163,7 +160,7 @@ impl CodeGenerator<'_> {
         };
         let self_bound = format!("Self : {}<{}>", cs_iface, self_iface_args);
 
-        out.writeln(&format!(
+        out.wln(&format!(
             "public interface {}{} where {}",
             cs_iface, generics, self_bound
         ));
@@ -178,12 +175,12 @@ impl CodeGenerator<'_> {
                     if let Some(cn) = c.name(db) {
                         let c_name = names::method_name(cn.as_str());
                         let c_ty = self.rust_type_to_cs(&c.ty(db));
-                        out.writeln(&format!("{} {}(); // const", c_ty, c_name));
+                        out.wln(&format!("{} {}(); // const", c_ty, c_name));
                     }
                 }
                 AssocItem::TypeAlias(a) => {
                     let a_name = names::assoc_type_param(a.name(db).as_str());
-                    out.writeln(&format!("// type {};", a_name));
+                    out.wln(&format!("// type {};", a_name));
                 }
             }
         }
@@ -192,29 +189,29 @@ impl CodeGenerator<'_> {
         out.blank_line();
 
         // Dyn-compatible interface (marker for dyn Trait usage)
-        out.writeln(&format!("public interface {} {{", cs_dyn_iface));
-        out.writeln("    // dyn-compatible marker");
-        out.writeln("}");
+        out.wln(&format!("public interface {} {{", cs_dyn_iface));
+        out.wln("    // dyn-compatible marker");
+        out.wln("}");
         out.blank_line();
     }
 
-    fn emit_trait_method_sig(&self, out: &mut Output, f: hir::Function, db: &dyn HirDatabase) {
+    fn emit_trait_method_sig(&self, out: &mut Code, f: hir::Function, db: &dyn HirDatabase) {
         let is_async = f.is_async(db);
         let ret_ty = f.ret_type(db);
         let cs_ret = self.cs_ret_type(is_async, &ret_ty);
         let m_name = names::method_name(f.name(db).as_str());
         let params = self.build_param_list(f);
-        out.writeln(&format!("{} {}({});", cs_ret, m_name, params));
+        out.wln(&format!("{} {}({});", cs_ret, m_name, params));
     }
 
     /// Emit methods from an impl block onto the appropriate class.
-    pub fn emit_impl(&self, out: &mut Output, impl_: Impl, db: &dyn HirDatabase) {
+    pub fn emit_impl(&self, out: &mut Code, impl_: Impl, db: &dyn HirDatabase) {
         // Determine self type name for the class
         let self_ty = impl_.self_ty(db);
         let cs_self_ty = self.rust_type_to_cs(&self_ty);
 
         // Comment header
-        out.writeln(&format!("// impl for {}", cs_self_ty));
+        out.wln(&format!("// impl for {}", cs_self_ty));
         out.blank_line();
 
         for item in impl_.items(db) {
@@ -228,7 +225,7 @@ impl CodeGenerator<'_> {
     }
 
     /// Emit a function/method with a stub body (TODO: real body generation).
-    pub fn emit_function(&self, out: &mut Output, f: hir::Function, impl_ctx: Option<Impl>) {
+    pub fn emit_function(&self, out: &mut Code, f: hir::Function, impl_ctx: Option<Impl>) {
         let db = self.db;
 
         if is_fn_cfg_disabled(f, db) {
@@ -236,7 +233,7 @@ impl CodeGenerator<'_> {
         }
         if is_fn_r2cs_native(f, db) {
             let m_name = names::method_name(f.name(db).as_str());
-            out.writeln(&format!(
+            out.wln(&format!(
                 "// [r2cs_native] {} — add implementation in r2CsNative/",
                 m_name
             ));
@@ -287,8 +284,8 @@ impl CodeGenerator<'_> {
             .map(|i| self.rust_type_to_cs(&i.self_ty(db)))
             .unwrap_or_else(|| "/* top-level */".to_string());
 
-        out.writeln(&format!("// method on {}", cs_self));
-        out.writeln(&format!(
+        out.wln(&format!("// method on {}", cs_self));
+        out.wln(&format!(
             "public {is_static_kw}{async_kw}{cs_ret} {m_name}{generics}({params}) {{",
         ));
         out.indent();
@@ -300,11 +297,11 @@ impl CodeGenerator<'_> {
             let mut body_gen = BodyGen::new(self, id, body, source_map, is_async);
             body_gen.emit_body(out);
         } else {
-            out.writeln("throw new System.NotImplementedException(\"builtin-derive\");");
+            out.wln("throw new System.NotImplementedException(\"builtin-derive\");");
         }
 
         out.dedent();
-        out.writeln("}");
+        out.wln("}");
         out.blank_line();
     }
 

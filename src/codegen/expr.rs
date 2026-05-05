@@ -1,7 +1,7 @@
 /// Generates C# expressions and statements from Rust HIR bodies.
 use std::collections::HashMap;
 
-use super::{CodeGenerator, names, output::Output};
+use super::{CodeGenerator, names, output::Code};
 use crate::codegen::ty::Constructable;
 use hir::{AssocItem, Function, Local, Name, PathKind, db::HirDatabase};
 use hir_def::expr_store::scope::ExprScopes;
@@ -146,7 +146,7 @@ impl<'db> BodyGen<'db> {
     }
 
     /// Emit the full function body block.
-    pub fn emit_body(&mut self, out: &mut Output) {
+    pub fn emit_body(&mut self, out: &mut Code) {
         if let Some(self_id) = self.body.self_param {
             self.bindings.insert(self_id, "this".into());
         }
@@ -176,7 +176,7 @@ impl<'db> BodyGen<'db> {
     }
 
     /// Emit an expression as a statement (with semicolon if needed).
-    fn emit_expr_as_stmt(&mut self, out: &mut Output, expr_id: ExprId, is_tail: bool) {
+    fn emit_expr_as_stmt(&mut self, out: &mut Code, expr_id: ExprId, is_tail: bool) {
         let expr = &self.body[expr_id];
         match expr {
             Expr::Block {
@@ -187,8 +187,8 @@ impl<'db> BodyGen<'db> {
             Expr::Return { expr: ret_expr } => {
                 let val = ret_expr
                     .map(|e| self.emit_expr_str(e))
-                    .unwrap_or_else(|| "0".to_string());
-                out.writeln(&format!("return {};", val));
+                    .unwrap_or_else(|| "0".into());
+                out.w("return ").w(val).wln(";");
             }
             Expr::If {
                 condition,
@@ -196,19 +196,19 @@ impl<'db> BodyGen<'db> {
                 else_branch,
             } => {
                 let cond = self.emit_expr_str(*condition);
-                out.writeln(&format!("if ({}) {{", cond));
+                out.w("if (").w(cond).wln(") {");
                 out.indent();
                 self.emit_expr_as_stmt(out, *then_branch, false);
                 out.dedent();
                 if let Some(else_e) = else_branch {
-                    out.write("} else {");
-                    out.writeln("");
+                    out.w("} else {");
+                    out.wln("");
                     out.indent();
                     self.emit_expr_as_stmt(out, *else_e, is_tail);
                     out.dedent();
-                    out.writeln("}");
+                    out.wln("}");
                 } else {
-                    out.writeln("}");
+                    out.wln("}");
                 }
             }
             Expr::Loop { body, label } => {
@@ -218,23 +218,23 @@ impl<'db> BodyGen<'db> {
                         format!("{}: ", names::camel(lbl.name.as_str()))
                     })
                     .unwrap_or_default();
-                out.writeln(&format!("{}while (true) {{", label_str));
+                out.wln(&format!("{}while (true) {{", label_str));
                 out.indent();
                 self.emit_expr_as_stmt(out, *body, false);
                 out.dedent();
-                out.writeln("}");
+                out.wln("}");
             }
             Expr::Match {
                 expr: match_expr,
                 arms,
             } => {
                 let scrutinee = self.emit_expr_str(*match_expr);
-                out.writeln(&format!(
-                    "var __match_{:?} = {};",
-                    match_expr.into_raw(),
-                    scrutinee
-                ));
-                let tmp = format!("__match_{:?}", match_expr.into_raw());
+                out.w("var __match_")
+                    .w(match_expr.into_raw().into_u32())
+                    .w(" = ")
+                    .w(scrutinee)
+                    .wln(";");
+                let tmp = format!("__match_{:?}", match_expr.into_raw()).into();
                 for (i, arm) in arms.iter().enumerate() {
                     let is_last = i == arms.len() - 1;
                     let kw = if i == 0 { "if" } else { "else if" };
@@ -242,12 +242,12 @@ impl<'db> BodyGen<'db> {
                     let pat_check = self.emit_pat_check(&tmp, arm.pat);
                     let guard_str = arm
                         .guard
-                        .map(|g| format!(" && ({})", self.emit_expr_str(g)))
+                        .map(|g| code!(" && (", self.emit_expr_str(g), ")"))
                         .unwrap_or_default();
-                    if pat_check == "true" && guard_str.is_empty() {
-                        out.writeln("{");
+                    if pat_check == "true".into() && guard_str.is_empty() {
+                        out.wln("{");
                     } else {
-                        out.writeln(&format!("{} ({}{}) {{", kw, pat_check, guard_str));
+                        out.w(kw).w(" (").w(pat_check).w(guard_str).wln(") {");
                     }
                     out.indent();
                     // Bind pattern variables
@@ -255,11 +255,11 @@ impl<'db> BodyGen<'db> {
                     // Emit arm body
                     self.emit_expr_as_stmt(out, arm.expr, is_tail);
                     out.dedent();
-                    out.write("}");
+                    out.w("}");
                     if !is_last {
-                        out.writeln("");
+                        out.wln("");
                     } else {
-                        out.writeln("");
+                        out.wln("");
                     }
                 }
             }
@@ -275,9 +275,9 @@ impl<'db> BodyGen<'db> {
                     .unwrap_or_default();
                 if let &Some(e) = break_expr {
                     let val = self.emit_expr_str(e);
-                    out.writeln(&format!("/* break {} */", val)); // TODO: break-with-value
+                    out.w("/* break ").w(val).wln(" */"); // TODO: break-with-value
                 } else {
-                    out.writeln(&format!("break{};", label_str));
+                    out.wln(&format!("break{};", label_str));
                 }
             }
             Expr::Continue { label } => {
@@ -287,13 +287,13 @@ impl<'db> BodyGen<'db> {
                         format!(" {}", names::camel(lbl.name.as_str()))
                     })
                     .unwrap_or_default();
-                out.writeln(&format!("continue{};", label_str));
+                out.wln(&format!("continue{};", label_str));
             }
             _ => {
                 // Generic expression: emit as expression statement
                 let s = self.emit_expr_str(expr_id);
-                if !s.is_empty() && s != "()" {
-                    out.writeln(&format!("{};", s));
+                if !s.is_empty() && s != "()".into() {
+                    out.w(s).wln(";");
                 }
             }
         }
@@ -301,7 +301,7 @@ impl<'db> BodyGen<'db> {
 
     fn emit_block_contents(
         &mut self,
-        out: &mut Output,
+        out: &mut Code,
         statements: &[Statement],
         tail: Option<ExprId>,
         is_tail: bool,
@@ -322,20 +322,23 @@ impl<'db> BodyGen<'db> {
                             let bid = bindings[0];
                             let cs_type = self.binding_cs_type(bid);
                             let cs_name = self.alloc_binding(bid);
-                            out.writeln(&format!(
-                                "var {} = new r2CsRuntime.Slot<{}>({});",
-                                cs_name, cs_type, init_str
-                            ));
+                            out.w("var ")
+                                .w(cs_name)
+                                .w(" = new r2CsRuntime.Slot<")
+                                .w(cs_type)
+                                .w(">(")
+                                .w(init_str)
+                                .wln(");");
                         } else if bindings.is_empty() {
-                            out.writeln(&format!("{};", init_str));
+                            out.w(init_str).wln(";");
                         } else {
                             let tmp = format!("__tmp_{:?}", pat.into_raw());
-                            out.writeln(&format!("var {} = {};", tmp, init_str));
+                            out.w("var ").w(&tmp).w(" = ").w(init_str).wln(";");
                             for b in &bindings {
                                 let cs_type = self.binding_cs_type(*b);
                                 let cs_name = self.alloc_binding(*b);
                                 let rust_name = self.body[*b].name.as_str().to_string();
-                                out.writeln(&format!(
+                                out.wln(&format!(
                                     "var {} = new r2CsRuntime.Slot<{}>({}.{});",
                                     cs_name,
                                     cs_type,
@@ -348,7 +351,7 @@ impl<'db> BodyGen<'db> {
                         for b in &bindings {
                             let cs_type = self.binding_cs_type(*b);
                             let cs_name = self.alloc_binding(*b);
-                            out.writeln(&format!(
+                            out.wln(&format!(
                                 "var {} = new r2CsRuntime.Slot<{}>(default!);",
                                 cs_name, cs_type
                             ));
@@ -356,7 +359,7 @@ impl<'db> BodyGen<'db> {
                     }
 
                     if let Some(_else_e) = else_branch {
-                        out.writeln("// let-else not fully supported");
+                        out.wln("// let-else not fully supported");
                     }
                 }
                 Statement::Expr { expr, has_semi: _ } => {
@@ -369,20 +372,20 @@ impl<'db> BodyGen<'db> {
         if let Some(tail_expr) = tail {
             let tail_str = self.emit_expr_str(tail_expr);
             if is_tail {
-                if tail_str != "()" && !tail_str.is_empty() {
-                    out.writeln(&format!("return {};", tail_str));
+                if tail_str != "()".into() && !tail_str.is_empty() {
+                    out.w("return ").w(&tail_str).wln(";");
                 }
-            } else if tail_str != "()" && !tail_str.is_empty() {
-                out.writeln(&format!("{};", tail_str));
+            } else if tail_str != "()".into() && !tail_str.is_empty() {
+                out.w(&tail_str).wln(";");
             }
         }
     }
 
     /// Emit an expression as a string (inline expression).
-    pub fn emit_expr_str(&mut self, expr_id: ExprId) -> String {
+    pub fn emit_expr_str(&mut self, expr_id: ExprId) -> Code {
         let expr = &self.body[expr_id].clone(); // clone to avoid borrow conflict
         match expr {
-            Expr::Missing => "/* missing */default!".to_string(),
+            Expr::Missing => "/* missing */default!".into(),
             Expr::Literal(lit) => self.emit_literal(lit),
             Expr::Path(path) if true => {
                 let resolver =
@@ -397,21 +400,22 @@ impl<'db> BodyGen<'db> {
                             eprintln!("ImplSelf at {}", self.expr_location(expr_id));
                             "(ImplSelf)".into()
                         }
-                        ValueNs::LocalBinding(binding) => self.binding_name(binding),
-                        ValueNs::FunctionId(f) => self.fn_path_cs(hir::Function::from(f)),
-                        ValueNs::ConstId(c) => self.const_path_cs(hir::Const::from(c)),
+                        ValueNs::LocalBinding(binding) => self.binding_name(binding).into(),
+                        ValueNs::FunctionId(f) => self.fn_path_cs(hir::Function::from(f)).into(),
+                        ValueNs::ConstId(c) => self.const_path_cs(hir::Const::from(c)).into(),
                         ValueNs::StaticId(s) => {
                             let c = hir::Static::from(s);
                             let mut path = self.module_class_cs(c.module(self.db));
                             path.push('.');
                             path.push_str(c.name(self.db).as_str());
-                            path
+                            path.into()
                         }
                         ValueNs::StructId(s) => {
-                            format!("new {}", self.adt_name_cs(hir::Struct::from(s).into()))
+                            format!("new {}", self.adt_name_cs(hir::Struct::from(s).into())).into()
                         }
                         ValueNs::EnumVariantId(v) => {
                             format!("new {}", self.enum_variant_cs(hir::EnumVariant::from(v)))
+                                .into()
                         }
                         ValueNs::GenericParam(_) => {
                             eprintln!("GenericParam at {}", self.expr_location(expr_id));
@@ -423,12 +427,14 @@ impl<'db> BodyGen<'db> {
                             self.infer.expr_ty(expr_id).inner().internee =>
                     {
                         match f.0 {
-                            CallableDefId::FunctionId(f) => self.fn_path_cs(hir::Function::from(f)),
+                            CallableDefId::FunctionId(f) => {
+                                self.fn_path_cs(hir::Function::from(f)).into()
+                            }
                             CallableDefId::StructId(s) => {
-                                format!("new {}", self.adt_name_cs(hir::Struct::from(s).into()))
+                                fcode!("new {}", self.adt_name_cs(hir::Struct::from(s).into()))
                             }
                             CallableDefId::EnumVariantId(v) => {
-                                format!("new {}", self.enum_variant_cs(hir::EnumVariant::from(v)))
+                                fcode!("new {}", self.enum_variant_cs(hir::EnumVariant::from(v)))
                             }
                         }
                     }
@@ -457,9 +463,11 @@ impl<'db> BodyGen<'db> {
                                     .find(|i| i.name(self.db).as_ref() == Some(name))
                             {
                                 return match item {
-                                    AssocItem::Function(f) => self.fn_path_cs(f),
-                                    AssocItem::Const(c) => self.const_path_cs(c),
-                                    AssocItem::TypeAlias(a) => self.rust_type_to_cs(&a.ty(self.db)),
+                                    AssocItem::Function(f) => self.fn_path_cs(f).into(),
+                                    AssocItem::Const(c) => self.const_path_cs(c).into(),
+                                    AssocItem::TypeAlias(a) => {
+                                        self.rust_type_to_cs(&a.ty(self.db)).into()
+                                    }
                                 };
                             }
                         }
@@ -489,7 +497,7 @@ impl<'db> BodyGen<'db> {
                 _ if let PathKind::Super(0) = path.kind()
                     && path.segments().is_empty() =>
                 {
-                    "this".to_string()
+                    "this".into()
                 }
                 path => {
                     let segments: Vec<String> = path
@@ -500,16 +508,16 @@ impl<'db> BodyGen<'db> {
                     if segments.len() == 1 {
                         let name = &segments[0];
                         if let Some(cs_name) = self.find_local_by_rust_name(name) {
-                            return format!("{}.value", cs_name);
+                            return fcode!("{}.value", cs_name);
                         }
-                        names::method_name(name)
+                        names::method_name(name).into()
                     } else if segments.is_empty() {
                         eprintln!("empty path: {path:?}");
-                        "/* empty path */default!".to_string()
+                        "/* empty path */default!".into()
                     } else {
                         let last = segments.last().unwrap();
                         let rest = &segments[..segments.len() - 1];
-                        format!("{}.{}", rest.join("."), names::method_name(last))
+                        fcode!("{}.{}", rest.join("."), names::method_name(last))
                     }
                 }
             },
@@ -518,7 +526,7 @@ impl<'db> BodyGen<'db> {
                 name,
             } => {
                 let receiver = self.emit_expr_str(*field_expr);
-                format!("{}.{}.value", receiver, names::field_name(name.as_str()))
+                code!(receiver, ".", names::field_name(name.as_str()), ".value")
             }
             Expr::MethodCall {
                 receiver,
@@ -528,8 +536,8 @@ impl<'db> BodyGen<'db> {
             } => {
                 let recv_str = self.emit_expr_str(*receiver);
                 let method_cs = names::method_name(method_name.as_str());
-                let args_str: Vec<String> = args.iter().map(|&a| self.emit_expr_str(a)).collect();
-                format!("{}.{}({})", recv_str, method_cs, args_str.join(", "))
+                let args_str = args.iter().map(|&a| self.emit_expr_str(a));
+                code!(recv_str, ".", method_cs, "(", join(args_str, ", "), ")")
             }
             Expr::Call { callee, args } => {
                 // Detect tuple-struct / enum-variant constructor calls
@@ -538,16 +546,12 @@ impl<'db> BodyGen<'db> {
                 //    return self.emit_constructor_call(variant_id, &args_clone);
                 //}
                 let callee_str = self.emit_expr_str(*callee);
-                let args_str: Vec<String> = args.iter().map(|&a| self.emit_expr_str(a)).collect();
-                format!("{}({})", callee_str, args_str.join(", "))
+                let args_str = args.iter().map(|&a| self.emit_expr_str(a));
+                code!(callee_str, "(", join(args_str, ", "), ")")
             }
             Expr::Await { expr: inner } => {
                 let inner_str = self.emit_expr_str(*inner);
-                if self.is_async {
-                    format!("(await {})", inner_str)
-                } else {
-                    format!("{}.GetAwaiter().GetResult()", inner_str)
-                }
+                code!("(await ", inner_str, ")")
             }
             Expr::BinaryOp { lhs, rhs, op } => {
                 let lhs_str = self.emit_expr_str(*lhs);
@@ -605,26 +609,26 @@ impl<'db> BodyGen<'db> {
                         .replace("div", "/=")
                         .replace("rem", "%="),
                 };
-                format!("({} {} {})", lhs_str, op_str, rhs_str)
+                code!("(", lhs_str, " ", op_str, " ", rhs_str, ")")
             }
             Expr::Assignment { target, value } => {
                 let target_str = self.emit_pat_as_lvalue(*target);
                 let value_str = self.emit_expr_str(*value);
-                format!("{} = {}", target_str, value_str)
+                code!(target_str, " = ", value_str)
             }
             Expr::UnaryOp { expr: inner, op } => {
                 let inner_str = self.emit_expr_str(*inner);
                 let op_str = match op {
-                    UnaryOp::Deref => format!("(*{})", inner_str),
-                    UnaryOp::Not => format!("!({})", inner_str),
-                    UnaryOp::Neg => format!("-({})", inner_str),
+                    UnaryOp::Deref => code!("(*", inner_str, ")"),
+                    UnaryOp::Not => code!("!(", inner_str, ")"),
+                    UnaryOp::Neg => code!("-(", inner_str, ")"),
                 };
                 op_str
             }
             Expr::Ref { expr: inner, .. } => self.emit_expr_str(*inner),
             Expr::Box { expr: inner } => self.emit_expr_str(*inner),
             Expr::Cast { expr: inner, .. } => {
-                format!("(/* cast */) {}", self.emit_expr_str(*inner))
+                code!("(/* cast */) ", self.emit_expr_str(*inner))
             }
             Expr::If {
                 condition,
@@ -635,10 +639,10 @@ impl<'db> BodyGen<'db> {
                     let cond = self.emit_expr_str(*condition);
                     let then_s = self.emit_expr_str(*then_branch);
                     let else_s = self.emit_expr_str(*else_e);
-                    format!("({} ? {} : {})", cond, then_s, else_s)
+                    code!("(", cond, " ? ", then_s, " : ", else_s, ")")
                 } else {
                     let cond = self.emit_expr_str(*condition);
-                    format!("/* if expr */ {}", cond)
+                    code!("/* if expr */ ", cond)
                 }
             }
             Expr::Block {
@@ -648,16 +652,16 @@ impl<'db> BodyGen<'db> {
                     if let &Some(t) = tail {
                         return self.emit_expr_str(t);
                     }
-                    return "default!".to_string();
+                    return "default!".into();
                 }
-                "/* block expr */ default!".to_string()
+                "/* block expr */ default!".into()
             }
             Expr::Tuple { exprs } => {
                 if exprs.is_empty() {
-                    "/* unit */0".to_string()
+                    "/* unit */0".into()
                 } else {
-                    let parts: Vec<String> = exprs.iter().map(|&e| self.emit_expr_str(e)).collect();
-                    format!("({})", parts.join(", "))
+                    let parts = exprs.iter().map(|&e| self.emit_expr_str(e));
+                    code!("(", join(parts, ", "), ")")
                 }
             }
             Expr::RecordLit { path, fields, .. } => {
@@ -691,7 +695,7 @@ impl<'db> BodyGen<'db> {
                                     "Bad type for struct construction path in {}",
                                     self.expr_location(expr_id)
                                 );
-                                return format!(
+                                return fcode!(
                                     "(_BadTypeConstruction/*{:?}*/)",
                                     self.source(expr_id)
                                 );
@@ -700,38 +704,35 @@ impl<'db> BodyGen<'db> {
                     } else {
                         eprintln!("Failed to resolve path in {}", self.expr_location(expr_id));
 
-                        return format!("(Unresolved Construction/*{:?}*/)", self.source(expr_id));
+                        return fcode!("(Unresolved Construction/*{:?}*/)", self.source(expr_id));
                     }
                 } else {
                     eprintln!(
                         "Struct construction without type in {}",
                         self.expr_location(expr_id)
                     );
-                    return format!("(TypelessConstruction/*{:?}*/)", self.source(expr_id));
+                    return fcode!("(TypelessConstruction/*{:?}*/)", self.source(expr_id));
                 };
                 let type_name = self.constructable_name_cs(c);
 
-                let field_inits: Vec<String> = fields
-                    .iter()
-                    .map(|f| {
-                        let cs_f = names::field_name(f.name.as_str());
-                        let field = c
-                            .fields(self.db)
-                            .into_iter()
-                            .find(|x| x.name(self.db) == f.name);
-                        let cs_ty = field
-                            .map(|f| self.rust_type_to_cs(&f.ty(self.db).to_type(self.db)))
-                            .unwrap_or_else(|| "object /*unknown field type*/".into());
-                        let val = self.emit_expr_str(f.expr);
-                        format!("{cs_f} = new r2CsRuntime.Slot<{cs_ty}>({val})")
-                    })
-                    .collect();
-                format!("new {}() {{ {} }}", type_name, field_inits.join(", "))
+                let field_inits = fields.iter().map(|f| {
+                    let cs_f = names::field_name(f.name.as_str());
+                    let field = c
+                        .fields(self.db)
+                        .into_iter()
+                        .find(|x| x.name(self.db) == f.name);
+                    let cs_ty = field
+                        .map(|f| self.rust_type_to_cs(&f.ty(self.db).to_type(self.db)))
+                        .unwrap_or_else(|| "object /*unknown field type*/".into());
+                    let val = self.emit_expr_str(f.expr);
+                    code!(cs_f, " = new r2CsRuntime.Slot<", cs_ty, ">(", val, ")")
+                });
+                code!("new ", type_name, "() { ", join(field_inits, ", "), " }")
             }
             Expr::Index { base, index } => {
                 let base_str = self.emit_expr_str(*base);
                 let idx_str = self.emit_expr_str(*index);
-                format!("{}[{}]", base_str, idx_str)
+                code!(base_str, "[", idx_str, "]")
             }
             Expr::Range {
                 lhs,
@@ -744,16 +745,22 @@ impl<'db> BodyGen<'db> {
                     RangeOp::Exclusive => "..",
                     RangeOp::Inclusive => "..=",
                 };
-                format!(
-                    "/* range {}{}{} */ new s_Range({}, {})",
-                    lhs_s, dots, rhs_s, lhs_s, rhs_s
+                code!(
+                    "/* range ",
+                    lhs_s,
+                    dots,
+                    rhs_s,
+                    " */ new s_Range(",
+                    lhs_s,
+                    ", ",
+                    rhs_s,
+                    ")"
                 )
             }
             Expr::Array(arr) => match arr {
                 Array::ElementList { elements } => {
-                    let parts: Vec<String> =
-                        elements.iter().map(|&e| self.emit_expr_str(e)).collect();
-                    format!("new object[] {{ {} }}", parts.join(", "))
+                    let parts = elements.iter().map(|&e| self.emit_expr_str(e));
+                    code!("new object[] { ", join(parts, ", "), " }")
                 }
                 &Array::Repeat {
                     initializer,
@@ -761,7 +768,7 @@ impl<'db> BodyGen<'db> {
                 } => {
                     let val = self.emit_expr_str(initializer);
                     let len = self.emit_expr_str(repeat);
-                    format!("new object[{}] /* fill {} */", len, val)
+                    code!("new object[", len, "] /* fill ", val, "*/")
                 }
             },
             &Expr::Closure {
@@ -789,21 +796,19 @@ impl<'db> BodyGen<'db> {
                     }
                 }
                 let body_str = self.emit_expr_str(closure_body);
-                format!("({}) => {}", params.join(", "), body_str)
+                code!("(", join(params, ", "), ") => ", body_str)
             }
             Expr::Yeet { expr: inner } => {
-                let val = inner
-                    .map(|e| self.emit_expr_str(e))
-                    .unwrap_or_else(|| "default!".to_string());
-                format!("throw r2CsRuntime.Helpers.Returns<object>({})", val)
+                panic!("yeet not supported at {}", self.expr_location(expr_id))
             }
             Expr::Return { expr: inner } => {
                 let val = inner
                     .map(|e| self.emit_expr_str(e))
-                    .unwrap_or_else(|| "0 /* unit */".to_string());
-                format!(
-                    "/* return-expr */ throw r2CsRuntime.Helpers.Returns<object>({})",
-                    val
+                    .unwrap_or_else(|| "0 /* unit */".into());
+                code!(
+                    "/* return-expr */ throw r2CsRuntime.Helpers.Returns<object>(",
+                    val,
+                    ")"
                 )
             }
             &Expr::Let {
@@ -821,49 +826,49 @@ impl<'db> BodyGen<'db> {
                     if let &Some(t) = tail {
                         return self.emit_expr_str(t);
                     }
-                    return "default!".to_string();
+                    return "default!".into();
                 }
-                "/* unsafe block */ default!".to_string()
+                "/* unsafe block */ default!".into()
             }
-            Expr::Match { .. } | Expr::Loop { .. } => "/* block-expr-value */ default!".to_string(),
+            Expr::Match { .. } | Expr::Loop { .. } => "/* block-expr-value */ default!".into(),
             Expr::Break { expr: val, .. } => val
                 .map(|e| self.emit_expr_str(e))
-                .unwrap_or_else(|| "default!".to_string()),
-            Expr::Continue { .. } => "default!".to_string(),
+                .unwrap_or_else(|| "default!".into()),
+            Expr::Continue { .. } => "default!".into(),
             &Expr::Become { expr: inner } => self.emit_expr_str(inner),
             &Expr::Yield { expr: inner } => inner
                 .map(|e| self.emit_expr_str(e))
-                .unwrap_or_else(|| "default!".to_string()),
+                .unwrap_or_else(|| "default!".into()),
             &Expr::Const(inner) => self.emit_expr_str(inner),
-            Expr::Underscore => "_".to_string(),
-            Expr::OffsetOf(_) | Expr::InlineAsm(_) => "/* asm/offsetof */ default!".to_string(),
+            Expr::Underscore => "_".into(),
+            Expr::OffsetOf(_) | Expr::InlineAsm(_) => "/* asm/offsetof */ default!".into(),
         }
     }
 
     /// Emit a tuple-struct or enum-variant constructor call.
-    fn emit_constructor_call(&mut self, variant_id: VariantId, args: &[ExprId]) -> String {
+    fn emit_constructor_call(&mut self, variant_id: VariantId, args: &[ExprId]) -> Code {
         match variant_id {
             VariantId::StructId(sid) => {
                 let s = hir::Struct::from(sid);
                 let cs_name = names::struct_name(s.name(self.db).as_str());
                 let fields = s.fields(self.db);
                 if fields.is_empty() || args.is_empty() {
-                    return format!("new {}()", cs_name);
+                    return fcode!("new {}()", cs_name);
                 }
                 let inits = self.build_positional_field_inits(&fields, args);
-                format!("new {}() {{ {} }}", cs_name, inits.join(", "))
+                code!(format("new {cs_name}()"), "{", join(inits, ", "), "}")
             }
             VariantId::EnumVariantId(vid) => {
                 let v = hir::EnumVariant::from(vid);
                 let cs_name = names::variant_name(v.name(self.db).as_str());
                 let fields = v.fields(self.db);
                 if fields.is_empty() || args.is_empty() {
-                    return format!("new {}()", cs_name);
+                    return fcode!("new {}()", cs_name);
                 }
                 let inits = self.build_positional_field_inits(&fields, args);
-                format!("new {}() {{ {} }}", cs_name, inits.join(", "))
+                code!(format("new {cs_name}()"), "{", join(inits, ", "), "}")
             }
-            VariantId::UnionId(_) => "default! /* union ctor */".to_string(),
+            VariantId::UnionId(_) => "default! /* union ctor */".into(),
         }
     }
 
@@ -871,7 +876,7 @@ impl<'db> BodyGen<'db> {
         &mut self,
         fields: &[hir::Field],
         args: &[ExprId],
-    ) -> Vec<String> {
+    ) -> Vec<Code> {
         fields
             .iter()
             .zip(args.iter())
@@ -883,7 +888,7 @@ impl<'db> BodyGen<'db> {
                 };
                 let f_name = names::field_name(field.name(self.db).as_str());
                 let val = self.emit_expr_str(arg_id);
-                format!("{} = new r2CsRuntime.Slot<{}>({})", f_name, cs_ty, val)
+                code!(f_name, " = new r2CsRuntime.Slot<", cs_ty, ">(", val, ")")
             })
             .collect()
     }
@@ -912,32 +917,32 @@ impl<'db> BodyGen<'db> {
             .unwrap_or_else(|| "object".to_string())
     }
 
-    fn emit_literal(&self, lit: &Literal) -> String {
+    fn emit_literal(&self, lit: &Literal) -> Code {
         match lit {
-            Literal::Bool(b) => b.to_string(),
-            Literal::Int(v, _) => v.to_string(),
-            Literal::Uint(v, _) => v.to_string(),
-            Literal::Float(f, _) => f.to_string(),
-            Literal::Char(c) => format!("'{}'", c.escape_default()),
-            Literal::String(s) => format!(
+            Literal::Bool(b) => b.to_string().into(),
+            Literal::Int(v, _) => v.to_string().into(),
+            Literal::Uint(v, _) => v.to_string().into(),
+            Literal::Float(f, _) => f.to_string().into(),
+            Literal::Char(c) => fcode!("'{}'", c.escape_default()),
+            Literal::String(s) => fcode!(
                 "\"{}\"",
                 s.as_str().replace('\\', "\\\\").replace('"', "\\\"")
             ),
-            Literal::ByteString(_) => "/* byte string */ new byte[] {}".to_string(),
-            Literal::CString(_) => "/* cstring */ \"\"".to_string(),
+            Literal::ByteString(_) => "/* byte string */ new byte[] {}".into(),
+            Literal::CString(_) => "/* cstring */ \"\"".into(),
         }
     }
 
     /// Emit a pattern as a condition check against a scrutinee expression.
-    fn emit_pat_check(&mut self, scrutinee: &str, pat_id: PatId) -> String {
+    fn emit_pat_check(&mut self, scrutinee: &Code, pat_id: PatId) -> Code {
         let pat = &self.body[pat_id];
         match pat {
-            Pat::Wild | Pat::Missing => "true".to_string(),
+            Pat::Wild | Pat::Missing => "true".into(),
             Pat::Bind { subpat, .. } => {
                 if let Some(sub) = subpat {
                     self.emit_pat_check(scrutinee, *sub)
                 } else {
-                    "true".to_string()
+                    "true".into()
                 }
             }
             Pat::TupleStruct { path, args, .. } => {
@@ -949,9 +954,9 @@ impl<'db> BodyGen<'db> {
                         .collect();
                     let variant_name = segs.last().unwrap_or(&"Unknown".to_string()).clone();
                     let cs_variant = names::variant_name(&variant_name);
-                    format!("{} is {}", scrutinee, cs_variant)
+                    code!(scrutinee, " is ", cs_variant)
                 } else {
-                    "true".to_string()
+                    "true".into()
                 }
             }
             Pat::Path(p) => {
@@ -963,9 +968,9 @@ impl<'db> BodyGen<'db> {
                 if segs.len() > 1 {
                     let variant = segs.last().unwrap();
                     let cs_variant = names::variant_name(variant);
-                    format!("{} is {}", scrutinee, cs_variant)
+                    code!(scrutinee, " is ", cs_variant)
                 } else {
-                    "true".to_string()
+                    "true".into()
                 }
             }
             Pat::Record { path, args, .. } => {
@@ -977,53 +982,56 @@ impl<'db> BodyGen<'db> {
                         .collect();
                     let variant = segs.last().unwrap_or(&"Unknown".to_string()).clone();
                     let cs_variant = names::variant_name(&variant);
-                    format!("{} is {}", scrutinee, cs_variant)
+                    code!(scrutinee, " is ", cs_variant)
                 } else {
-                    "true".to_string()
+                    "true".into()
                 }
             }
             Pat::Lit(expr_id) => {
                 let lit_str = self.emit_expr_str(*expr_id);
-                format!("{} == {}", scrutinee, lit_str)
+                code!(scrutinee, " == ", lit_str)
             }
             Pat::Or(pats) => {
-                let parts: Vec<String> = pats
+                let parts: Vec<Code> = pats
                     .iter()
                     .map(|p| self.emit_pat_check(scrutinee, *p))
                     .collect();
-                format!("({})", parts.join(" || "))
+                code!("(", join(parts, " || "), ")")
             }
             Pat::Tuple { args, .. } => {
-                let checks: Vec<String> = args
+                let checks: Vec<Code> = args
                     .iter()
                     .enumerate()
                     .map(|(i, p)| {
-                        let sub_scrutinee = format!("{}.Item{}", scrutinee, i + 1);
+                        let sub_scrutinee = code!(scrutinee, ".Item", (i + 1).to_string());
                         self.emit_pat_check(&sub_scrutinee, *p)
                     })
                     .collect();
-                let combined: Vec<String> = checks.into_iter().filter(|s| s != "true").collect();
+                let combined: Vec<Code> = checks.into_iter().collect();
                 if combined.is_empty() {
-                    "true".to_string()
+                    "true".into()
                 } else {
-                    format!("({})", combined.join(" && "))
+                    code!("(", join(combined, " && "), ")")
                 }
             }
-            _ => "true".to_string(),
+            _ => "true".into(),
         }
     }
 
     /// Emit variable binding statements for a pattern matched against a scrutinee.
-    fn emit_pat_bindings(&mut self, out: &mut Output, scrutinee: &str, pat_id: PatId) {
+    fn emit_pat_bindings(&mut self, out: &mut Code, scrutinee: &Code, pat_id: PatId) {
         let pat = self.body[pat_id].clone();
         match pat {
             Pat::Bind { id, subpat } => {
                 let cs_type = self.binding_cs_type(id);
                 let cs_name = self.alloc_binding(id);
-                out.writeln(&format!(
-                    "var {} = new r2CsRuntime.Slot<{}>({});",
-                    cs_name, cs_type, scrutinee
-                ));
+                out.w("var ")
+                    .w(cs_name)
+                    .w(" = new r2CsRuntime.Slot<")
+                    .w(cs_type)
+                    .w(">(")
+                    .w(scrutinee)
+                    .wln(");");
                 if let Some(sub) = subpat {
                     self.emit_pat_bindings(out, scrutinee, sub);
                 }
@@ -1038,10 +1046,16 @@ impl<'db> BodyGen<'db> {
                     let variant = segs.last().unwrap_or(&"Unknown".to_string()).clone();
                     let cs_variant = names::variant_name(&variant);
                     let tmp = format!("__ts_{}", cs_variant);
-                    out.writeln(&format!("var {} = ({}) {};", tmp, cs_variant, scrutinee));
+                    out.w("var ")
+                        .w(&tmp)
+                        .w(" = (")
+                        .w(cs_variant)
+                        .w(") ")
+                        .w(scrutinee)
+                        .wln(";");
                     for (i, sub_pat) in args.iter().enumerate() {
                         let sub_scrutinee = format!("{}.f_{}.value", tmp, i);
-                        self.emit_pat_bindings(out, &sub_scrutinee, *sub_pat);
+                        self.emit_pat_bindings(out, &sub_scrutinee.into(), *sub_pat);
                     }
                 }
             }
@@ -1055,17 +1069,23 @@ impl<'db> BodyGen<'db> {
                     let variant = segs.last().unwrap_or(&"Unknown".to_string()).clone();
                     let cs_variant = names::variant_name(&variant);
                     let tmp = format!("__rc_{}", cs_variant);
-                    out.writeln(&format!("var {} = ({}) {};", tmp, cs_variant, scrutinee));
+                    out.w("var ")
+                        .w(&tmp)
+                        .w(" = (")
+                        .w(cs_variant)
+                        .w(") ")
+                        .w(scrutinee)
+                        .wln(";");
                     for field_pat in args.iter() {
                         let field_name = names::field_name(field_pat.name.as_str());
                         let sub_scrutinee = format!("{}.{}.value", tmp, field_name);
-                        self.emit_pat_bindings(out, &sub_scrutinee, field_pat.pat);
+                        self.emit_pat_bindings(out, &sub_scrutinee.into(), field_pat.pat);
                     }
                 }
             }
             Pat::Tuple { args, .. } => {
                 for (i, sub_pat) in args.iter().enumerate() {
-                    let sub_scrutinee = format!("{}.Item{}", scrutinee, i + 1);
+                    let sub_scrutinee = code!(scrutinee, ".Item", i + 1);
                     self.emit_pat_bindings(out, &sub_scrutinee, *sub_pat);
                 }
             }
