@@ -104,6 +104,17 @@ impl Code {
 
         result
     }
+
+    pub fn write_fmt(&mut self, args: std::fmt::Arguments<'_>) {
+        std::fmt::Write::write_fmt(&mut self.buf, args).unwrap();
+    }
+}
+
+impl std::fmt::Write for Code {
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        self.w(s);
+        Ok(())
+    }
 }
 
 pub trait WriteToCode {

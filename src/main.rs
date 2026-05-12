@@ -35,10 +35,7 @@ fn load_workspace_from_cargo(
 
     let (db, vfs, _proc_macro) = load_workspace(ws, env, &load_config).unwrap();
 
-    let crates = all_crates(&db)
-        .into_iter()
-        .map(|k| Crate::from(k.clone()))
-        .collect();
+    let crates = all_crates(&db).iter().map(|&k| Crate::from(k)).collect();
 
     (db, vfs, crates)
 }

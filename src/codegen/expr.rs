@@ -3,14 +3,12 @@ use std::collections::HashMap;
 
 use super::{CodeGenerator, names, output::Code};
 use crate::codegen::ty::Constructable;
-use hir::{AssocItem, Function, Local, Name, PathKind, StructKind, db::HirDatabase};
+use hir::{AssocItem, Local, PathKind, StructKind, db::HirDatabase};
+use hir_def::expr_store::BodySourceMap;
 use hir_def::expr_store::scope::ExprScopes;
-use hir_def::expr_store::{BodySourceMap, HygieneId};
-use hir_def::resolver::{
-    HasResolver, ResolveValueResult, Resolver, TypeNs, ValueNs, resolver_for_scope,
-};
+use hir_def::resolver::{ResolveValueResult, TypeNs, ValueNs, resolver_for_scope};
 use hir_def::{
-    AdtId, CallableDefId, DefWithBodyId, HasModule, ItemContainerId, VariantId,
+    AdtId, CallableDefId, DefWithBodyId, HasModule, VariantId,
     expr_store::Body,
     hir::{
         Array, BinaryOp, BindingId, Expr, ExprId, Literal, Pat, PatId, RangeOp, Statement, UnaryOp,
@@ -18,12 +16,11 @@ use hir_def::{
 };
 use hir_ty::InferenceResult;
 use hir_ty::display::HirDisplay;
-use hir_ty::next_solver::infer::{DbInternerInferExt, InferCtxtBuilder};
-use hir_ty::next_solver::{DbInterner, GenericArgKind, TyKind};
+use hir_ty::next_solver::TyKind;
 
 /// Generates C# for the body of a single function.
-pub struct BodyGen<'db> {
-    cg: &'db CodeGenerator<'db>,
+pub struct BodyGen<'g, 'db> {
+    cg: &'g CodeGenerator<'db>,
     body: &'db Body,
     source_map: &'db BodySourceMap,
     scopes: &'db ExprScopes,
@@ -37,7 +34,7 @@ pub struct BodyGen<'db> {
     is_async: bool,
 }
 
-impl<'db> std::ops::Deref for BodyGen<'db> {
+impl<'g, 'db> std::ops::Deref for BodyGen<'g, 'db> {
     type Target = CodeGenerator<'db>;
 
     fn deref(&self) -> &Self::Target {
@@ -45,9 +42,9 @@ impl<'db> std::ops::Deref for BodyGen<'db> {
     }
 }
 
-impl<'db> BodyGen<'db> {
+impl<'g, 'db> BodyGen<'g, 'db> {
     pub fn new(
-        cg: &'db CodeGenerator<'db>,
+        cg: &'g CodeGenerator<'db>,
         def_id: DefWithBodyId,
         body: &'db Body,
         source_map: &'db BodySourceMap,
@@ -171,6 +168,7 @@ impl<'db> BodyGen<'db> {
                 Pat::Box { .. } => {}
                 Pat::ConstBlock(_) => {}
                 Pat::Expr(_) => {}
+                Pat::Rest => {}
             }
         }
         let root = self.body.root_expr();
@@ -443,7 +441,7 @@ impl<'db> BodyGen<'db> {
                             match variant.kind(self.db) {
                                 StructKind::Unit
                                     if let TyKind::Adt(d, generic) = infer.inner().internee
-                                        && let AdtId::EnumId(e) = d.inner().id
+                                        && let AdtId::EnumId(e) = d.def_id()
                                         && e == variant.parent_enum(self.db).into() =>
                                 {
                                     fcode!(
@@ -702,7 +700,7 @@ impl<'db> BodyGen<'db> {
                 }
             }
             Expr::RecordLit { path, fields, .. } => {
-                let c = if let Some(path) = path {
+                let c = if let path = path {
                     let resolver =
                         resolver_for_scope(self.db, self.def_id, self.scopes.scope_for(expr_id));
                     if let Some(path) = resolver.resolve_path_in_type_ns_fully(self.db, path) {
@@ -992,7 +990,7 @@ impl<'db> BodyGen<'db> {
                 }
             }
             Pat::TupleStruct { path, args, .. } => {
-                if let Some(p) = path {
+                if let p = path {
                     let segs: Vec<String> = p
                         .segments()
                         .iter()
@@ -1020,7 +1018,7 @@ impl<'db> BodyGen<'db> {
                 }
             }
             Pat::Record { path, args, .. } => {
-                if let Some(p) = path {
+                if let p = path {
                     let segs: Vec<String> = p
                         .segments()
                         .iter()
@@ -1083,7 +1081,7 @@ impl<'db> BodyGen<'db> {
                 }
             }
             Pat::TupleStruct { path, args, .. } => {
-                if let Some(p) = &path {
+                if let p = &path {
                     let segs: Vec<String> = p
                         .segments()
                         .iter()
@@ -1106,7 +1104,7 @@ impl<'db> BodyGen<'db> {
                 }
             }
             Pat::Record { path, args, .. } => {
-                if let Some(p) = &path {
+                if let p = &path {
                     let segs: Vec<String> = p
                         .segments()
                         .iter()

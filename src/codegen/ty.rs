@@ -4,10 +4,9 @@ use crate::codegen::names::mod_name;
 use hir::db::HirDatabase;
 use hir::next_solver::GenericArgs;
 use hir::{Adt, BuiltinType, Module, Name, Trait, Type};
-use hir_def::AdtId;
 use hir_ty::display::HirDisplay;
-use hir_ty::next_solver::{DbInterner, Ty};
 use ide_db::base_db;
+use rustc_type_ir::inherent::IntoKind;
 
 impl<'db> CodeGenerator<'db> {
     pub fn rust_type_to_cs(&self, ty: &Type<'db>) -> String {
@@ -44,8 +43,12 @@ impl<'db> CodeGenerator<'db> {
         }
 
         // Array
-        if let Some((inner, _size)) = ty.as_array(db) {
-            return format!("{}[]", self.rust_type_to_cs_inner(&inner, false));
+        //if let Some((inner, _size)) = ty.as_array(db) {
+        if let rustc_type_ir::TyKind::Array(inner, _size) = ty.ns_ty().kind() {
+            return format!(
+                "{}[]",
+                self.rust_type_to_cs_inner(&self.new_type(inner), false)
+            );
         }
 
         // Tuple
@@ -93,42 +96,83 @@ impl<'db> CodeGenerator<'db> {
             } else {
                 names::generic_param(&name)
             }
-        } else if let Some(impl_traits) = ty.as_impl_traits(db) {
-            let traits = impl_traits
+        } else if let Some((param, alias)) = rustc_ty::alias_of_type_params(ty) {
+            format!(
+                "P_{}_{} /* {} */",
+                param.name(db).as_str(),
+                alias.name(db).as_str(),
+                ty.display(db, self.display_target())
+            )
+        } else if let Some(_) = ty.as_impl_traits(db) {
+            use hir_ty::next_solver::ClauseKind;
+            // Unfortunately hir crate does not provide us generic parameters of trait so we access
+            // new solver's ty
+            let traits = ty
+                .ns_ty()
+                .impl_trait_bounds(db)
+                .unwrap()
+                .into_iter()
+                .filter_map(|pred| match pred.kind().skip_binder() {
+                    ClauseKind::Trait(trait_ref) => {
+                        Some((Trait::from(trait_ref.def_id().0), trait_ref.trait_ref.args))
+                    }
+                    _ => None,
+                })
                 // remove marker traits including lang items like Send, Sized
-                .filter(|&t| !t.items_with_supertraits(db).is_empty())
+                .filter(|&(t, _)| !t.items_with_supertraits(db).is_empty())
                 .collect::<Vec<_>>();
             if traits.len() > 1 {
                 eprintln!(
                     "Multiple traits are used: {}",
-                    ty.display(db, self.krate.to_display_target(db))
+                    ty.display(db, self.display_target())
                 );
             }
             if traits.is_empty() {
                 eprintln!("empty impl traits: {:?}", ty);
                 "object".to_string()
             } else {
-                //ty.normalize_trait_assoc_type()
-                self.trait_itf_cs(traits[0])
+                let (trait_, args) = traits[0];
+                let t = self.trait_itf_cs(trait_);
+                // TODO: Associated types as generic parameters
+                if Some(trait_.into()) == self.lang_items.Future {
+                    let generic_args = self.generic_args_to_types(args).collect::<Vec<_>>();
+                    ty.normalize_trait_assoc_type(
+                        db,
+                        &generic_args,
+                        self.lang_items.FutureOutput.unwrap().into(),
+                    )
+                    .map(|x| self.resolve_assoc_of_impl(&x));
+                }
+                t
             }
-        } else {
+        } else if let rustc_type_ir::TyKind::Error(_) = ty.ns_ty().kind() {
+            "(object /* error type */)".to_string()
+        } else if ty.is_fn() {
             // Closure types, fn pointers, etc. — use Action/Func
-            if ty.is_fn() {
-                "Action".to_string()
-            } else if ty.is_closure() {
-                "Action".to_string()
-            } else {
-                eprintln!(
-                    "Unsupported type: {}: {ty:?}\n{}",
-                    ty.display(self.db, self.krate.to_display_target(self.db)),
-                    std::backtrace::Backtrace::disabled()
-                );
-                format!(
-                    "object /*Unsupported type: {} */",
-                    ty.display(self.db, self.krate.to_display_target(self.db))
-                )
-                .to_string()
-            }
+            "Action".to_string()
+        } else if ty.is_closure() {
+            // Closure types, fn pointers, etc. — use Action/Func
+            "Action".to_string()
+        } else if let normalized = self.resolve_assoc_of_impl(ty)
+            && &normalized != ty
+        {
+            tracing::debug!(
+                "Normalized! {} => {} ({normalized:?})\n",
+                ty.display(self.db, self.display_target()),
+                normalized.display(self.db, self.display_target())
+            );
+            self.rust_type_to_cs_inner(&normalized, in_slot)
+        } else {
+            eprintln!(
+                "Unsupported type: {}: {ty:?}\n",
+                ty.display(self.db, self.display_target()),
+                ty = self.ty_to_str(ty.ns_ty()),
+            );
+            format!(
+                "object /*Unsupported type: {} */",
+                ty.display(self.db, self.display_target())
+            )
+            .to_string()
         }
     }
 
@@ -258,6 +302,26 @@ impl<'db> CodeGenerator<'db> {
         (type_params, constraints)
     }
 
+    pub fn trait_itf_cs1(
+        &self,
+        trait_: Trait,
+        args: GenericArgs,
+        self_ty: Option<&Type<'db>>,
+    ) -> String {
+        let db = self.db;
+
+        // TODO: args
+        if trait_.dyn_compatibility(db).is_none() {
+            self.trait_itf_cs(trait_)
+        } else {
+            let mut path = self.trait_itf_cs(trait_);
+            path.push('<');
+            path.push_str(&self.rust_type_to_cs(self_ty.unwrap()));
+            path.push('>');
+            path
+        }
+    }
+
     pub fn trait_itf_cs(&self, t: Trait) -> String {
         let mut path = self.module_class_cs(t.module(self.db));
         path.push('.');
@@ -343,21 +407,10 @@ impl<'db> CodeGenerator<'db> {
         path
     }
 
-    pub fn new_type(&self, ty: Ty<'db>) -> Type<'db> {
-        Type::from_ty(ty, self.db, self.krate.base())
-    }
-
-    pub fn adt_with_generic(&self, adt: Adt, args: GenericArgs<'db>) -> Type<'db> {
-        let id = AdtId::from(adt);
-        let interner = DbInterner::new_no_crate(self.db);
-        let ty = Ty::new_adt(interner, id, args);
-        self.new_type(ty)
-    }
-
     pub fn generic_args_to_types(
         &self,
         generic: GenericArgs<'db>,
-    ) -> impl IntoIterator<Item = Type<'db>> {
+    ) -> impl Iterator<Item = Type<'db>> {
         generic.as_slice().iter().filter_map(|x| match x.kind() {
             hir_ty::next_solver::GenericArgKind::Type(t) => Some(self.new_type(t)),
             _ => None,
@@ -372,8 +425,396 @@ impl<'db> CodeGenerator<'db> {
     }
 }
 
+mod rustc_ty {
+    //! Next solver ty related methods
+    //!
+    //! since rustc_type is NOT part of rustc_hir crate which is API boundary,
+    //! we don't want to use those type generally
+
+    use crate::codegen::CodeGenerator;
+    use crate::codegen::ty::TyFromType;
+    use hir::{Adt, Type};
+    use hir_def::signatures::TypeAliasSignature;
+    use hir_def::{
+        AdtId, AssocItemId, GenericDefId, GenericParamId, HasModule, ImplId, ItemContainerId,
+        Lookup,
+    };
+    use hir_ty::display::HirDisplay;
+    use hir_ty::next_solver::{
+        AnyImplId, Binder, ClauseKind, Const, ConstKind, DbInterner, ErrorGuaranteed, GenericArg,
+        GenericArgKind, GenericArgs, ParamEnv, PredicateKind, SolverDefId, Term, TermKind,
+        TraitRef, Ty,
+    };
+    use rustc_type_ir::inherent::{GenericsOf as _, IntoKind, SliceLike, Term as _};
+    use rustc_type_ir::solve::{Goal, GoalSource, NoSolution};
+    use rustc_type_ir::{AliasTyKind, Interner, PredicatePolarity, TyKind};
+    use tracing::debug;
+
+    impl<'db> CodeGenerator<'db> {
+        // This tries to resolve `<impl SomeTrait<Assoc = SomeType> as SomeTrait>::Assoc`
+        pub(super) fn resolve_assoc_of_impl(&self, assoc_ty: &Type<'db>) -> Type<'db> {
+            debug!(
+                "resolve_assoc_of_impl: {}",
+                assoc_ty.display(self.db, self.display_target())
+            );
+            self.new_type(self.resolve_assoc_of_impl_impl(assoc_ty.ns_ty()))
+        }
+
+        #[tracing::instrument(skip(self))]
+        pub(super) fn resolve_assoc_of_impl_impl(&self, assoc_ty: Ty<'db>) -> Ty<'db> {
+            let db = self.db;
+
+            let TyKind::Alias(alias) = assoc_ty.kind() else {
+                // likely to be already resolved
+                return assoc_ty;
+            };
+            let AliasTyKind::Projection {
+                def_id: SolverDefId::TypeAliasId(alias_id),
+            } = alias.kind
+            else {
+                panic!("Tries to assoc but not assoc: {assoc_ty:?}")
+            };
+
+            let trait_ = match alias_id.lookup(db).container {
+                ItemContainerId::TraitId(t) => t,
+                container => {
+                    panic!("Projection type alias is defined in non-trait: {container:?}");
+                }
+            };
+
+            let Some(self_ty) = alias.args.as_slice().first().and_then(|a| a.ty()) else {
+                panic!("Tries to assoc but not assoc (no self): {assoc_ty:?}")
+            };
+
+            //TypeAlias::from(alias_id).;
+
+            match self_ty.kind() {
+                TyKind::Alias(self_ty_alias) => {
+                    let AliasTyKind::Opaque { def_id } = self_ty_alias.kind else {
+                        return self_ty; // can be projection
+                        //panic!("Tries to assoc but not assoc (self is not opaque): {assoc_ty:?}")
+                    };
+                    #[derive(Debug)]
+                    enum Pred<'db> {
+                        Ty(Ty<'db>),
+                        #[allow(dead_code)]
+                        Trait(PredicatePolarity, TraitRef<'db>),
+                    }
+                    let predicates = def_id.expect_opaque_ty().predicates(db).skip_binder();
+                    let preds = predicates
+                        .iter()
+                        .filter_map(|pred| match pred.kind().skip_binder() {
+                            ClauseKind::Projection(proj)
+                                if proj
+                                    .projection_term
+                                    .args
+                                    .as_slice()
+                                    .first()
+                                    .and_then(|x| x.ty())
+                                    == Some(self_ty)
+                                    && proj.def_id() == SolverDefId::TypeAliasId(alias_id) =>
+                            {
+                                match proj.term.kind() {
+                                    TermKind::Ty(ty) => Some(Pred::Ty(ty)),
+                                    TermKind::Const(_) => {
+                                        unreachable!("Associated type is not type")
+                                    }
+                                }
+                            }
+                            ClauseKind::Trait(trait_)
+                                if (trait_.trait_ref.args.as_slice())
+                                    .first()
+                                    .and_then(|x| x.ty())
+                                    == Some(assoc_ty) =>
+                            {
+                                Some(Pred::Trait(trait_.polarity, trait_.trait_ref))
+                            }
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>();
+
+                    // If there is <Assoc = SomeType> part, we pick the type
+                    if let Some(pred) = preds.iter().find_map(|x| match x {
+                        Pred::Ty(ty) => Some(ty),
+                        _ => None,
+                    }) {
+                        return *pred;
+                    }
+
+                    // If there is no such, we need create impl SpecifiedTraits
+                    if cfg!(false) {
+                        /*
+                        ImplTraitId::TypeAliasImplTrait(type_alias_id, )
+                        Ty::new(
+                            self.interner,
+                            TyKind::Alias(AliasTy::new(self.interner, AliasTyKind::Opaque { def_id })),
+                        )
+                        // */
+                    }
+
+                    unimplemented!("assoc {assoc_ty:?} {preds:?}")
+                }
+                TyKind::Adt(adt, args) => {
+                    let mut resolved_impl_assoc = None;
+
+                    self.interner
+                        .for_each_relevant_impl(trait_.into(), self_ty, |impl_def_id| {
+                            let AnyImplId::ImplId(impl_id) = impl_def_id else {
+                                // Builtin derive traits don't have type/consts assoc items.
+                                return;
+                            };
+
+                            let trait_assoc_data = TypeAliasSignature::of(db, alias_id);
+                            let Some(alias) = impl_id
+                                .impl_items(db)
+                                .items
+                                .iter()
+                                .find_map(|(impl_assoc_name, impl_assoc_id)| {
+                                    if let AssocItemId::TypeAliasId(impl_assoc_id) = *impl_assoc_id
+                                        && *impl_assoc_name == trait_assoc_data.name
+                                    {
+                                        Some(impl_assoc_id)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .or_else(|| {
+                                    if trait_assoc_data.ty.is_some() {
+                                        Some(alias_id)
+                                    } else {
+                                        None
+                                    }
+                                })
+                            else {
+                                return;
+                            };
+
+                            assert!(self.interner.has_item_definition(alias.into()));
+
+                            let ty = db.ty(alias.into());
+                            let args = self.translate_args(impl_id, self_ty);
+                            assert!(
+                                self.interner
+                                    .check_args_compatible(AnyImplId::ImplId(impl_id).into(), args)
+                            );
+                            resolved_impl_assoc = Some(ty.skip_binder());
+                        });
+
+                    debug!(
+                        "resolved?: {assoc_ty} => {resolved}\n{resolved1:?}",
+                        assoc_ty = self.new_type(assoc_ty).display(db, self.display_target()),
+                        resolved = self
+                            .new_type(resolved_impl_assoc.unwrap())
+                            .display(db, self.display_target()),
+                        resolved1 = self.ty_to_str(resolved_impl_assoc.unwrap()),
+                    );
+
+                    // internerが大事な役割果たしてそう。for_each_relevant_implでtraitと型がらimpl一覧取れたりする
+                    // fetch_eligible_assoc_item of SolverContextがimpl => typeの解決につかえる
+                    // Intener::has_item_definition が true なとき、ちゃんと定義されてて、
+                    // EvalCtxt::translate_args Intener::check_args_compatible や　Intener::type_of (db::ty) で最終的に解決する
+
+                    resolved_impl_assoc.unwrap()
+                }
+                TyKind::Error(_) => assoc_ty,
+                _ => {
+                    eprintln!(
+                        "Unsupported assoc type resolution but not assoc (self is not alias): {assoc_ty:?}"
+                    );
+                    Ty::new(self.interner, TyKind::Error(ErrorGuaranteed))
+                }
+            }
+        }
+
+        #[tracing::instrument(skip(self))]
+        fn translate_args(&self, target: ImplId, self_ty: Ty<'db>) -> GenericArgs<'db> {
+            let db = self.db;
+            let impl_self_ty = db.impl_self_ty(target).instantiate_identity();
+            let (self_adt, self_args) = self_ty.as_adt().unwrap();
+            match impl_self_ty.kind() {
+                TyKind::Param(param_ty) => {
+                    debug!("translate_args: param: {param_ty:?}");
+
+                    GenericArgs::for_item(self.interner, target.into(), |i, arg, _| match arg {
+                        GenericParamId::TypeParamId(ty_arg) if ty_arg == param_ty.id => {
+                            Term::from(self_ty).into()
+                        }
+                        _ => GenericArg::error_from_id(self.interner, arg),
+                    })
+                }
+                TyKind::Adt(impl_adt_def, impl_adt_args) => {
+                    assert_eq!(impl_adt_def.def_id(), self_adt);
+                    debug!("translate_args: adt: {impl_adt_def:?} {impl_adt_args:?} {self_args:?}");
+
+                    let mut type_map = std::collections::HashMap::new();
+
+                    for (impl_arg, self_arg) in
+                        impl_adt_args.as_slice().iter().zip(self_args.as_slice())
+                    {
+                        if let Some(impl_arg) = impl_arg.ty() {
+                            let self_arg = self_arg.expect_ty();
+
+                            match impl_arg.kind() {
+                                TyKind::Param(param)
+                                    if param.id.parent() == GenericDefId::ImplId(target) =>
+                                {
+                                    type_map
+                                        .insert(GenericParamId::TypeParamId(param.id), self_arg);
+                                }
+                                _ => {
+                                    panic!("unsupported type");
+                                }
+                            }
+                        }
+                    }
+
+                    GenericArgs::for_item(self.interner, target.into(), |i, arg, _| {
+                        if let Some(ty) = type_map.get(&arg) {
+                            Term::from(*ty).into()
+                        } else {
+                            GenericArg::error_from_id(self.interner, arg)
+                        }
+                    })
+                }
+                impl_self_ty => panic!("Unexpected impl_self_ty: {impl_self_ty:?}"),
+            }
+        }
+
+        pub fn new_type(&self, ty: Ty<'db>) -> Type<'db> {
+            Type::from_ty(ty, self.db, self.krate.base())
+        }
+
+        pub fn adt_with_generic(&self, adt: Adt, args: GenericArgs<'db>) -> Type<'db> {
+            let id = AdtId::from(adt);
+            let interner = DbInterner::new_no_crate(self.db);
+            let ty = Ty::new_adt(interner, id, args);
+            self.new_type(ty)
+        }
+    }
+
+    impl<'db> CodeGenerator<'db> {
+        #[allow(dead_code)]
+        pub(super) fn ty_to_str<'a>(&'a self, ty: Ty<'a>) -> impl std::fmt::Debug + 'a {
+            std::fmt::from_fn(move |f| {
+                match ty.kind() {
+                    TyKind::Array(inner, count) => f
+                        .debug_tuple("Array")
+                        .field(&self.ty_to_str(inner))
+                        .field(&count)
+                        .finish(),
+                    TyKind::Slice(inner) => f
+                        .debug_tuple("Slice")
+                        .field(&self.ty_to_str(inner))
+                        .finish(),
+                    TyKind::RawPtr(inner, mutability) => f
+                        .debug_tuple("RawPtr")
+                        .field(&self.ty_to_str(inner))
+                        .field(&mutability)
+                        .finish(),
+                    TyKind::Ref(reg, inner, mutability) => f
+                        .debug_tuple("Ref")
+                        .field(&reg)
+                        .field(&self.ty_to_str(inner))
+                        .field(&mutability)
+                        .finish(),
+                    TyKind::Alias(alias) => f
+                        .debug_tuple("Alias")
+                        .field(&std::fmt::from_fn(move |f| match alias.kind {
+                            AliasTyKind::Projection { def_id } => f
+                                .debug_struct("Projection")
+                                .field("def_id", &self.def_id_to_str(def_id))
+                                .finish(),
+                            AliasTyKind::Inherent { def_id } => f
+                                .debug_struct("Inherent")
+                                .field("def_id", &self.def_id_to_str(def_id))
+                                .finish(),
+                            AliasTyKind::Opaque { def_id } => f
+                                .debug_struct("Opaque")
+                                .field("def_id", &self.def_id_to_str(def_id))
+                                .field("interned", &self.interner.type_of(def_id))
+                                .finish(),
+                            AliasTyKind::Free { def_id } => f
+                                .debug_struct("Free")
+                                .field("def_id", &self.def_id_to_str(def_id))
+                                .finish(),
+                        }))
+                        .field(&self.args_to_str(alias.args))
+                        .finish(),
+
+                    //TyKind::FnDef(_, _) => {}
+                    //TyKind::FnPtr(_, _) => {}
+                    //TyKind::UnsafeBinder(_) => {}
+                    //TyKind::Dynamic(_, _) => {}
+                    //TyKind::Closure(_, _) => {}
+                    //TyKind::CoroutineClosure(_, _) => {}
+                    //TyKind::Coroutine(_, _) => {}
+                    //TyKind::CoroutineWitness(_, _) => {}
+                    //TyKind::Never => {}
+                    //TyKind::Tuple(_) => {}
+                    //TyKind::Param(_) => {}
+                    //TyKind::Bound(_, _) => {}
+                    //TyKind::Placeholder(_) => {}
+                    //TyKind::Infer(_) => {}
+                    //TyKind::Error(_) => {}
+                    m => std::fmt::Debug::fmt(&m, f),
+                }
+            })
+        }
+
+        pub(super) fn args_to_str<'a>(
+            &'a self,
+            args: GenericArgs<'a>,
+        ) -> impl std::fmt::Debug + 'a {
+            std::fmt::from_fn(move |f| {
+                let mut list = f.debug_list();
+                for arg in args.as_slice() {
+                    list.entry(&std::fmt::from_fn(move |f| match arg.kind() {
+                        GenericArgKind::Type(ty) => {
+                            f.debug_tuple("Type").field(&self.ty_to_str(ty)).finish()
+                        }
+                        _ => std::fmt::Debug::fmt(&arg, f),
+                    }));
+                }
+                list.finish()
+            })
+        }
+
+        pub(super) fn def_id_to_str<'a>(
+            &'a self,
+            def_id: SolverDefId,
+        ) -> impl std::fmt::Debug + 'a {
+            std::fmt::from_fn(move |f| match def_id {
+                SolverDefId::InternedOpaqueTyId(id) => f
+                    .debug_tuple("InternedOpaqueTyId")
+                    .field(&id)
+                    .field(&id.loc(self.db))
+                    .field(&id.loc(self.db).predicates(self.db))
+                    .finish(),
+
+                _ => std::fmt::Debug::fmt(&def_id, f),
+            })
+        }
+    }
+
+    /// Returns Some if the type is `<Param as SomeTrait>::AssociatedType`
+    pub fn alias_of_type_params(ty: &Type) -> Option<(hir::TypeParam, hir::TypeAlias)> {
+        if let TyKind::Alias(alias) = ty.ns_ty().kind()
+            && let AliasTyKind::Projection { def_id } = alias.kind
+            && let SolverDefId::TypeAliasId(alias_id) = def_id
+            && let TyKind::Param(param) = alias.args.as_slice()[0].expect_ty().kind()
+        {
+            let param = hir::TypeParam::from(param.id);
+            let alias = hir::TypeAlias::from(alias_id);
+
+            Some((param, alias))
+        } else {
+            None
+        }
+    }
+}
+
 pub trait TyFromType<'db> {
-    fn ns_ty(&self) -> &hir::next_solver::Ty<'db>;
+    fn ns_ty(&self) -> hir::next_solver::Ty<'db>;
     fn from_ty(
         ty: hir::next_solver::Ty<'db>,
         db: &'db dyn HirDatabase,
@@ -383,7 +824,6 @@ pub trait TyFromType<'db> {
 
 mod ty_and_type {
     use crate::codegen::ty::TyFromType;
-    use hir::{BuiltinType, Crate};
     use hir_def::CallableDefId;
     use hir_def::resolver::{HasResolver, Resolver};
     use hir_ty::ParamEnvAndCrate;
@@ -392,16 +832,17 @@ mod ty_and_type {
     use ide_db::base_db;
     use ide_db::base_db::{CrateOrigin, LangCrateOrigin, all_crates};
 
-    pub struct TypeMap<'db> {
-        env: hir_ty::ParamEnvAndCrate<'db>,
-        ty: hir::next_solver::Ty<'db>,
+    #[allow(dead_code)]
+    struct TypeMap<'db> {
+        env: ParamEnvAndCrate<'db>,
+        ty: Ty<'db>,
     }
 
     impl<'db> TyFromType<'db> for hir::Type<'db> {
-        fn ns_ty(&self) -> &hir::next_solver::Ty<'db> {
+        fn ns_ty(&self) -> hir::next_solver::Ty<'db> {
             // SAFETY:  This is NOT safe in rust guaranteed behavior,
             //          but known implementation allows us to do so.
-            unsafe { &std::mem::transmute::<&Self, &TypeMap<'db>>(self).ty }
+            unsafe { std::mem::transmute::<&Self, &TypeMap<'db>>(self).ty }
         }
 
         fn from_ty(ty: Ty<'db>, db: &'db dyn HirDatabase, krate: base_db::Crate) -> Self {
@@ -419,10 +860,7 @@ mod ty_and_type {
         krate: base_db::Crate,
         ty: hir::next_solver::Ty,
     ) -> ParamEnvAndCrate<'db> {
-        use hir_def::builtin_type as bt;
-        use hir_ty::next_solver::{GenericArgKind, TyKind};
-        use hir_ty::primitive::{FloatTy, IntTy, UintTy};
-
+        use hir_ty::next_solver::TyKind;
         match ty.inner().internee {
             // builtin types
             TyKind::Bool
@@ -432,10 +870,10 @@ mod ty_and_type {
             | TyKind::Float(_)
             | TyKind::Str => empty_param_env(core_crate(db)),
 
-            TyKind::Adt(a, _) => param_env_from_resolver(db, &a.inner().id.resolver(db)),
+            TyKind::Adt(a, _) => param_env_from_resolver(db, &a.def_id().resolver(db)),
             TyKind::Foreign(f) => param_env_from_resolver(db, &f.0.resolver(db)),
             TyKind::Slice(e) => ty_env(db, krate, e),
-            TyKind::Array(e, c) => ty_env(db, krate, e),
+            TyKind::Array(e, _) => ty_env(db, krate, e),
             TyKind::Pat(t, _) => ty_env(db, krate, t),
             TyKind::RawPtr(e, _) => ty_env(db, krate, e),
             TyKind::Ref(_, e, _) => ty_env(db, krate, e),

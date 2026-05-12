@@ -11,9 +11,12 @@ use crate::codegen::decl::{
 };
 use crate::codegen::names::mod_name;
 use hir::{
-    Adt, AssocItem, Crate, GenericDef, HirFileId, Impl, InFile, Module, ModuleDef, Name, Semantics,
-    StructKind, db::HirDatabase,
+    Adt, AssocItem, Crate, GenericDef, HasSource, HirFileId, Impl, InFile, Module, ModuleDef, Name,
+    Semantics, StructKind, db::HirDatabase,
 };
+use hir_def::lang_item::{LangItems, lang_items};
+use hir_ty::display::DisplayTarget;
+use hir_ty::next_solver::{AnyImplId, DbInterner, GenericArgs};
 use ide_db::line_index;
 use itertools::Itertools;
 use std::collections::HashMap;
@@ -26,6 +29,8 @@ pub struct CodeGenerator<'db> {
     vfs: &'db Vfs,
     krate: Crate,
     sem: Semantics<'db, dyn HirDatabase>,
+    lang_items: &'db LangItems,
+    interner: DbInterner<'db>,
     root_namespace: String,
 }
 
@@ -41,6 +46,8 @@ impl<'db> CodeGenerator<'db> {
             vfs,
             krate,
             sem: Semantics::new_dyn(db),
+            lang_items: lang_items(db, krate.base()),
+            interner: DbInterner::new_with(db, krate.base()),
             root_namespace,
         }
     }
@@ -49,7 +56,7 @@ impl<'db> CodeGenerator<'db> {
         &self,
         f: InFile<impl as_syntax_node_ptr::IntoSyntaxNodePtr>,
     ) -> String {
-        let loc = self.sem.diagnostics_display_range(f.map(|x| x.into_ptr()));
+        let loc = self.sem.diagnostics_display_range(f.map(|x| x.as_ptr()));
 
         let path = self.vfs.file_path(loc.file_id);
         let line_index = line_index(self.db, loc.file_id);
@@ -57,15 +64,20 @@ impl<'db> CodeGenerator<'db> {
 
         format!("{}:{}:{}", path, line_col.line + 1, line_col.col + 1)
     }
+
+    pub fn display_target(&self) -> DisplayTarget {
+        self.krate.to_display_target(self.db)
+    }
 }
 
 pub mod as_syntax_node_ptr {
     use hir_def::expr_store::ExprOrPatPtr;
     use hir_def::nameres::ModuleSource;
+    use syntax::ast::Impl;
     use syntax::{AstNode, AstPtr, SyntaxNode, SyntaxNodePtr};
 
     pub trait IntoSyntaxNodePtr {
-        fn into_ptr(self) -> SyntaxNodePtr;
+        fn as_ptr(&self) -> SyntaxNodePtr;
     }
 
     macro_rules! impls {
@@ -78,7 +90,7 @@ pub mod as_syntax_node_ptr {
             $(
                 impl IntoSyntaxNodePtr for $ty {
                     #[inline]
-                    fn into_ptr($self) -> SyntaxNodePtr {
+                    fn as_ptr(&$self) -> SyntaxNodePtr {
                         $body
                     }
                 }
@@ -87,13 +99,14 @@ pub mod as_syntax_node_ptr {
     }
 
     impls!(
-        |self: SyntaxNodePtr| self,
-        |self: SyntaxNode| SyntaxNodePtr::new(&self),
-        |self: ModuleSource| self.node().into_ptr()
+        |self: SyntaxNodePtr| *self,
+        |self: SyntaxNode| SyntaxNodePtr::new(self),
+        |self: ModuleSource| self.node().as_ptr(),
+        |self: Impl| self.syntax().as_ptr(),
     );
 
     impl<T: AstNode> IntoSyntaxNodePtr for AstPtr<T> {
-        fn into_ptr(self) -> SyntaxNodePtr {
+        fn as_ptr(&self) -> SyntaxNodePtr {
             self.syntax_node_ptr()
         }
     }
@@ -117,7 +130,7 @@ impl<'db> CodeGenerator<'db> {
             .display_name(db)
             .map(|n| n.as_str().to_string())
             .unwrap_or_else(|| "r2cs_generated".to_string());
-        out.wln(&format!("namespace {};", self.root_namespace));
+        out.wln(format!("namespace {};", self.root_namespace));
         out.blank_line();
 
         // Collect all impls keyed by ADT (by display name as a quick proxy)
@@ -130,7 +143,7 @@ impl<'db> CodeGenerator<'db> {
             for impl_ in module.impl_defs(db) {
                 let self_ty = impl_.self_ty(db);
                 if let Some(adt) = self_ty.as_adt() {
-                    let key = self.adt_key(adt, db);
+                    let key = self.adt_key(adt);
                     adt_impls.entry(key).or_default().push(impl_);
                 }
             }
@@ -172,7 +185,7 @@ impl<'db> CodeGenerator<'db> {
         // Emit traits first (no impl needed)
         for def in module.declarations(db) {
             if let ModuleDef::Trait(t) = def {
-                self.emit_trait(out, t, db);
+                self.emit_trait(out, t);
             }
         }
 
@@ -197,7 +210,7 @@ impl<'db> CodeGenerator<'db> {
         // Emit each ADT with its impl blocks
         for def in module.declarations(db) {
             if let ModuleDef::Adt(adt) = def {
-                let key = self.adt_key(adt, db);
+                let key = self.adt_key(adt);
                 let impls = adt_impls.get(&key).cloned().unwrap_or_default();
                 self.emit_adt_with_impls(out, adt, &impls);
             }
@@ -223,7 +236,7 @@ impl<'db> CodeGenerator<'db> {
             return;
         }
 
-        if is_adt_r2cs_native(adt, db) {
+        if is_adt_r2cs_native(adt, self.krate, db) {
             let cs_name = match adt {
                 Adt::Struct(s) => names::struct_name(s.name(db).as_str()),
                 Adt::Enum(e) => names::struct_name(e.name(db).as_str()),
@@ -240,13 +253,16 @@ impl<'db> CodeGenerator<'db> {
 
         // Compute implemented interfaces
         let mut trait_interfaces: Vec<String> = Vec::new();
-        for impl_ in impls {
+        for &impl_ in impls {
             if let Some(trait_) = impl_.trait_(db) {
-                let name = trait_.name(db);
-                let cs_iface = self.trait_itf_cs(trait_);
-                let self_cs = self.rust_type_to_cs(&impl_.self_ty(db));
-                // Simple form without checking generic params
-                trait_interfaces.push(format!("{}<{}>", cs_iface, self_cs));
+                let args = match AnyImplId::from(impl_) {
+                    AnyImplId::ImplId(impl_id) => {
+                        db.impl_trait(impl_id).unwrap().skip_binder().args
+                    }
+                    AnyImplId::BuiltinDeriveImplId(_) => GenericArgs::empty(self.interner),
+                };
+                let cs_iface = self.trait_itf_cs1(trait_, args, Some(&impl_.self_ty(db)));
+                trait_interfaces.push(cs_iface);
             }
         }
 
@@ -269,9 +285,8 @@ impl<'db> CodeGenerator<'db> {
 
         match adt {
             Adt::Struct(s) => {
-                out.wln(&format!(
-                    "public partial class {}{}{}",
-                    cs_name, generics, interfaces_part
+                out.wln(format!(
+                    "public partial class {cs_name}{generics}{interfaces_part}",
                 ));
                 out.open_brace();
 
@@ -281,7 +296,7 @@ impl<'db> CodeGenerator<'db> {
                     let f_ty = f_ty_ns.to_type(db);
                     let cs_ty = self.rust_type_to_cs(&f_ty);
                     let f_name = names::field_name(field.name(db).as_str());
-                    out.wln(&format!(
+                    out.wln(format!(
                         "public Slot<{}> {} = new(default!);",
                         cs_ty, f_name
                     ));
@@ -345,7 +360,7 @@ impl<'db> CodeGenerator<'db> {
 
                             for field in &fields {
                                 let f_name = names::field_name(field.name(db).as_str());
-                                out.wln(&format!("this.{f_name} = new({f_name});"));
+                                out.wln(format!("this.{f_name} = new({f_name});"));
                             }
                             out.close_brace();
                         }
@@ -388,12 +403,7 @@ impl<'db> CodeGenerator<'db> {
         }
     }
 
-    fn adt_key(&self, adt: Adt, db: &dyn HirDatabase) -> String {
-        let (kind, name) = match adt {
-            Adt::Struct(s) => ("struct", s.name(db).as_str().to_string()),
-            Adt::Enum(e) => ("enum", e.name(db).as_str().to_string()),
-            Adt::Union(u) => ("union", u.name(db).as_str().to_string()),
-        };
-        format!("{}::{}", kind, name)
+    fn adt_key(&self, adt: Adt) -> String {
+        self.adt_name_cs(adt)
     }
 }
