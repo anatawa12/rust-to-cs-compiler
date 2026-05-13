@@ -3,13 +3,12 @@ use std::collections::HashMap;
 
 use super::{CodeGenerator, names, output::Code};
 use crate::codegen::ty::Constructable;
-use hir::{AssocItem, Local, PathKind, StructKind, db::HirDatabase};
+use hir::{AssocItem, Body, Local, PathKind, StructKind};
 use hir_def::expr_store::BodySourceMap;
 use hir_def::expr_store::scope::ExprScopes;
 use hir_def::resolver::{ResolveValueResult, TypeNs, ValueNs, resolver_for_scope};
 use hir_def::{
-    AdtId, CallableDefId, DefWithBodyId, HasModule, VariantId,
-    expr_store::Body,
+    AdtId, CallableDefId, DefWithBodyId, VariantId,
     hir::{
         Array, BinaryOp, BindingId, Expr, ExprId, Literal, Pat, PatId, RangeOp, Statement, UnaryOp,
     },
@@ -26,8 +25,8 @@ pub struct BodyGen<'g, 'db> {
     scopes: &'db ExprScopes,
     def_id: DefWithBodyId,
     infer: &'db InferenceResult,
-    /// Mapping from BindingId to the C# local name allocated for it.
-    bindings: HashMap<BindingId, String>,
+    /// Mapping from Local to the C# local name allocated for it.
+    locals: HashMap<Local, String>,
     /// Counter per original Rust name for uniqueness.
     name_counts: HashMap<String, usize>,
     /// Whether we're inside an async fn (controls .GetAwaiter()/.GetResult() vs await).
@@ -92,7 +91,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
             scopes: ExprScopes::of(cg.db, def_id),
             def_id,
             infer,
-            bindings: HashMap::new(),
+            locals: HashMap::new(),
             name_counts: HashMap::new(),
             is_async,
         }
@@ -122,13 +121,14 @@ impl<'g, 'db> BodyGen<'g, 'db> {
         let count = self.name_counts.entry(rust_name.clone()).or_insert(0);
         let cs_name = names::local_name(&rust_name, *count);
         *count += 1;
-        self.bindings.insert(id, cs_name.clone());
+        self.locals
+            .insert((self.def_id, id).into(), cs_name.clone());
         cs_name
     }
 
     fn binding_name(&self, id: BindingId) -> String {
-        self.bindings
-            .get(&id)
+        self.locals
+            .get(&Local::from((self.def_id, id)))
             .cloned()
             .unwrap_or_else(|| format!("/* unbound {:?} */unknown", id))
     }
@@ -147,7 +147,8 @@ impl<'g, 'db> BodyGen<'g, 'db> {
     /// Emit the full function body block.
     pub fn emit_body(&mut self, out: &mut Code) {
         if let Some(self_id) = self.body.self_param {
-            self.bindings.insert(self_id, "this".into());
+            self.locals
+                .insert(Local::from((self.def_id, self_id)), "this".into());
         }
         for &x in &self.body.params {
             match self.body[x] {
@@ -1143,8 +1144,8 @@ impl<'g, 'db> BodyGen<'g, 'db> {
         match pat {
             Pat::Bind { id, .. } => {
                 let cs_name = self
-                    .bindings
-                    .get(id)
+                    .locals
+                    .get(&Local::from((self.def_id, *id)))
                     .cloned()
                     .unwrap_or_else(|| "/* unbound */unknown".to_string());
                 format!("{}.value", cs_name)
@@ -1202,10 +1203,9 @@ impl<'g, 'db> BodyGen<'g, 'db> {
     }
 
     fn find_local_by_rust_name(&self, rust_name: &str) -> Option<String> {
-        for (id, cs_name) in &self.bindings {
-            let binding = &self.body[*id];
-            if binding.name.as_str() == rust_name {
-                return Some(cs_name.clone());
+        for (local, cs_name) in &self.locals {
+            if local.name(self.db).as_str() == rust_name {
+                return Some(cs_name.to_string());
             }
         }
         None
