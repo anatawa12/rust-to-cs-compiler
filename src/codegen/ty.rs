@@ -93,13 +93,15 @@ impl<'db> CodeGenerator<'db> {
             let name = param.name(db).as_str().to_string();
             if name == "Self" {
                 "Self".to_string()
-            } else {
+            } else if !param.is_implicit(db) {
                 names::generic_param(&name)
+            } else {
+                format!("/* implicit */ {}", self.impl_ty_param_id.id_name(&param))
             }
         } else if let Some((param, alias)) = rustc_ty::alias_of_type_params(ty) {
             format!(
-                "P_{}_{} /* {} */",
-                param.name(db).as_str(),
+                "{}_{} /* {} */",
+                self.rust_type_to_cs_inner(&param.ty(db), false),
                 alias.name(db).as_str(),
                 ty.display(db, self.display_target())
             )
@@ -285,9 +287,13 @@ impl<'db> CodeGenerator<'db> {
 
         for param in params {
             match param {
-                hir::GenericParam::TypeParam(tp) => {
-                    let name = names::generic_param(tp.name(db).as_str());
-                    type_params.push(name.clone());
+                hir::GenericParam::TypeParam(param) => {
+                    let name = names::generic_param(param.name(db).as_str());
+                    type_params.push(if !param.is_implicit(db) {
+                        names::generic_param(&name)
+                    } else {
+                        format!("/* implicit */ {}", self.impl_ty_param_id.id_name(param))
+                    });
                     // TODO: add where clauses from bounds
                 }
                 hir::GenericParam::ConstParam(_cp) => {

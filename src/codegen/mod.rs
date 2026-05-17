@@ -2,6 +2,7 @@
 pub mod output;
 pub mod decl;
 pub mod expr;
+mod id_map;
 pub mod names;
 pub mod ty;
 
@@ -9,10 +10,11 @@ use self::output::Code;
 use crate::codegen::decl::{
     is_adt_cfg_disabled, is_adt_r2cs_native, is_impl_cfg_disabled, is_module_cfg_disabled,
 };
+use crate::codegen::id_map::IdMap;
 use crate::codegen::names::mod_name;
 use hir::{
     Adt, AssocItem, Crate, GenericDef, HasSource, HirFileId, Impl, InFile, Module, ModuleDef, Name,
-    Semantics, StructKind, db::HirDatabase,
+    Semantics, StructKind, TypeParam, db::HirDatabase,
 };
 use hir_def::lang_item::{LangItems, lang_items};
 use hir_ty::display::DisplayTarget;
@@ -32,6 +34,8 @@ pub struct CodeGenerator<'db> {
     lang_items: &'db LangItems,
     interner: DbInterner<'db>,
     root_namespace: String,
+    // some internal information that hard is to determine
+    impl_ty_param_id: IdMap<TypeParam>,
 }
 
 impl<'db> CodeGenerator<'db> {
@@ -49,6 +53,8 @@ impl<'db> CodeGenerator<'db> {
             lang_items: lang_items(db, krate.base()),
             interner: DbInterner::new_with(db, krate.base()),
             root_namespace,
+
+            impl_ty_param_id: IdMap::new("impl_"),
         }
     }
 
