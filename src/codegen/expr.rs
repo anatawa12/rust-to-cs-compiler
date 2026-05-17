@@ -137,7 +137,9 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         out.dedent();
                         out.wln("}");
                     }
-                    None => {}
+                    None => {
+                        out.wln("}");
+                    }
                 }
             }
             ast::Expr::LoopExpr(loop_expr) => {
