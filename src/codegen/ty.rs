@@ -289,8 +289,8 @@ impl<'db> CodeGenerator<'db> {
             match param {
                 hir::GenericParam::TypeParam(param) => {
                     let name = names::generic_param(param.name(db).as_str());
-                    type_params.push(if !param.is_implicit(db) {
-                        names::generic_param(&name)
+                    type_params.push(if !param.name(db).is_missing() {
+                        name
                     } else {
                         format!("/* implicit */ {}", self.impl_ty_param_id.id_name(param))
                     });
