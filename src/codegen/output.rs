@@ -1,6 +1,6 @@
 /// Indented C# code output buffer.
 
-#[derive(Default, Eq, PartialEq)]
+#[derive(Clone, Default, Eq, PartialEq)]
 pub struct Code {
     buf: String,
     indent: usize,

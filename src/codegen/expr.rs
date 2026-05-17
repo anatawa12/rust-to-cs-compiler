@@ -4,9 +4,9 @@ use std::collections::HashMap;
 use super::{CodeGenerator, names, output::Code};
 use crate::codegen::ty::Constructable;
 use hir::next_solver::GenericArgs;
-use hir::{InFile, Local, StructKind, Variant};
+use hir::{Adt, InFile, Local, ModuleDef, PathResolution, StructKind, Variant};
 use itertools::Either;
-use syntax::ast::{self, AstNode as _, HasArgList as _, HasLoopBody as _, RangeItem as _};
+use syntax::ast::{self, AstNode as _, HasArgList as _, HasLoopBody as _, HasName, RangeItem as _};
 use syntax::ast::{BinaryOp, RangeOp, UnaryOp};
 
 /// Generates C# for the body of a single function.
@@ -160,45 +160,28 @@ impl<'g, 'db> BodyGen<'g, 'db> {
             }
             // TODO? While and For
             ast::Expr::MatchExpr(match_expr) => {
-                // TODO: replace with switch implementation
                 let arms = match_expr.match_arm_list().unwrap();
                 let match_expr = match_expr.expr().unwrap();
                 let scrutinee = self.emit_expr_str_ast(&match_expr);
-                self.match_index += 1;
-                out.w("var __match_")
-                    .w(self.match_index)
-                    .w(" = ")
-                    .w(scrutinee)
-                    .wln(";");
-                let tmp = format!("__match_{:?}", self.match_index).into();
-                for (i, arm) in arms.arms().enumerate() {
-                    let kw = if i == 0 { "if" } else { "else if" };
+                out.w("switch (").w(scrutinee).wln(") {");
+
+                for arm in arms.arms() {
                     // Emit pattern check
-                    let pat_check = self.emit_pat_check_ast(&tmp, &arm.pat().unwrap());
-                    let guard_str = arm
-                        .guard()
-                        .map(|g| {
-                            code!(
-                                " && (",
-                                self.emit_expr_str_ast(&g.condition().unwrap()),
-                                ")"
-                            )
-                        })
-                        .unwrap_or_default();
-                    if pat_check == "true".into() && guard_str.is_empty() {
-                        out.wln("{");
-                    } else {
-                        out.w(kw).w(" (").w(pat_check).w(guard_str).wln(") {");
+                    let pat_cs = self.emit_pattern_ast(&arm.pat().unwrap());
+
+                    out.w("case ").w(pat_cs).w(": ");
+                    if let Some(guard) = arm.guard() {
+                        out.w("when ");
+                        out.w(self.emit_expr_str_ast(&guard.condition().unwrap()));
                     }
+                    out.wln("{");
                     out.indent();
-                    // Bind pattern variables
-                    self.emit_pat_bindings_ast(out, &tmp, &arm.pat().unwrap());
-                    // Emit arm body
                     self.emit_expr_as_stmt_ast(out, arm.expr().unwrap(), is_tail);
                     out.dedent();
-                    out.w("}");
-                    out.wln("");
+                    out.wln("}");
                 }
+
+                out.wln("}");
             }
             ast::Expr::BreakExpr(break_expr) => {
                 let label = break_expr.lifetime();
@@ -794,8 +777,8 @@ impl<'g, 'db> BodyGen<'g, 'db> {
             }
             ast::Expr::LetExpr(let_expr) => {
                 let val = self.emit_expr_str_ast(&let_expr.expr().unwrap());
-                let check = self.emit_pat_check_ast(&val, &let_expr.pat().unwrap());
-                check
+                let pattern_cs = self.emit_pattern_ast(&let_expr.pat().unwrap());
+                code!("(", val, " is ", pattern_cs, ")")
             }
             /*
             Expr::Unsafe {
@@ -913,183 +896,173 @@ impl<'g, 'db> BodyGen<'g, 'db> {
     }
 
     /// Emit a pattern as a condition check against a scrutinee expression.
-    fn emit_pat_check_ast(&mut self, scrutinee: &Code, pat: &ast::Pat) -> Code {
+    fn emit_pattern_ast(&mut self, pat: &ast::Pat) -> Code {
         match pat {
-            ast::Pat::WildcardPat(w) => "true".into(),
+            ast::Pat::WildcardPat(w) => "var _".into(),
             ast::Pat::IdentPat(ident_pat)
                 if let Some(const_ref) = self.sem.resolve_bind_pat_to_const(ident_pat) =>
             {
                 // TODO
-                code!(
-                    "/*TODO: const pat*/",
-                    scrutinee,
-                    " is ",
-                    format!("{:?}", const_ref)
-                )
+                code!(format!("{:?}", const_ref))
             }
             ast::Pat::IdentPat(ident_pat) => {
+                let local = self.sem.to_def(ident_pat).unwrap();
+                let cs_local_name = self.alloc_binding_ast(&local);
                 if let Some(sub) = ident_pat.pat() {
-                    self.emit_pat_check_ast(scrutinee, &sub)
+                    code!(self.emit_pattern_ast(&sub), " ", cs_local_name)
                 } else {
-                    "true".into()
+                    code!("var ", cs_local_name)
                 }
             }
             ast::Pat::TupleStructPat(tuple_struct) => {
-                // TODO
-                let p = tuple_struct.path().unwrap();
-                let segs: Vec<String> = p
-                    .segments()
-                    .map(|s| s.name_ref().unwrap().text().as_str().to_string())
-                    .collect();
-                let variant_name = segs.last().unwrap_or(&"Unknown".to_string()).clone();
-                let cs_variant = names::variant_name(&variant_name);
-                code!(scrutinee, " is ", cs_variant)
+                let path = tuple_struct.path().unwrap();
+                let (cs_type_name, field_count) = match self.sem.resolve_path(&path) {
+                    Some(PathResolution::Def(ModuleDef::EnumVariant(enum_valiant))) => {
+                        let field_count = enum_valiant.fields(self.db).len();
+                        let cs_variant = self.enum_variant_cs(enum_valiant);
+                        (cs_variant, field_count)
+                    }
+                    Some(PathResolution::Def(ModuleDef::Adt(Adt::Struct(struct_def)))) => {
+                        let field_count = struct_def.fields(self.db).len();
+                        let cs_variant = self.rust_type_to_cs(&struct_def.ty(self.db));
+                        (cs_variant, field_count)
+                    }
+                    resolved => {
+                        eprintln!(
+                            "Unable to resolve path in pattern {resolved:?}: {}",
+                            self.expr_location_ast(pat)
+                        );
+                        return code!("Unknown");
+                    }
+                };
+
+                let pattern_codes = self.resolve_tuple_like_struct(
+                    field_count,
+                    &tuple_struct.fields().collect::<Vec<_>>(),
+                );
+
+                let pattern_codes = pattern_codes
+                    .iter()
+                    .enumerate()
+                    .map(|(indeex, pat_code)| code!(format("f_{indeex}: "), pat_code));
+                code!(cs_type_name, "{", join(pattern_codes, ","), "}")
             }
             ast::Pat::PathPat(path) => {
                 let path = path.path().unwrap();
-                let segs: Vec<String> = path
-                    .segments()
-                    .map(|s| s.name_ref().unwrap().text().as_str().to_string())
-                    .collect();
-                if segs.len() > 1 {
-                    let variant = segs.last().unwrap();
-                    let cs_variant = names::variant_name(variant);
-                    code!(scrutinee, " is ", cs_variant)
-                } else {
-                    "true".into()
+                match self.sem.resolve_path(&path) {
+                    Some(PathResolution::Def(ModuleDef::Const(const_))) => {
+                        code!(self.const_path_cs(const_))
+                    }
+                    resolved => {
+                        eprintln!(
+                            "Unable to resolve path in pattern {resolved:?}: {}",
+                            self.expr_location_ast(pat)
+                        );
+                        return code!("Unknown");
+                    }
                 }
             }
             ast::Pat::RecordPat(record_pat) => {
-                //Pat::Record { path, args, .. } => {
-                let segs: Vec<String> = record_pat
-                    .path()
-                    .unwrap()
-                    .segments()
-                    .map(|s| s.name_ref().unwrap().text().as_str().to_string())
-                    .collect();
-                let variant = segs.last().unwrap_or(&"Unknown".to_string()).clone();
-                let cs_variant = names::variant_name(&variant);
-                code!(scrutinee, " is ", cs_variant)
-            }
-            ast::Pat::LiteralPat(literal_pat) => {
-                let lit_str =
-                    self.emit_expr_str_ast(&ast::Expr::Literal(literal_pat.literal().unwrap()));
-                code!(scrutinee, " == ", lit_str)
-            }
-            ast::Pat::OrPat(or_pat) => {
-                let parts: Vec<Code> = or_pat
-                    .pats()
-                    .map(|p| self.emit_pat_check_ast(scrutinee, &p))
-                    .collect();
-                code!("(", join(parts, " || "), ")")
-            }
-            ast::Pat::TuplePat(tuple_pat) => {
-                let checks: Vec<Code> = tuple_pat
-                    .fields()
-                    .enumerate()
-                    .map(|(i, p)| {
-                        let sub_scrutinee = code!(scrutinee, ".Item", (i + 1).to_string());
-                        self.emit_pat_check_ast(&sub_scrutinee, &p)
-                    })
-                    .collect();
-                let combined: Vec<Code> = checks.into_iter().collect();
-                if combined.is_empty() {
-                    "true".into()
+                let path = record_pat.path().unwrap();
+                let (cs_type_name, field_count) = match self.sem.resolve_path(&path) {
+                    Some(PathResolution::Def(ModuleDef::EnumVariant(enum_valiant))) => {
+                        let field_count = enum_valiant.fields(self.db).len();
+                        let cs_variant = self.enum_variant_cs(enum_valiant);
+                        (cs_variant, field_count)
+                    }
+                    Some(PathResolution::Def(ModuleDef::Adt(Adt::Struct(struct_def)))) => {
+                        let field_count = struct_def.fields(self.db).len();
+                        let cs_variant = self.rust_type_to_cs(&struct_def.ty(self.db));
+                        (cs_variant, field_count)
+                    }
+                    resolved => {
+                        eprintln!(
+                            "Unable to resolve path in pattern {resolved:?}: {}",
+                            self.expr_location_ast(pat)
+                        );
+                        return code!("Unknown");
+                    }
+                };
+
+                let fields = record_pat.record_pat_field_list().unwrap();
+                let fields = fields.fields().collect::<Vec<_>>();
+                if matches!(fields.as_slice(), []) {
+                    code!(cs_type_name, "{", "}")
                 } else {
-                    code!("(", join(combined, " && "), ")")
+                    let pattern_codes = fields.iter().enumerate().map(|(indeex, field)| {
+                        let field_name = field.field_name().unwrap().text().as_str().to_string();
+                        let field_name_cs = names::field_name(&field_name);
+                        if let Some(field_pat) = field.pat() {
+                            code!(
+                                format("{field_name_cs}: "),
+                                self.emit_pattern_ast(&field_pat)
+                            )
+                        } else {
+                            eprintln!(
+                                "Unable to create variable from field in pattern: {}",
+                                self.expr_location_ast(pat)
+                            );
+                            code!(format("{field_name_cs}: var /*unresolved*/"), field_name)
+                        }
+                    });
+                    code!(cs_type_name, "{", join(pattern_codes, ","), "}")
                 }
             }
-            _ => "true".into(),
+            ast::Pat::LiteralPat(literal_pat) => {
+                self.emit_expr_str_ast(&ast::Expr::Literal(literal_pat.literal().unwrap()))
+            }
+            ast::Pat::OrPat(or_pat) => {
+                let parts = or_pat.pats().map(|p| self.emit_pattern_ast(&p));
+                code!("(", join(parts, " or "), ")")
+            }
+            ast::Pat::TuplePat(tuple_pat) => {
+                let type_ = self.sem.type_of_pat(&pat).unwrap();
+                let field_count = type_.original.tuple_fields(self.db).len();
+                let pattern_codes = self.resolve_tuple_like_struct(
+                    field_count,
+                    &tuple_pat.fields().collect::<Vec<_>>(),
+                );
+
+                code!("(", join(pattern_codes, ","), ")")
+            }
+            pat => {
+                eprintln!(
+                    "Unsupported pattern {pat:?} at {}",
+                    self.expr_location_ast(pat)
+                );
+                code!("Unknown")
+            }
         }
     }
 
-    /// Emit variable binding statements for a pattern matched against a scrutinee.
-    fn emit_pat_bindings_ast(&mut self, out: &mut Code, scrutinee: &Code, pat: &ast::Pat) {
-        match pat {
-            ast::Pat::IdentPat(ident_pat)
-                if let Some(_) = self.sem.resolve_bind_pat_to_const(ident_pat) =>
-            {
-                // nothing to do
+    fn resolve_tuple_like_struct(
+        &mut self,
+        field_count: usize,
+        patterns: &[ast::Pat],
+    ) -> Vec<Code> {
+        if matches!(patterns, [ast::Pat::RestPat(_)]) {
+            vec![code!("_"); field_count]
+        } else if let Some(position) = patterns
+            .iter()
+            .position(|p| matches!(p, ast::Pat::RestPat(_)))
+        {
+            let prefix = &patterns[..position];
+            let suffix = &patterns[(position + 1)..];
+            let mut pattern_codes = vec![code!("_"); field_count];
+            for (pat, code) in prefix.iter().zip(pattern_codes.iter_mut()) {
+                *code = self.emit_pattern_ast(pat);
             }
-            ast::Pat::IdentPat(ident_pat) => {
-                let Some(local) = self.sem.to_def(ident_pat) else {
-                    panic!("Ident Pat has no Local")
-                };
-
-                let cs_name = self.alloc_binding_ast(&local);
-                let cs_type = self.rust_type_to_cs(&local.ty(self.db));
-                out.w("var ")
-                    .w(cs_name)
-                    .w(" = new r2CsRuntime.Slot<")
-                    .w(cs_type)
-                    .w(">(")
-                    .w(scrutinee)
-                    .wln(");");
-                if let Some(sub) = ident_pat.pat() {
-                    self.emit_pat_bindings_ast(out, scrutinee, &sub);
-                }
-            }
-            ast::Pat::TupleStructPat(tuple_pat) => {
-                if let p = tuple_pat.path().unwrap() {
-                    let segs: Vec<String> = p
-                        .segments()
-                        .map(|s| s.name_ref().unwrap().text().as_str().to_string())
-                        .collect();
-                    let variant = segs.last().unwrap_or(&"Unknown".to_string()).clone();
-                    let cs_variant = names::variant_name(&variant);
-                    let tmp = format!("__ts_{}", cs_variant);
-                    out.w("var ")
-                        .w(&tmp)
-                        .w(" = (")
-                        .w(cs_variant)
-                        .w(") ")
-                        .w(scrutinee)
-                        .wln(";");
-                    for (i, sub_pat) in tuple_pat.fields().enumerate() {
-                        let sub_scrutinee = format!("{}.f_{}.value", tmp, i);
-                        self.emit_pat_bindings_ast(out, &sub_scrutinee.into(), &sub_pat);
-                    }
-                }
-            }
-            ast::Pat::RecordPat(tuple_pat) => {
-                if let p = tuple_pat.path().unwrap() {
-                    let segs: Vec<String> = p
-                        .segments()
-                        .map(|s| s.name_ref().unwrap().text().as_str().to_string())
-                        .collect();
-                    let variant = segs.last().unwrap_or(&"Unknown".to_string()).clone();
-                    let cs_variant = names::variant_name(&variant);
-                    let tmp = format!("__ts_{}", cs_variant);
-                    out.w("var ")
-                        .w(&tmp)
-                        .w(" = (")
-                        .w(cs_variant)
-                        .w(") ")
-                        .w(scrutinee)
-                        .wln(";");
-                    for (i, sub_pat) in tuple_pat
-                        .record_pat_field_list()
-                        .unwrap()
-                        .fields()
-                        .enumerate()
-                    {
-                        let sub_scrutinee = format!("{}.f_{}.value", tmp, i);
-                        self.emit_pat_bindings_ast(
-                            out,
-                            &sub_scrutinee.into(),
-                            &sub_pat.pat().unwrap(),
-                        );
-                    }
-                }
+            for (pat, code) in suffix.iter().rev().zip(pattern_codes.iter_mut().rev()) {
+                *code = self.emit_pattern_ast(pat);
             }
 
-            ast::Pat::TupleStructPat(tuple_pat) => {
-                for (i, sub_pat) in tuple_pat.fields().enumerate() {
-                    let sub_scrutinee = code!(scrutinee, ".Item", i + 1);
-                    self.emit_pat_bindings_ast(out, &sub_scrutinee, &sub_pat);
-                }
-            }
-            _ => {}
+            pattern_codes
+        } else {
+            let pattern_codes = patterns
+                .iter()
+                .enumerate()
+                .map(|(indeex, pat)| self.emit_pattern_ast(pat));
+            pattern_codes.collect::<Vec<_>>()
         }
     }
 
