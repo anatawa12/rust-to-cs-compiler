@@ -1,3 +1,4 @@
+use crate::codegen::CodeGenerator;
 /// Naming convention helpers for Rust → C# name mangling.
 use std::collections::HashMap;
 
@@ -88,6 +89,16 @@ pub fn camel(s: &str) -> String {
                 .collect();
             format!("{}{}", first, rest)
         }
+    }
+}
+
+impl CodeGenerator<'_> {
+    pub fn field_name(&self, field: &hir::Field) -> String {
+        field_name(field.name(self.db).as_str())
+    }
+
+    pub fn function_name(&self, function: &hir::Function) -> String {
+        method_name(function.name(self.db).as_str())
     }
 }
 

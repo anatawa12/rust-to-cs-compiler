@@ -3,34 +3,24 @@ use std::collections::HashMap;
 
 use super::{CodeGenerator, names, output::Code};
 use crate::codegen::ty::Constructable;
-use hir::{AssocItem, Body, Local, PathKind, StructKind};
-use hir_def::expr_store::BodySourceMap;
-use hir_def::expr_store::scope::ExprScopes;
-use hir_def::resolver::{ResolveValueResult, TypeNs, ValueNs, resolver_for_scope};
-use hir_def::{
-    AdtId, CallableDefId, DefWithBodyId, VariantId,
-    hir::{
-        Array, BinaryOp, BindingId, Expr, ExprId, Literal, Pat, PatId, RangeOp, Statement, UnaryOp,
-    },
-};
-use hir_ty::InferenceResult;
-use hir_ty::display::HirDisplay;
-use hir_ty::next_solver::TyKind;
+use hir::next_solver::GenericArgs;
+use hir::{InFile, Local, StructKind, Variant};
+use itertools::Either;
+use syntax::ast::{self, AstNode as _, HasArgList as _, HasLoopBody as _, RangeItem as _};
+use syntax::ast::{BinaryOp, RangeOp, UnaryOp};
 
 /// Generates C# for the body of a single function.
 pub struct BodyGen<'g, 'db> {
     cg: &'g CodeGenerator<'db>,
-    body: &'db Body,
-    source_map: &'db BodySourceMap,
-    scopes: &'db ExprScopes,
-    def_id: DefWithBodyId,
-    infer: &'db InferenceResult,
     /// Mapping from Local to the C# local name allocated for it.
     locals: HashMap<Local, String>,
     /// Counter per original Rust name for uniqueness.
     name_counts: HashMap<String, usize>,
     /// Whether we're inside an async fn (controls .GetAwaiter()/.GetResult() vs await).
     is_async: bool,
+
+    // internals
+    match_index: usize,
 }
 
 impl<'g, 'db> std::ops::Deref for BodyGen<'g, 'db> {
@@ -42,208 +32,148 @@ impl<'g, 'db> std::ops::Deref for BodyGen<'g, 'db> {
 }
 
 impl<'g, 'db> BodyGen<'g, 'db> {
-    pub fn new(
-        cg: &'g CodeGenerator<'db>,
-        def_id: DefWithBodyId,
-        body: &'db Body,
-        source_map: &'db BodySourceMap,
-        is_async: bool,
-    ) -> Self {
-        let infer = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            InferenceResult::of(cg.db, def_id)
-        })) {
-            Ok(infer) => infer,
-            Err(e) => {
-                eprintln!(
-                    "processing {def_id:?} {} {}",
-                    match def_id {
-                        DefWithBodyId::FunctionId(f) => {
-                            let f = hir::Function::from(f);
-                            format!(
-                                "{} in {}",
-                                f.name(cg.db).as_str(),
-                                cg.module_class_cs(f.module(cg.db))
-                            )
-                        }
-                        DefWithBodyId::StaticId(f) =>
-                            hir::Static::from(f).name(cg.db).as_str().to_string(),
-                        DefWithBodyId::ConstId(f) => hir::Const::from(f)
-                            .name(cg.db)
-                            .as_ref()
-                            .map(|x| x.as_str())
-                            .unwrap_or("unknown")
-                            .to_string(),
-                        DefWithBodyId::VariantId(f) =>
-                            hir::EnumVariant::from(f).name(cg.db).as_str().to_string(),
-                    },
-                    source_map
-                        .expr_syntax(body.root_expr())
-                        .map(|x| cg.location_with_file(x))
-                        .unwrap_or_else(|_| "Unknown location".into())
-                );
-                std::panic::resume_unwind(e);
-            }
-        };
+    pub fn new(cg: &'g CodeGenerator<'db>, is_async: bool) -> Self {
         Self {
             cg,
-            body,
-            source_map,
-            scopes: ExprScopes::of(cg.db, def_id),
-            def_id,
-            infer,
             locals: HashMap::new(),
             name_counts: HashMap::new(),
             is_async,
+            match_index: 0,
         }
     }
 
-    pub fn expr_location(&self, expr_id: ExprId) -> String {
-        self.source_map
-            .expr_syntax(expr_id)
-            .map(|x| self.location_with_file(x))
-            .unwrap_or_else(|_| "Unknown location".into())
+    pub fn expr_location_ast(&self, expr: &impl ast::AstNode) -> String {
+        let node = expr.syntax();
+        self.location_with_file(InFile::new(self.sem.hir_file_for(node), node.clone()))
     }
 
-    pub fn source(&self, expr_id: ExprId) -> &str {
-        self.source_map
-            .expr_syntax(expr_id)
-            .map(|f| {
-                let loc = self
-                    .sem
-                    .diagnostics_display_range(f.map(|x| x.syntax_node_ptr()));
-                &self.db.file_text(loc.file_id).text(self.db)[loc.range]
-            })
-            .unwrap_or("Unknown location")
-    }
-
-    fn alloc_binding(&mut self, id: BindingId) -> String {
-        let rust_name = self.body[id].name.as_str().to_string();
+    fn alloc_binding_ast(&mut self, local: &Local) -> String {
+        let rust_name = local.name(self.db).as_str().to_string();
         let count = self.name_counts.entry(rust_name.clone()).or_insert(0);
         let cs_name = names::local_name(&rust_name, *count);
         *count += 1;
-        self.locals
-            .insert((self.def_id, id).into(), cs_name.clone());
+        self.locals.insert(local.clone(), cs_name.clone());
         cs_name
     }
 
-    fn binding_name(&self, id: BindingId) -> String {
+    fn binding_name_ast(&self, local: hir::Local) -> String {
         self.locals
-            .get(&Local::from((self.def_id, id)))
+            .get(&local)
             .cloned()
-            .unwrap_or_else(|| format!("/* unbound {:?} */unknown", id))
+            .unwrap_or_else(|| format!("/* unbound {:?} */unknown", local))
     }
 
-    fn binding_cs_type(&self, id: BindingId) -> String {
-        let local = Local::from((self.def_id, id));
-        let local_ty = local.ty(self.db);
-        let cs = self.rust_type_to_cs(&local_ty);
-        if cs == "void" {
-            "object".to_string()
-        } else {
-            cs
-        }
+    fn label_name(&self, l: ast::Lifetime) -> String {
+        names::camel(l.text().as_str())
     }
 
     /// Emit the full function body block.
-    pub fn emit_body(&mut self, out: &mut Code) {
-        if let Some(self_id) = self.body.self_param {
+    pub fn emit_function_body(&mut self, f: ast::Fn, out: &mut Code) {
+        let params = f.param_list().unwrap();
+        if let Some(self_param) = params.self_param() {
             self.locals
-                .insert(Local::from((self.def_id, self_id)), "this".into());
+                .insert(self.sem.to_def(&self_param).unwrap(), "this".into());
         }
-        for &x in &self.body.params {
-            match self.body[x] {
-                Pat::Bind { id, subpat } => {
-                    self.alloc_binding(id);
+        for param in params.params() {
+            match param.pat().unwrap() {
+                ast::Pat::IdentPat(ident) if let Some(local) = self.sem.to_def(&ident) => {
+                    self.alloc_binding_ast(&local);
                 }
-                Pat::Missing => {}
-                Pat::Wild => {}
-                Pat::Tuple { .. } => {}
-                Pat::Or(_) => {}
-                Pat::Record { .. } => {}
-                Pat::Range { .. } => {}
-                Pat::Slice { .. } => {}
-                Pat::Path(_) => {}
-                Pat::Lit(_) => {}
-                Pat::TupleStruct { .. } => {}
-                Pat::Ref { .. } => {}
-                Pat::Box { .. } => {}
-                Pat::ConstBlock(_) => {}
-                Pat::Expr(_) => {}
-                Pat::Rest => {}
+                _ => {
+                    // TODO
+                }
             }
         }
-        let root = self.body.root_expr();
-        self.emit_expr_as_stmt(out, root, true);
+        if let Some(body) = f.body() {
+            self.emit_expr_as_stmt_ast(out, ast::Expr::BlockExpr(body), true);
+        } else {
+            out.wln("throw new System.NotImplementedException(\"builtin-derive\");");
+        }
     }
 
     /// Emit an expression as a statement (with semicolon if needed).
-    fn emit_expr_as_stmt(&mut self, out: &mut Code, expr_id: ExprId, is_tail: bool) {
-        let expr = &self.body[expr_id];
+    fn emit_expr_as_stmt_ast(&mut self, out: &mut Code, expr: ast::Expr, is_tail: bool) {
         match expr {
-            Expr::Block {
-                statements, tail, ..
-            } => {
-                self.emit_block_contents(out, statements, *tail, is_tail);
+            ast::Expr::BlockExpr(block_expr) => {
+                let statements = block_expr.statements();
+                let tail = block_expr.tail_expr();
+                self.emit_block_contents(out, statements, tail, is_tail);
             }
-            Expr::Return { expr: ret_expr } => {
+            ast::Expr::ReturnExpr(ret_expr) => {
                 let val = ret_expr
-                    .map(|e| self.emit_expr_str(e))
+                    .expr()
+                    .map(|e| self.emit_expr_str_ast(&e))
                     .unwrap_or_else(|| "0".into());
                 out.w("return ").w(val).wln(";");
             }
-            Expr::If {
-                condition,
-                then_branch,
-                else_branch,
-            } => {
-                let cond = self.emit_expr_str(*condition);
+            ast::Expr::IfExpr(if_expr) => {
+                let condition = if_expr.condition().unwrap();
+                let then_branch = if_expr.then_branch().unwrap();
+                let else_branch = if_expr.else_branch();
+
+                let cond = self.emit_expr_str_ast(&condition);
                 out.w("if (").w(cond).wln(") {");
                 out.indent();
-                self.emit_expr_as_stmt(out, *then_branch, false);
+                self.emit_expr_as_stmt_ast(out, then_branch.into(), false);
                 out.dedent();
-                if let Some(else_e) = else_branch {
-                    out.w("} else {");
-                    out.wln("");
-                    out.indent();
-                    self.emit_expr_as_stmt(out, *else_e, is_tail);
-                    out.dedent();
-                    out.wln("}");
-                } else {
-                    out.wln("}");
+                match else_branch {
+                    Some(ast::ElseBranch::IfExpr(else_if)) => {
+                        out.w("} else ");
+                        self.emit_expr_as_stmt_ast(out, else_if.into(), is_tail);
+                    }
+                    Some(ast::ElseBranch::Block(else_e)) => {
+                        out.w("} else {");
+                        out.wln("");
+                        out.indent();
+                        self.emit_expr_as_stmt_ast(out, else_e.into(), is_tail);
+                        out.dedent();
+                        out.wln("}");
+                    }
+                    None => {}
                 }
             }
-            Expr::Loop { body, label } => {
+            ast::Expr::LoopExpr(loop_expr) => {
+                let label = loop_expr.label();
+                let body = loop_expr.loop_body().unwrap();
+
                 let label_str = label
                     .map(|l| {
-                        let lbl = &self.body[l];
-                        format!("{}: ", names::camel(lbl.name.as_str()))
+                        // TODO?: Should we strip '\''?
+                        format!("{}: ", self.label_name(l.lifetime().unwrap()))
                     })
                     .unwrap_or_default();
                 out.wln(&format!("{}while (true) {{", label_str));
                 out.indent();
-                self.emit_expr_as_stmt(out, *body, false);
+                self.emit_expr_as_stmt_ast(out, body.into(), false);
                 out.dedent();
                 out.wln("}");
             }
-            Expr::Match {
-                expr: match_expr,
-                arms,
-            } => {
-                let scrutinee = self.emit_expr_str(*match_expr);
+            // TODO? While and For
+            ast::Expr::MatchExpr(match_expr) => {
+                // TODO: replace with switch implementation
+                let arms = match_expr.match_arm_list().unwrap();
+                let match_expr = match_expr.expr().unwrap();
+                let scrutinee = self.emit_expr_str_ast(&match_expr);
+                self.match_index += 1;
                 out.w("var __match_")
-                    .w(match_expr.into_raw().into_u32())
+                    .w(self.match_index)
                     .w(" = ")
                     .w(scrutinee)
                     .wln(";");
-                let tmp = format!("__match_{:?}", match_expr.into_raw()).into();
-                for (i, arm) in arms.iter().enumerate() {
-                    let is_last = i == arms.len() - 1;
+                let tmp = format!("__match_{:?}", self.match_index).into();
+                for (i, arm) in arms.arms().enumerate() {
                     let kw = if i == 0 { "if" } else { "else if" };
                     // Emit pattern check
-                    let pat_check = self.emit_pat_check(&tmp, arm.pat);
+                    let pat_check = self.emit_pat_check_ast(&tmp, &arm.pat().unwrap());
                     let guard_str = arm
-                        .guard
-                        .map(|g| code!(" && (", self.emit_expr_str(g), ")"))
+                        .guard()
+                        .map(|g| {
+                            code!(
+                                " && (",
+                                self.emit_expr_str_ast(&g.condition().unwrap()),
+                                ")"
+                            )
+                        })
                         .unwrap_or_default();
                     if pat_check == "true".into() && guard_str.is_empty() {
                         out.wln("{");
@@ -252,47 +182,38 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     }
                     out.indent();
                     // Bind pattern variables
-                    self.emit_pat_bindings(out, &tmp, arm.pat);
+                    self.emit_pat_bindings_ast(out, &tmp, &arm.pat().unwrap());
                     // Emit arm body
-                    self.emit_expr_as_stmt(out, arm.expr, is_tail);
+                    self.emit_expr_as_stmt_ast(out, arm.expr().unwrap(), is_tail);
                     out.dedent();
                     out.w("}");
-                    if !is_last {
-                        out.wln("");
-                    } else {
-                        out.wln("");
-                    }
+                    out.wln("");
                 }
             }
-            Expr::Break {
-                expr: break_expr,
-                label,
-            } => {
+            ast::Expr::BreakExpr(break_expr) => {
+                let label = break_expr.lifetime();
+                let break_expr = break_expr.expr();
+
                 let label_str = label
-                    .map(|l| {
-                        let lbl = &self.body[l];
-                        format!(" {}", names::camel(lbl.name.as_str()))
-                    })
+                    .map(|l| format!(" {}", self.label_name(l)))
                     .unwrap_or_default();
-                if let &Some(e) = break_expr {
-                    let val = self.emit_expr_str(e);
+                if let Some(e) = break_expr {
+                    let val = self.emit_expr_str_ast(&e);
                     out.w("/* break ").w(val).wln(" */"); // TODO: break-with-value
                 } else {
                     out.wln(&format!("break{};", label_str));
                 }
             }
-            Expr::Continue { label } => {
+            ast::Expr::ContinueExpr(continue_expr) => {
+                let label = continue_expr.lifetime();
                 let label_str = label
-                    .map(|l| {
-                        let lbl = &self.body[l];
-                        format!(" {}", names::camel(lbl.name.as_str()))
-                    })
+                    .map(|l| format!(" {}", self.label_name(l)))
                     .unwrap_or_default();
                 out.wln(&format!("continue{};", label_str));
             }
             _ => {
                 // Generic expression: emit as expression statement
-                let s = self.emit_expr_str(expr_id);
+                let s = self.emit_expr_str_ast(&expr);
                 if !s.is_empty() && s != "()".into() {
                     out.w(s).wln(";");
                 }
@@ -303,26 +224,27 @@ impl<'g, 'db> BodyGen<'g, 'db> {
     fn emit_block_contents(
         &mut self,
         out: &mut Code,
-        statements: &[Statement],
-        tail: Option<ExprId>,
+        statements: impl IntoIterator<Item = ast::Stmt>,
+        tail: Option<ast::Expr>,
         is_tail: bool,
     ) {
         for stmt in statements {
             match stmt {
-                Statement::Let {
-                    pat,
-                    type_ref: _,
-                    initializer,
-                    else_branch,
-                } => {
-                    let bindings = self.collect_bindings_in_pat(*pat);
+                ast::Stmt::LetStmt(let_stmt) => {
+                    let pat = let_stmt.pat().unwrap();
+                    let _type_ref = let_stmt.ty();
+                    let initializer = let_stmt.initializer();
+                    let else_branch = let_stmt.let_else().and_then(|x| x.block_expr());
 
+                    let bindings = self.collect_bindings_in_pat_ast(&pat);
+
+                    //*
                     if let Some(init) = initializer {
-                        let init_str = self.emit_expr_str(*init);
+                        let init_str = self.emit_expr_str_ast(&init);
                         if bindings.len() == 1 {
                             let bid = bindings[0];
-                            let cs_type = self.binding_cs_type(bid);
-                            let cs_name = self.alloc_binding(bid);
+                            let cs_name = self.alloc_binding_ast(&bid);
+                            let cs_type = self.rust_type_to_cs(&bid.ty(self.db));
                             out.w("var ")
                                 .w(cs_name)
                                 .w(" = new r2CsRuntime.Slot<")
@@ -333,13 +255,14 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         } else if bindings.is_empty() {
                             out.w(init_str).wln(";");
                         } else {
-                            let tmp = format!("__tmp_{:?}", pat.into_raw());
+                            self.match_index += 1;
+                            let tmp = format!("__tmp_{:?}", self.match_index);
                             out.w("var ").w(&tmp).w(" = ").w(init_str).wln(";");
                             for b in &bindings {
-                                let cs_type = self.binding_cs_type(*b);
-                                let cs_name = self.alloc_binding(*b);
-                                let rust_name = self.body[*b].name.as_str().to_string();
-                                out.wln(&format!(
+                                let cs_type = self.rust_type_to_cs(&b.ty(self.db));
+                                let cs_name = self.alloc_binding_ast(&b);
+                                let rust_name = b.name(self.db).as_str().to_string();
+                                out.wln(format!(
                                     "var {} = new r2CsRuntime.Slot<{}>({}.{});",
                                     cs_name,
                                     cs_type,
@@ -350,9 +273,9 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         }
                     } else {
                         for b in &bindings {
-                            let cs_type = self.binding_cs_type(*b);
-                            let cs_name = self.alloc_binding(*b);
-                            out.wln(&format!(
+                            let cs_type = self.rust_type_to_cs(&b.ty(self.db));
+                            let cs_name = self.alloc_binding_ast(&b);
+                            out.wln(format!(
                                 "var {} = new r2CsRuntime.Slot<{}>(default!);",
                                 cs_name, cs_type
                             ));
@@ -363,15 +286,15 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         out.wln("// let-else not fully supported");
                     }
                 }
-                Statement::Expr { expr, has_semi: _ } => {
-                    self.emit_expr_as_stmt(out, *expr, false);
+                ast::Stmt::ExprStmt(expr_stmt) => {
+                    self.emit_expr_as_stmt_ast(out, expr_stmt.expr().unwrap(), false);
                 }
-                Statement::Item(_) => {}
+                ast::Stmt::Item(_) => {}
             }
         }
 
         if let Some(tail_expr) = tail {
-            let tail_str = self.emit_expr_str(tail_expr);
+            let tail_str = self.emit_expr_str_ast(&tail_expr);
             if is_tail {
                 if tail_str != "()".into() && !tail_str.is_empty() {
                     out.w("return ").w(&tail_str).wln(";");
@@ -382,98 +305,117 @@ impl<'g, 'db> BodyGen<'g, 'db> {
         }
     }
 
-    /// Emit an expression as a string (inline expression).
-    pub fn emit_expr_str(&mut self, expr_id: ExprId) -> Code {
-        let expr = &self.body[expr_id].clone(); // clone to avoid borrow conflict
+    pub fn emit_expr_str_ast(&mut self, expr: &ast::Expr) -> Code {
         match expr {
-            Expr::Missing => "/* missing */default!".into(),
-            Expr::Literal(lit) => self.emit_literal(lit),
-            Expr::Path(path) if true => {
-                let resolver =
-                    resolver_for_scope(self.db, self.def_id, self.scopes.scope_for(expr_id));
-                let infer = self.infer.expr_ty(expr_id);
-                match resolver.resolve_path_in_value_ns_with_prefix_info(
-                    self.db,
-                    path,
-                    self.body.expr_or_pat_path_hygiene(expr_id.into()),
-                ) {
-                    Some((_, _)) if let TyKind::FnDef(f, generic) = infer.inner().internee => {
-                        match f.0 {
-                            CallableDefId::FunctionId(f) => {
-                                self.fn_path_cs(hir::Function::from(f)).into()
-                            }
-                            CallableDefId::StructId(s) => {
+            //Expr::Missing => "/* missing */default!".into(),
+            ast::Expr::Literal(lit) => self.emit_literal_ast(&lit),
+            ast::Expr::PathExpr(path) => {
+                match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    self.sem.resolve_path(&path.path().unwrap())
+                })) {
+                    Ok(None) => {
+                        eprintln!(
+                            "Unresolved Path at {loc}",
+                            loc = self.expr_location_ast(expr),
+                        );
+                        fcode!("/* {} */", path.syntax().text().to_string())
+                    }
+                    Ok(Some(hir::PathResolution::Def(hir::ModuleDef::Function(f)))) => {
+                        self.fn_path_cs(f).into()
+                    }
+                    Ok(Some(hir::PathResolution::Def(hir::ModuleDef::Adt(adt)))) => {
+                        // TODO: Generic Args
+                        fcode!("new {}", self.rust_type_to_cs(&adt.ty(self.db)))
+                    }
+                    Ok(Some(hir::PathResolution::SelfType(impl_))) => {
+                        eprintln!("ImplSelf at {}", self.expr_location_ast(expr));
+                        "(ImplSelf)".into()
+                    }
+                    Ok(Some(hir::PathResolution::Local(local))) => {
+                        self.binding_name_ast(local).into()
+                    }
+                    //Ok(Some(hir::PathResolution::Def(hir::ModuleDef::Function(function)))) => { // handled above
+                    //    self.fn_path_cs(function).into()
+                    //}
+                    Ok(Some(hir::PathResolution::Def(hir::ModuleDef::Const(const_)))) => {
+                        self.const_path_cs(const_).into()
+                    }
+                    Ok(Some(hir::PathResolution::Def(hir::ModuleDef::Static(static_)))) => {
+                        let mut path = self.module_class_cs(static_.module(self.db));
+                        path.push('.');
+                        path.push_str(static_.name(self.db).as_str());
+                        path.into()
+                    }
+                    //Ok(Some(hir::PathResolution::Def(hir::ModuleDef::Adt(hir::Adt::Enum(enum_))))) => {} // handled above
+                    /*
+                    Ok(Some(hir::PathResolution::Def(hir::ModuleDef::EnumVariant(variant)))) => {
+                        // TODO: Generic Args
+                        fcode!(
+                            "new {}",
+                            self.enum_variant_cs1(
+                                variant,
+                                GenericArgs::error_for_item(
+                                    self.interner,
+                                    hir_def::EnumVariantId::from(variant).into()
+                                )
+                            )
+                        )
+                    }
+                     */
+                    Ok(Some(hir::PathResolution::Def(hir::ModuleDef::EnumVariant(variant)))) => {
+                        // TODO: Generic Args
+                        match variant.kind(self.db) {
+                            StructKind::Unit => {
                                 fcode!(
-                                    "new {}",
-                                    self.rust_type_to_cs(
-                                        &self
-                                            .adt_with_generic(hir::Struct::from(s).into(), generic)
+                                    "{}.instance",
+                                    self.enum_variant_cs1(
+                                        variant,
+                                        GenericArgs::empty(self.interner) // GenericArgs::error_for_item(self.interner,hir_def::EnumVariantId::from(variant).into())
                                     )
                                 )
                             }
-                            CallableDefId::EnumVariantId(v) => {
+                            StructKind::Tuple => {
                                 fcode!(
                                     "new {}",
-                                    self.enum_variant_cs1(hir::EnumVariant::from(v), generic)
+                                    self.enum_variant_cs1(
+                                        variant,
+                                        GenericArgs::empty(self.interner) //GenericArgs::error_for_item(self.interner,hir_def::EnumVariantId::from(variant).into())
+                                    )
+                                )
+                            }
+                            kind => {
+                                eprintln!(
+                                    "Unexpected struct kind and infer for enum variant path at {loc}\n\
+                                        \tkind: {kind:?}",
+                                    loc = self.expr_location_ast(path),
+                                    //type = self.new_type(infer).display(
+                                    //    self.db,
+                                    //    self.krate.to_display_target(self.db)
+                                    //)
+                                );
+
+                                fcode!(
+                                    "new /* unexpected struct kind and infer */ {}",
+                                    self.enum_variant_cs(variant)
                                 )
                             }
                         }
                     }
-                    Some((ResolveValueResult::ValueNs(value_ns), _)) => match value_ns {
-                        ValueNs::ImplSelf(_) => {
-                            eprintln!("ImplSelf at {}", self.expr_location(expr_id));
-                            "(ImplSelf)".into()
-                        }
-                        ValueNs::LocalBinding(binding) => self.binding_name(binding).into(),
-                        ValueNs::FunctionId(f) => self.fn_path_cs(hir::Function::from(f)).into(),
-                        ValueNs::ConstId(c) => self.const_path_cs(hir::Const::from(c)).into(),
-                        ValueNs::StaticId(s) => {
-                            let c = hir::Static::from(s);
-                            let mut path = self.module_class_cs(c.module(self.db));
-                            path.push('.');
-                            path.push_str(c.name(self.db).as_str());
-                            path.into()
-                        }
-                        ValueNs::StructId(s) => {
-                            format!("new {}", self.adt_name_cs(hir::Struct::from(s).into())).into()
-                        }
-                        ValueNs::EnumVariantId(v) => {
-                            let variant = hir::EnumVariant::from(v);
-                            match variant.kind(self.db) {
-                                StructKind::Unit
-                                    if let TyKind::Adt(d, generic) = infer.inner().internee
-                                        && let AdtId::EnumId(e) = d.def_id()
-                                        && e == variant.parent_enum(self.db).into() =>
-                                {
-                                    fcode!(
-                                        "{}.instance",
-                                        self.enum_variant_cs1(hir::EnumVariant::from(v), generic)
-                                    )
-                                }
-                                kind => {
-                                    eprintln!(
-                                        "Unexpected struct kind and infer for enum variant path at {loc}\n\
-                                        \tkind: {kind:?}\n\
-                                        \ttype: {type}",
-                                        loc = self.expr_location(expr_id),
-                                        type = self.new_type(infer).display(
-                                            self.db,
-                                            self.krate.to_display_target(self.db)
-                                        )
-                                    );
+                    Ok(Some(hir::PathResolution::TypeParam(param))) => {
+                        eprintln!("GenericParam at {}", self.expr_location_ast(expr));
+                        "(GenericParam)".into()
+                    }
 
-                                    fcode!(
-                                        "new /* unexpected struct kind and infer */ {}",
-                                        self.enum_variant_cs(hir::EnumVariant::from(v))
-                                    )
-                                }
-                            }
-                        }
-                        ValueNs::GenericParam(_) => {
-                            eprintln!("GenericParam at {}", self.expr_location(expr_id));
-                            "(GenericParam)".into()
-                        }
-                    },
+                    //Ok(Some(hir::PathResolution::Def(hir::ModuleDef::EnumVariant(variant)))) => {}
+                    Ok(Some(resolved)) => {
+                        eprintln!(
+                            "Path at {loc}: {resolved:?}",
+                            loc = self.expr_location_ast(expr),
+                        );
+                        fcode!("/* {} */", path.syntax().text().to_string())
+                    }
+                    /*
+
                     Some((
                         ResolveValueResult::Partial(
                             ty @ (TypeNs::AdtId(_) | TypeNs::BuiltinType(_) | TypeNs::SelfType(_)),
@@ -527,72 +469,77 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         eprintln!("Failed to resolve path at {}", self.expr_location(expr_id));
                         "(UnknownPath)".into()
                     }
-                }
-            }
-            Expr::Path(path) => match path {
-                _ if let PathKind::Super(0) = path.kind()
-                    && path.segments().is_empty() =>
-                {
-                    "this".into()
-                }
-                path => {
-                    let segments: Vec<String> = path
-                        .segments()
-                        .iter()
-                        .map(|s| s.name.as_str().to_string())
-                        .collect();
-                    if segments.len() == 1 {
-                        let name = &segments[0];
-                        if let Some(cs_name) = self.find_local_by_rust_name(name) {
-                            return fcode!("{}.value", cs_name);
-                        }
-                        names::method_name(name).into()
-                    } else if segments.is_empty() {
-                        eprintln!("empty path: {path:?}");
-                        "/* empty path */default!".into()
-                    } else {
-                        let last = segments.last().unwrap();
-                        let rest = &segments[..segments.len() - 1];
-                        fcode!("{}.{}", rest.join("."), names::method_name(last))
+                     */
+                    Err(panic) => {
+                        eprintln!(
+                            "Path at {loc}: {panic:?}",
+                            loc = self.expr_location_ast(expr),
+                        );
+                        std::panic::resume_unwind(panic);
                     }
                 }
-            },
-            Expr::Field {
-                expr: field_expr,
-                name,
-            } => {
-                let receiver = self.emit_expr_str(*field_expr);
-                code!(receiver, ".", names::field_name(name.as_str()), ".value")
             }
-            Expr::MethodCall {
-                receiver,
-                method_name,
-                args,
-                ..
-            } => {
-                let recv_str = self.emit_expr_str(*receiver);
-                let method_cs = names::method_name(method_name.as_str());
-                let args_str = args.iter().map(|&a| self.emit_expr_str(a));
-                code!(recv_str, ".", method_cs, "(", join(args_str, ", "), ")")
+            ast::Expr::FieldExpr(field_expr) => {
+                let name = field_expr.name_ref().unwrap();
+                let receiver_part = field_expr.expr().unwrap();
+                let receiver = self.emit_expr_str_ast(&receiver_part);
+                match self.sem.resolve_field(&field_expr) {
+                    None => {
+                        eprintln!("Unresolved field at {}", self.expr_location_ast(field_expr));
+                        code!(receiver, "./* unresolved field */.value")
+                    }
+                    Some(Either::Left(field)) => {
+                        code!(receiver, ".", self.field_name(&field), ".value")
+                    }
+                    Some(Either::Right(field)) => {
+                        code!(receiver, ".", field.index + 1)
+                    }
+                }
             }
-            Expr::Call { callee, args } => {
-                // Detect tuple-struct / enum-variant constructor calls
-                //if let Some(variant_id) = self.infer.variant_resolution_for_expr(*callee) {
-                //    let args_clone: Vec<ExprId> = args.iter().copied().collect();
-                //    return self.emit_constructor_call(variant_id, &args_clone);
-                //}
-                let callee_str = self.emit_expr_str(*callee);
-                let args_str = args.iter().map(|&a| self.emit_expr_str(a));
+            ast::Expr::MethodCallExpr(method_call) => {
+                let receiver = self.emit_expr_str_ast(&method_call.receiver().unwrap());
+                match self.sem.resolve_method_call(method_call) {
+                    Some(resolved) => {
+                        let method_cs = self.function_name(&resolved);
+                        let args = method_call
+                            .arg_list()
+                            .unwrap()
+                            .args()
+                            .map(|a| self.emit_expr_str_ast(&a));
+                        code!(receiver, ".", method_cs, "(", join(args, ", "), ")")
+                    }
+                    None => {
+                        eprintln!(
+                            "Unresolved method call at {}",
+                            self.expr_location_ast(method_call)
+                        );
+                        let method_cs = method_call.name_ref().unwrap().text().as_str().to_string();
+                        let args = method_call
+                            .arg_list()
+                            .unwrap()
+                            .args()
+                            .map(|a| self.emit_expr_str_ast(&a));
+                        code!(receiver, ".", method_cs, "(", join(args, ", "), ")")
+                    }
+                }
+            }
+            ast::Expr::CallExpr(call_expr) => {
+                let callee_str = self.emit_expr_str_ast(&call_expr.expr().unwrap());
+                let args_str = call_expr
+                    .arg_list()
+                    .unwrap()
+                    .args()
+                    .map(|a| self.emit_expr_str_ast(&a));
                 code!(callee_str, "(", join(args_str, ", "), ")")
             }
-            Expr::Await { expr: inner } => {
-                let inner_str = self.emit_expr_str(*inner);
+            ast::Expr::AwaitExpr(await_expr) => {
+                let inner_str = self.emit_expr_str_ast(&await_expr.expr().unwrap());
                 code!("(await ", inner_str, ")")
             }
-            Expr::BinaryOp { lhs, rhs, op } => {
-                let lhs_str = self.emit_expr_str(*lhs);
-                let rhs_str = self.emit_expr_str(*rhs);
-                let op_str = match op {
+            ast::Expr::BinExpr(bin_expr) => {
+                let lhs_code = self.emit_expr_str_ast(&bin_expr.lhs().unwrap());
+                let rhs_code = self.emit_expr_str_ast(&bin_expr.rhs().unwrap());
+                let op_str = match bin_expr.op_kind() {
                     None => "/* op= */ =".to_string(),
                     Some(BinaryOp::ArithOp(a)) => format!("{:?}", a)
                         .to_lowercase()
@@ -645,124 +592,106 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         .replace("div", "/=")
                         .replace("rem", "%="),
                 };
-                code!("(", lhs_str, " ", op_str, " ", rhs_str, ")")
+                code!("(", lhs_code, " ", op_str, " ", rhs_code, ")")
             }
-            Expr::Assignment { target, value } => {
-                let target_str = self.emit_pat_as_lvalue(*target);
-                let value_str = self.emit_expr_str(*value);
-                code!(target_str, " = ", value_str)
-            }
-            Expr::UnaryOp { expr: inner, op } => {
-                let inner_str = self.emit_expr_str(*inner);
-                let op_str = match op {
+            //Expr::Assignment { target, value } => {
+            //    let target_str = self.emit_pat_as_lvalue(*target);
+            //    let value_str = self.emit_expr_str(*value);
+            //    code!(target_str, " = ", value_str)
+            //}
+            ast::Expr::PrefixExpr(prefix_expr) => {
+                let inner_str = self.emit_expr_str_ast(&prefix_expr.expr().unwrap());
+                match prefix_expr.op_kind().unwrap() {
                     UnaryOp::Deref => code!("(*", inner_str, ")"),
                     UnaryOp::Not => code!("!(", inner_str, ")"),
                     UnaryOp::Neg => code!("-(", inner_str, ")"),
-                };
-                op_str
-            }
-            Expr::Ref { expr: inner, .. } => self.emit_expr_str(*inner),
-            Expr::Box { expr: inner } => self.emit_expr_str(*inner),
-            Expr::Cast { expr: inner, .. } => {
-                code!("(/* cast */) ", self.emit_expr_str(*inner))
-            }
-            Expr::If {
-                condition,
-                then_branch,
-                else_branch,
-            } => {
-                if let Some(else_e) = else_branch {
-                    let cond = self.emit_expr_str(*condition);
-                    let then_s = self.emit_expr_str(*then_branch);
-                    let else_s = self.emit_expr_str(*else_e);
-                    code!("(", cond, " ? ", then_s, " : ", else_s, ")")
-                } else {
-                    let cond = self.emit_expr_str(*condition);
-                    code!("/* if expr */ ", cond)
                 }
             }
-            Expr::Block {
-                statements, tail, ..
-            } => {
-                if statements.is_empty() {
-                    if let &Some(t) = tail {
-                        return self.emit_expr_str(t);
+            ast::Expr::RefExpr(ref_expr) => self.emit_expr_str_ast(&ref_expr.expr().unwrap()),
+            //Expr::Box { expr: inner } => self.emit_expr_str(*inner),
+            ast::Expr::CastExpr(cast_expr) => {
+                code!(
+                    "(/* cast */) ",
+                    self.emit_expr_str_ast(&cast_expr.expr().unwrap())
+                )
+            }
+            ast::Expr::IfExpr(if_expr) => match if_expr.else_branch() {
+                Some(ast::ElseBranch::Block(else_block)) => {
+                    let cond = self.emit_expr_str_ast(&if_expr.condition().unwrap());
+                    let then_s = self.emit_expr_str_ast(&if_expr.then_branch().unwrap().into());
+                    let else_s = self.emit_expr_str_ast(&else_block.into());
+                    code!("(", cond, " ? ", then_s, " : ", else_s, ")")
+                }
+                Some(ast::ElseBranch::IfExpr(if_expr)) => {
+                    let cond = self.emit_expr_str_ast(&if_expr.condition().unwrap());
+                    let then_s = self.emit_expr_str_ast(&if_expr.then_branch().unwrap().into());
+                    let else_s = self.emit_expr_str_ast(&if_expr.into());
+                    code!("(", cond, " ? ", then_s, " : ", else_s, ")")
+                }
+                None => {
+                    let cond = self.emit_expr_str_ast(&if_expr.condition().unwrap());
+                    let then_s = self.emit_expr_str_ast(&if_expr.then_branch().unwrap().into());
+                    code!("(", cond, " ? ", then_s, " : ValueTuple)")
+                }
+            },
+            ast::Expr::BlockExpr(block_expr) => {
+                if block_expr.statements().count() == 0 {
+                    if let Some(t) = block_expr.tail_expr() {
+                        return self.emit_expr_str_ast(&t);
                     }
                     return "default!".into();
                 }
                 "/* block expr */ default!".into()
             }
-            Expr::Tuple { exprs } => {
-                if exprs.is_empty() {
+            ast::Expr::TupleExpr(tuple_expr) => {
+                if tuple_expr.fields().next().is_none() {
                     "/* unit */0".into()
                 } else {
-                    let parts = exprs.iter().map(|&e| self.emit_expr_str(e));
+                    let parts = tuple_expr.fields().map(|e| self.emit_expr_str_ast(&e));
                     code!("(", join(parts, ", "), ")")
                 }
             }
-            Expr::RecordLit { path, fields, .. } => {
-                let c = if let path = path {
-                    let resolver =
-                        resolver_for_scope(self.db, self.def_id, self.scopes.scope_for(expr_id));
-                    if let Some(path) = resolver.resolve_path_in_type_ns_fully(self.db, path) {
-                        match path {
-                            TypeNs::SelfType(t) => Constructable::Struct(
-                                (hir::Impl::from(t).self_ty(self.db).as_adt())
-                                    .unwrap()
-                                    .as_struct()
-                                    .unwrap(),
-                            ),
-                            TypeNs::AdtId(adt) => {
-                                Constructable::Struct(hir::Adt::from(adt).as_struct().unwrap())
-                            }
-                            TypeNs::EnumVariantId(v) => {
-                                Constructable::EnumVariant(hir::EnumVariant::from(v))
-                            }
-                            TypeNs::TypeAliasId(t) => Constructable::Struct(
-                                hir::TypeAlias::from(t)
-                                    .ty(self.db)
-                                    .as_adt()
-                                    .unwrap()
-                                    .as_struct()
-                                    .unwrap(),
-                            ),
-                            _ => {
-                                eprintln!(
-                                    "Bad type for struct construction path in {}",
-                                    self.expr_location(expr_id)
-                                );
-                                return fcode!(
-                                    "(_BadTypeConstruction/*{:?}*/)",
-                                    self.source(expr_id)
-                                );
-                            }
-                        }
-                    } else {
-                        eprintln!("Failed to resolve path in {}", self.expr_location(expr_id));
+            ast::Expr::RecordExpr(record_expr) => {
+                let c = match self.sem.resolve_variant(record_expr.clone()) {
+                    None => {
+                        eprintln!(
+                            "Struct construction without type in {}",
+                            self.expr_location_ast(expr)
+                        );
 
-                        return fcode!("(Unresolved Construction/*{:?}*/)", self.source(expr_id));
+                        return fcode!(
+                            "(TypelessConstruction/*{:?}*/)",
+                            record_expr.syntax().text().to_string()
+                        );
                     }
-                } else {
-                    eprintln!(
-                        "Struct construction without type in {}",
-                        self.expr_location(expr_id)
-                    );
-                    return fcode!("(TypelessConstruction/*{:?}*/)", self.source(expr_id));
+                    Some(hir::Variant::Struct(struct_ty)) => Constructable::Struct(struct_ty),
+                    Some(hir::Variant::EnumVariant(variant)) => Constructable::EnumVariant(variant),
+                    Some(hir::Variant::Union(_)) => {
+                        eprintln!("Union unsupported at {}", self.expr_location_ast(expr));
+
+                        return fcode!(
+                            "(UnionConstruction/*{:?}*/)",
+                            record_expr.syntax().text().to_string()
+                        );
+                    }
                 };
                 let type_name = self.constructable_name_cs(c);
 
-                let field_inits = fields.iter().map(|f| {
-                    let cs_f = names::field_name(f.name.as_str());
-                    let field = c
-                        .fields(self.db)
-                        .into_iter()
-                        .find(|x| x.name(self.db) == f.name);
-                    let cs_ty = field
-                        .map(|f| self.rust_type_to_cs(&f.ty(self.db).to_type(self.db)))
-                        .unwrap_or_else(|| "object /*unknown field type*/".into());
-                    let val = self.emit_expr_str(f.expr);
-                    code!(cs_f, " = new r2CsRuntime.Slot<", cs_ty, ">(", val, ")")
-                });
+                let field_inits = record_expr
+                    .record_expr_field_list()
+                    .unwrap()
+                    .fields()
+                    .map(|f| {
+                        let cs_f = names::field_name(f.field_name().unwrap().text().as_str());
+                        let field = c.fields(self.db).into_iter().find(|x| {
+                            x.name(self.db).as_str() == f.field_name().unwrap().text().as_str()
+                        });
+                        let cs_ty = field
+                            .map(|f| self.rust_type_to_cs(&f.ty(self.db).to_type(self.db)))
+                            .unwrap_or_else(|| "object /*unknown field type*/".into());
+                        let val = self.emit_expr_str_ast(&f.expr().unwrap());
+                        code!(cs_f, " = new r2CsRuntime.Slot<", cs_ty, ">(", val, ")")
+                    });
                 code!(
                     "new ",
                     type_name,
@@ -774,81 +703,78 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     "}"
                 )
             }
-            Expr::Index { base, index } => {
-                let base_str = self.emit_expr_str(*base);
-                let idx_str = self.emit_expr_str(*index);
+            ast::Expr::IndexExpr(index_expr) => {
+                let base_str = self.emit_expr_str_ast(&index_expr.base().unwrap());
+                let idx_str = self.emit_expr_str_ast(&index_expr.index().unwrap());
                 code!(base_str, "[", idx_str, "]")
             }
-            Expr::Range {
-                lhs,
-                rhs,
-                range_type,
-            } => {
-                let lhs_s = lhs.map(|e| self.emit_expr_str(e)).unwrap_or_default();
-                let rhs_s = rhs.map(|e| self.emit_expr_str(e)).unwrap_or_default();
-                let dots = match range_type {
+            ast::Expr::RangeExpr(range_expr) => {
+                let start_code = range_expr
+                    .start()
+                    .map(|e| self.emit_expr_str_ast(&e))
+                    .unwrap_or_default();
+                let end_code = range_expr
+                    .end()
+                    .map(|e| self.emit_expr_str_ast(&e))
+                    .unwrap_or_default();
+                let dots = match range_expr.op_kind().unwrap() {
                     RangeOp::Exclusive => "..",
                     RangeOp::Inclusive => "..=",
                 };
                 code!(
                     "/* range ",
-                    lhs_s,
+                    start_code,
                     dots,
-                    rhs_s,
+                    end_code,
                     " */ new s_Range(",
-                    lhs_s,
+                    start_code,
                     ", ",
-                    rhs_s,
+                    end_code,
                     ")"
                 )
             }
-            Expr::Array(arr) => match arr {
-                Array::ElementList { elements } => {
-                    let parts = elements.iter().map(|&e| self.emit_expr_str(e));
-                    code!("new object[] { ", join(parts, ", "), " }")
-                }
-                &Array::Repeat {
+            ast::Expr::ArrayExpr(array) => match array.kind() {
+                ast::ArrayExprKind::Repeat {
                     initializer,
                     repeat,
                 } => {
-                    let val = self.emit_expr_str(initializer);
-                    let len = self.emit_expr_str(repeat);
+                    let val = self.emit_expr_str_ast(&initializer.unwrap());
+                    let len = self.emit_expr_str_ast(&repeat.unwrap());
                     code!("new object[", len, "] /* fill ", val, "*/")
                 }
+                ast::ArrayExprKind::ElementList(elements) => {
+                    let parts = elements.map(|e| self.emit_expr_str_ast(&e));
+                    code!("new object[] { ", join(parts, ", "), " }")
+                }
             },
-            &Expr::Closure {
-                ref args,
-                body: closure_body,
-                ..
-            } => {
-                let params: Vec<String> = args
-                    .iter()
+            ast::Expr::ClosureExpr(closure) => {
+                let params: Vec<String> = closure
+                    .param_list()
+                    .unwrap()
+                    .params()
                     .enumerate()
                     .map(|(i, p)| {
-                        let bindings = self.collect_bindings_in_pat(*p);
+                        let bindings = self.collect_bindings_in_pat_ast(&p.pat().unwrap());
                         if bindings.len() == 1 {
-                            let name = self.body[bindings[0]].name.as_str().to_string();
-                            names::local_name(&name, 0)
+                            names::local_name(bindings[0].name(self.db).as_str(), 0)
                         } else {
                             format!("__cp{}", i)
                         }
                     })
                     .collect();
-                for p in args.iter() {
-                    let bindings = self.collect_bindings_in_pat(*p);
+                for p in closure.param_list().unwrap().params() {
+                    let bindings = self.collect_bindings_in_pat_ast(&p.pat().unwrap());
                     for b in bindings {
-                        self.alloc_binding(b);
+                        self.alloc_binding_ast(&b); // TODO
                     }
                 }
-                let body_str = self.emit_expr_str(closure_body);
+                let body_str = self.emit_expr_str_ast(&closure.body().unwrap());
                 code!("(", join(params, ", "), ") => ", body_str)
             }
-            Expr::Yeet { expr: inner } => {
-                panic!("yeet not supported at {}", self.expr_location(expr_id))
-            }
-            Expr::Return { expr: inner } => {
-                let val = inner
-                    .map(|e| self.emit_expr_str(e))
+            ast::Expr::ReturnExpr(return_expr) => {
+                let val = return_expr
+                    .expr()
+                    .map(|e| self.emit_expr_str_ast(&e))
                     .unwrap_or_else(|| "0 /* unit */".into());
                 code!(
                     "/* return-expr */ throw r2CsRuntime.Helpers.Returns<object>(",
@@ -856,14 +782,12 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     ")"
                 )
             }
-            &Expr::Let {
-                pat,
-                expr: let_expr,
-            } => {
-                let val = self.emit_expr_str(let_expr);
-                let check = self.emit_pat_check(&val, pat);
+            ast::Expr::LetExpr(let_expr) => {
+                let val = self.emit_expr_str_ast(&let_expr.expr().unwrap());
+                let check = self.emit_pat_check_ast(&val, &let_expr.pat().unwrap());
                 check
             }
+            /*
             Expr::Unsafe {
                 statements, tail, ..
             } => {
@@ -875,26 +799,54 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 }
                 "/* unsafe block */ default!".into()
             }
-            Expr::Match { .. } | Expr::Loop { .. } => "/* block-expr-value */ default!".into(),
-            Expr::Break { expr: val, .. } => val
-                .map(|e| self.emit_expr_str(e))
+             */
+            ast::Expr::MatchExpr(match_expr) => "/* block-expr-value */ default!".into(),
+            ast::Expr::BreakExpr(break_expr) => break_expr
+                .expr()
+                .map(|e| self.emit_expr_str_ast(&e))
                 .unwrap_or_else(|| "default!".into()),
-            Expr::Continue { .. } => "default!".into(),
-            &Expr::Become { expr: inner } => self.emit_expr_str(inner),
-            &Expr::Yield { expr: inner } => inner
-                .map(|e| self.emit_expr_str(e))
+            ast::Expr::ContinueExpr(_) => "default!".into(),
+            ast::Expr::BecomeExpr(become_expr) => {
+                self.emit_expr_str_ast(&become_expr.expr().unwrap())
+            }
+            ast::Expr::YieldExpr(yield_expr) => yield_expr
+                .expr()
+                .map(|e| self.emit_expr_str_ast(&e))
                 .unwrap_or_else(|| "default!".into()),
-            &Expr::Const(inner) => self.emit_expr_str(inner),
-            Expr::Underscore => "_".into(),
-            Expr::OffsetOf(_) | Expr::InlineAsm(_) => "/* asm/offsetof */ default!".into(),
+            //&Expr::Const(inner) => self.emit_expr_str(inner),
+            ast::Expr::UnderscoreExpr(_) => "_".into(),
+            ast::Expr::ParenExpr(paran) => {
+                code!("(", self.emit_expr_str_ast(&paran.expr().unwrap()), ")")
+            }
+            ast::Expr::OffsetOfExpr(_) | ast::Expr::AsmExpr(_) => {
+                "/* asm/offsetof */ default!".into()
+            }
+            ast::Expr::LoopExpr(_)
+            | ast::Expr::ForExpr(_)
+            | ast::Expr::MacroExpr(_)
+            | ast::Expr::WhileExpr(_)
+            | ast::Expr::FormatArgsExpr(_) => {
+                // TODO
+                "/* loop */ default!".into()
+            }
+
+            ast::Expr::YeetExpr(_) => {
+                panic!("yeet not supported at {}", self.expr_location_ast(expr))
+            }
+            ast::Expr::TryExpr(try_expr) => {
+                code!(
+                    "Try(",
+                    self.emit_expr_str_ast(&try_expr.expr().unwrap()),
+                    ")"
+                )
+            }
         }
     }
 
     /// Emit a tuple-struct or enum-variant constructor call.
-    fn emit_constructor_call(&mut self, variant_id: VariantId, args: &[ExprId]) -> Code {
+    fn emit_constructor_call(&mut self, variant_id: Variant, args: &[ast::Expr]) -> Code {
         match variant_id {
-            VariantId::StructId(sid) => {
-                let s = hir::Struct::from(sid);
+            Variant::Struct(s) => {
                 let cs_name = names::struct_name(s.name(self.db).as_str());
                 let fields = s.fields(self.db);
                 if fields.is_empty() || args.is_empty() {
@@ -903,8 +855,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 let inits = self.build_positional_field_inits(&fields, args);
                 code!(format("new {cs_name}()"), "{", join(inits, ", "), "}")
             }
-            VariantId::EnumVariantId(vid) => {
-                let v = hir::EnumVariant::from(vid);
+            Variant::EnumVariant(v) => {
                 let cs_name = names::variant_name(v.name(self.db).as_str());
                 let fields = v.fields(self.db);
                 if fields.is_empty() || args.is_empty() {
@@ -913,102 +864,82 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 let inits = self.build_positional_field_inits(&fields, args);
                 code!(format("new {cs_name}()"), "{", join(inits, ", "), "}")
             }
-            VariantId::UnionId(_) => "default! /* union ctor */".into(),
+            Variant::Union(_) => "default! /* union ctor */".into(),
         }
     }
 
     fn build_positional_field_inits(
         &mut self,
         fields: &[hir::Field],
-        args: &[ExprId],
+        args: &[ast::Expr],
     ) -> Vec<Code> {
         fields
             .iter()
             .zip(args.iter())
-            .map(|(field, &arg_id)| {
+            .map(|(field, arg)| {
                 let field_ty = field.ty(self.db).to_type(self.db);
                 let cs_ty = {
                     let t = self.rust_type_to_cs(&field_ty);
                     if t == "void" { "object".to_string() } else { t }
                 };
                 let f_name = names::field_name(field.name(self.db).as_str());
-                let val = self.emit_expr_str(arg_id);
+                let val = self.emit_expr_str_ast(arg);
                 code!(f_name, " = new r2CsRuntime.Slot<", cs_ty, ">(", val, ")")
             })
             .collect()
     }
 
-    /// Look up the Slot<T> inner type for a named field from variant resolution.
-    fn field_slot_type_from_variant(
-        &self,
-        maybe_variant: Option<VariantId>,
-        field_name: &str,
-    ) -> String {
-        let Some(vid) = maybe_variant else {
-            return "object".to_string();
-        };
-        let variant_fields: Vec<hir::Field> = match vid {
-            VariantId::StructId(sid) => hir::Struct::from(sid).fields(self.db),
-            VariantId::EnumVariantId(evid) => hir::EnumVariant::from(evid).fields(self.db),
-            VariantId::UnionId(_) => return "object".to_string(),
-        };
-        variant_fields
-            .iter()
-            .find(|f| f.name(self.db).as_str() == field_name)
-            .map(|f| {
-                let t = self.rust_type_to_cs(&f.ty(self.db).to_type(self.db));
-                if t == "void" { "object".to_string() } else { t }
-            })
-            .unwrap_or_else(|| "object".to_string())
-    }
-
-    fn emit_literal(&self, lit: &Literal) -> Code {
-        match lit {
-            Literal::Bool(b) => b.to_string().into(),
-            Literal::Int(v, _) => v.to_string().into(),
-            Literal::Uint(v, _) => v.to_string().into(),
-            Literal::Float(f, _) => f.to_string().into(),
-            Literal::Char(c) => fcode!("'{}'", c.escape_default()),
-            Literal::String(s) => fcode!(
-                "\"{}\"",
-                s.as_str().replace('\\', "\\\\").replace('"', "\\\"")
-            ),
-            Literal::ByteString(_) => "/* byte string */ new byte[] {}".into(),
-            Literal::CString(_) => "/* cstring */ \"\"".into(),
+    fn emit_literal_ast(&self, lit: &ast::Literal) -> Code {
+        match lit.kind() {
+            ast::LiteralKind::Bool(b) => b.to_string().into(),
+            ast::LiteralKind::IntNumber(v) => v.value().unwrap().to_string().into(),
+            ast::LiteralKind::FloatNumber(v) => v.to_string().into(),
+            ast::LiteralKind::Char(c) => fcode!("'{}'", c.value().unwrap().escape_default()),
+            ast::LiteralKind::String(s) => fcode!("\"{}\"", s.value().unwrap().escape_default(),),
+            ast::LiteralKind::Byte(b) => b.value().unwrap().to_string().into(),
+            ast::LiteralKind::ByteString(_) => "/* byte string */ new byte[] {}".into(),
+            ast::LiteralKind::CString(_) => "/* cstring */ \"\"".into(),
         }
     }
 
     /// Emit a pattern as a condition check against a scrutinee expression.
-    fn emit_pat_check(&mut self, scrutinee: &Code, pat_id: PatId) -> Code {
-        let pat = &self.body[pat_id];
+    fn emit_pat_check_ast(&mut self, scrutinee: &Code, pat: &ast::Pat) -> Code {
         match pat {
-            Pat::Wild | Pat::Missing => "true".into(),
-            Pat::Bind { subpat, .. } => {
-                if let Some(sub) = subpat {
-                    self.emit_pat_check(scrutinee, *sub)
+            ast::Pat::WildcardPat(w) => "true".into(),
+            ast::Pat::IdentPat(ident_pat)
+                if let Some(const_ref) = self.sem.resolve_bind_pat_to_const(ident_pat) =>
+            {
+                // TODO
+                code!(
+                    "/*TODO: const pat*/",
+                    scrutinee,
+                    " is ",
+                    format!("{:?}", const_ref)
+                )
+            }
+            ast::Pat::IdentPat(ident_pat) => {
+                if let Some(sub) = ident_pat.pat() {
+                    self.emit_pat_check_ast(scrutinee, &sub)
                 } else {
                     "true".into()
                 }
             }
-            Pat::TupleStruct { path, args, .. } => {
-                if let p = path {
-                    let segs: Vec<String> = p
-                        .segments()
-                        .iter()
-                        .map(|s| s.name.as_str().to_string())
-                        .collect();
-                    let variant_name = segs.last().unwrap_or(&"Unknown".to_string()).clone();
-                    let cs_variant = names::variant_name(&variant_name);
-                    code!(scrutinee, " is ", cs_variant)
-                } else {
-                    "true".into()
-                }
-            }
-            Pat::Path(p) => {
+            ast::Pat::TupleStructPat(tuple_struct) => {
+                // TODO
+                let p = tuple_struct.path().unwrap();
                 let segs: Vec<String> = p
                     .segments()
-                    .iter()
-                    .map(|s| s.name.as_str().to_string())
+                    .map(|s| s.name_ref().unwrap().text().as_str().to_string())
+                    .collect();
+                let variant_name = segs.last().unwrap_or(&"Unknown".to_string()).clone();
+                let cs_variant = names::variant_name(&variant_name);
+                code!(scrutinee, " is ", cs_variant)
+            }
+            ast::Pat::PathPat(path) => {
+                let path = path.path().unwrap();
+                let segs: Vec<String> = path
+                    .segments()
+                    .map(|s| s.name_ref().unwrap().text().as_str().to_string())
                     .collect();
                 if segs.len() > 1 {
                     let variant = segs.last().unwrap();
@@ -1018,38 +949,37 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     "true".into()
                 }
             }
-            Pat::Record { path, args, .. } => {
-                if let p = path {
-                    let segs: Vec<String> = p
-                        .segments()
-                        .iter()
-                        .map(|s| s.name.as_str().to_string())
-                        .collect();
-                    let variant = segs.last().unwrap_or(&"Unknown".to_string()).clone();
-                    let cs_variant = names::variant_name(&variant);
-                    code!(scrutinee, " is ", cs_variant)
-                } else {
-                    "true".into()
-                }
+            ast::Pat::RecordPat(record_pat) => {
+                //Pat::Record { path, args, .. } => {
+                let segs: Vec<String> = record_pat
+                    .path()
+                    .unwrap()
+                    .segments()
+                    .map(|s| s.name_ref().unwrap().text().as_str().to_string())
+                    .collect();
+                let variant = segs.last().unwrap_or(&"Unknown".to_string()).clone();
+                let cs_variant = names::variant_name(&variant);
+                code!(scrutinee, " is ", cs_variant)
             }
-            Pat::Lit(expr_id) => {
-                let lit_str = self.emit_expr_str(*expr_id);
+            ast::Pat::LiteralPat(literal_pat) => {
+                let lit_str =
+                    self.emit_expr_str_ast(&ast::Expr::Literal(literal_pat.literal().unwrap()));
                 code!(scrutinee, " == ", lit_str)
             }
-            Pat::Or(pats) => {
-                let parts: Vec<Code> = pats
-                    .iter()
-                    .map(|p| self.emit_pat_check(scrutinee, *p))
+            ast::Pat::OrPat(or_pat) => {
+                let parts: Vec<Code> = or_pat
+                    .pats()
+                    .map(|p| self.emit_pat_check_ast(scrutinee, &p))
                     .collect();
                 code!("(", join(parts, " || "), ")")
             }
-            Pat::Tuple { args, .. } => {
-                let checks: Vec<Code> = args
-                    .iter()
+            ast::Pat::TuplePat(tuple_pat) => {
+                let checks: Vec<Code> = tuple_pat
+                    .fields()
                     .enumerate()
                     .map(|(i, p)| {
                         let sub_scrutinee = code!(scrutinee, ".Item", (i + 1).to_string());
-                        self.emit_pat_check(&sub_scrutinee, *p)
+                        self.emit_pat_check_ast(&sub_scrutinee, &p)
                     })
                     .collect();
                 let combined: Vec<Code> = checks.into_iter().collect();
@@ -1064,12 +994,20 @@ impl<'g, 'db> BodyGen<'g, 'db> {
     }
 
     /// Emit variable binding statements for a pattern matched against a scrutinee.
-    fn emit_pat_bindings(&mut self, out: &mut Code, scrutinee: &Code, pat_id: PatId) {
-        let pat = self.body[pat_id].clone();
+    fn emit_pat_bindings_ast(&mut self, out: &mut Code, scrutinee: &Code, pat: &ast::Pat) {
         match pat {
-            Pat::Bind { id, subpat } => {
-                let cs_type = self.binding_cs_type(id);
-                let cs_name = self.alloc_binding(id);
+            ast::Pat::IdentPat(ident_pat)
+                if let Some(_) = self.sem.resolve_bind_pat_to_const(ident_pat) =>
+            {
+                // nothing to do
+            }
+            ast::Pat::IdentPat(ident_pat) => {
+                let Some(local) = self.sem.to_def(ident_pat) else {
+                    panic!("Ident Pat has no Local")
+                };
+
+                let cs_name = self.alloc_binding_ast(&local);
+                let cs_type = self.rust_type_to_cs(&local.ty(self.db));
                 out.w("var ")
                     .w(cs_name)
                     .w(" = new r2CsRuntime.Slot<")
@@ -1077,16 +1015,15 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     .w(">(")
                     .w(scrutinee)
                     .wln(");");
-                if let Some(sub) = subpat {
-                    self.emit_pat_bindings(out, scrutinee, sub);
+                if let Some(sub) = ident_pat.pat() {
+                    self.emit_pat_bindings_ast(out, scrutinee, &sub);
                 }
             }
-            Pat::TupleStruct { path, args, .. } => {
-                if let p = &path {
+            ast::Pat::TupleStructPat(tuple_pat) => {
+                if let p = tuple_pat.path().unwrap() {
                     let segs: Vec<String> = p
                         .segments()
-                        .iter()
-                        .map(|s| s.name.as_str().to_string())
+                        .map(|s| s.name_ref().unwrap().text().as_str().to_string())
                         .collect();
                     let variant = segs.last().unwrap_or(&"Unknown".to_string()).clone();
                     let cs_variant = names::variant_name(&variant);
@@ -1098,22 +1035,21 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         .w(") ")
                         .w(scrutinee)
                         .wln(";");
-                    for (i, sub_pat) in args.iter().enumerate() {
+                    for (i, sub_pat) in tuple_pat.fields().enumerate() {
                         let sub_scrutinee = format!("{}.f_{}.value", tmp, i);
-                        self.emit_pat_bindings(out, &sub_scrutinee.into(), *sub_pat);
+                        self.emit_pat_bindings_ast(out, &sub_scrutinee.into(), &sub_pat);
                     }
                 }
             }
-            Pat::Record { path, args, .. } => {
-                if let p = &path {
+            ast::Pat::RecordPat(tuple_pat) => {
+                if let p = tuple_pat.path().unwrap() {
                     let segs: Vec<String> = p
                         .segments()
-                        .iter()
-                        .map(|s| s.name.as_str().to_string())
+                        .map(|s| s.name_ref().unwrap().text().as_str().to_string())
                         .collect();
                     let variant = segs.last().unwrap_or(&"Unknown".to_string()).clone();
                     let cs_variant = names::variant_name(&variant);
-                    let tmp = format!("__rc_{}", cs_variant);
+                    let tmp = format!("__ts_{}", cs_variant);
                     out.w("var ")
                         .w(&tmp)
                         .w(" = (")
@@ -1121,17 +1057,26 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         .w(") ")
                         .w(scrutinee)
                         .wln(";");
-                    for field_pat in args.iter() {
-                        let field_name = names::field_name(field_pat.name.as_str());
-                        let sub_scrutinee = format!("{}.{}.value", tmp, field_name);
-                        self.emit_pat_bindings(out, &sub_scrutinee.into(), field_pat.pat);
+                    for (i, sub_pat) in tuple_pat
+                        .record_pat_field_list()
+                        .unwrap()
+                        .fields()
+                        .enumerate()
+                    {
+                        let sub_scrutinee = format!("{}.f_{}.value", tmp, i);
+                        self.emit_pat_bindings_ast(
+                            out,
+                            &sub_scrutinee.into(),
+                            &sub_pat.pat().unwrap(),
+                        );
                     }
                 }
             }
-            Pat::Tuple { args, .. } => {
-                for (i, sub_pat) in args.iter().enumerate() {
+
+            ast::Pat::TupleStructPat(tuple_pat) => {
+                for (i, sub_pat) in tuple_pat.fields().enumerate() {
                     let sub_scrutinee = code!(scrutinee, ".Item", i + 1);
-                    self.emit_pat_bindings(out, &sub_scrutinee, *sub_pat);
+                    self.emit_pat_bindings_ast(out, &sub_scrutinee, &sub_pat);
                 }
             }
             _ => {}
@@ -1139,66 +1084,41 @@ impl<'g, 'db> BodyGen<'g, 'db> {
     }
 
     /// Emit a pattern as an lvalue (for assignment).
-    fn emit_pat_as_lvalue(&self, pat_id: PatId) -> String {
-        let pat = &self.body[pat_id];
+    fn emit_pat_as_lvalue_ast(&self, pat: &ast::Pat) -> String {
         match pat {
-            Pat::Bind { id, .. } => {
+            ast::Pat::IdentPat(ident_pat) if let Some(local) = self.sem.to_def(ident_pat) => {
                 let cs_name = self
                     .locals
-                    .get(&Local::from((self.def_id, *id)))
+                    .get(&local)
                     .cloned()
                     .unwrap_or_else(|| "/* unbound */unknown".to_string());
                 format!("{}.value", cs_name)
             }
-            Pat::Wild => "_".to_string(),
+            ast::Pat::WildcardPat(_) => "_".to_string(),
             _ => "/* complex lvalue */unknown".to_string(),
         }
     }
 
     /// Collect all binding IDs in a pattern.
-    fn collect_bindings_in_pat(&self, pat_id: PatId) -> Vec<BindingId> {
+    fn collect_bindings_in_pat_ast(&self, pat: &ast::Pat) -> Vec<Local> {
         let mut result = Vec::new();
-        self.collect_bindings_recursive(pat_id, &mut result);
+        self.collect_bindings_recursive_ast(pat, &mut result);
         result
     }
 
-    fn collect_bindings_recursive(&self, pat_id: PatId, result: &mut Vec<BindingId>) {
-        let pat = &self.body[pat_id];
+    fn collect_bindings_recursive_ast(&self, pat: &ast::Pat, result: &mut Vec<Local>) {
         match pat {
-            Pat::Bind { id, subpat } => {
-                result.push(*id);
-                if let Some(sub) = subpat {
-                    self.collect_bindings_recursive(*sub, result);
+            ast::Pat::IdentPat(ident_pat) if let Some(local) = self.sem.to_def(ident_pat) => {
+                result.push(local);
+                if let Some(sub) = ident_pat.pat() {
+                    self.collect_bindings_recursive_ast(&sub, result);
                 }
             }
-            Pat::TupleStruct { args, .. } | Pat::Tuple { args, .. } => {
-                for a in args.iter() {
-                    self.collect_bindings_recursive(*a, result);
+            _ => {
+                for child in pat.syntax().children().filter_map(ast::Pat::cast) {
+                    self.collect_bindings_recursive_ast(&child, result);
                 }
             }
-            Pat::Record { args, .. } => {
-                for f in args.iter() {
-                    self.collect_bindings_recursive(f.pat, result);
-                }
-            }
-            Pat::Or(pats) => {
-                if let Some(first) = pats.first() {
-                    self.collect_bindings_recursive(*first, result);
-                }
-            }
-            Pat::Slice {
-                prefix,
-                slice,
-                suffix,
-            } => {
-                for p in prefix.iter().chain(slice.iter()).chain(suffix.iter()) {
-                    self.collect_bindings_recursive(*p, result);
-                }
-            }
-            Pat::Ref { pat, .. } | Pat::Box { inner: pat } => {
-                self.collect_bindings_recursive(*pat, result);
-            }
-            _ => {}
         }
     }
 

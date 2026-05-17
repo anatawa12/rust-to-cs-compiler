@@ -5,7 +5,6 @@ use hir::{
     Adt, AssocItem, DefWithBody, Enum, GenericDef, HasAttrs, HasCrate, HasSource, Impl, Struct,
     Trait, db::HirDatabase,
 };
-use hir_def::{DefWithBodyId, expr_store::Body};
 use syntax::ast::HasAttrs as AstHasAttrs;
 
 /// Returns true if the item carries `#[r2cs_native]` or `#[r2cs::native]`.
@@ -288,14 +287,8 @@ impl<'db> CodeGenerator<'db> {
         out.indent();
 
         // Try to generate a real body using BodyGen
-        let def_with_body = DefWithBody::Function(f);
-        if let Ok(id) = DefWithBodyId::try_from(def_with_body) {
-            let (body, source_map) = Body::with_source_map(db, id);
-            let mut body_gen = BodyGen::new(self, id, body, source_map, is_async);
-            body_gen.emit_body(out);
-        } else {
-            out.wln("throw new System.NotImplementedException(\"builtin-derive\");");
-        }
+        let mut body_gen = BodyGen::new(self, is_async);
+        body_gen.emit_function_body(self.sem.source(f).unwrap().value, out);
 
         out.dedent();
         out.wln("}");
