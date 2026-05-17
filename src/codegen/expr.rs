@@ -56,11 +56,19 @@ impl<'g, 'db> BodyGen<'g, 'db> {
         cs_name
     }
 
-    fn binding_name_ast(&self, local: hir::Local) -> String {
-        self.locals
-            .get(&local)
-            .cloned()
-            .unwrap_or_else(|| format!("/* unbound {:?} */unknown", local))
+    fn binding_name_ast(&self, local: Local) -> String {
+        if let Some(local) = self.locals.get(&local) {
+            return local.clone();
+        }
+
+        if let Either::Left(pat) = local.primary_source(self.db).source.value
+            && let Some(new_local) = self.sem.to_def(&pat)
+            && local != new_local
+        {
+            self.binding_name_ast(new_local)
+        } else {
+            format!("/* unbound {:?} */unknown", local)
+        }
     }
 
     fn label_name(&self, l: ast::Lifetime) -> String {
