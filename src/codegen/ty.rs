@@ -3,7 +3,7 @@ use crate::codegen::names::mod_name;
 /// Converts Rust HIR types to C# type strings.
 use hir::db::HirDatabase;
 use hir::next_solver::GenericArgs;
-use hir::{Adt, BuiltinType, Module, Name, Trait, Type};
+use hir::{Adt, BuiltinType, HasContainer, ItemContainer, Module, Name, Trait, Type};
 use hir_ty::display::HirDisplay;
 use ide_db::base_db;
 use rustc_type_ir::inherent::IntoKind;
@@ -369,11 +369,41 @@ impl<'db> CodeGenerator<'db> {
         }
     }
 
-    pub fn fn_path_cs(&self, adt: hir::Function) -> String {
-        let mut path = self.module_class_cs(adt.module(self.db));
-        path.push('.');
-        path.push_str(&names::method_name(adt.name(self.db).as_str()));
-        path
+    pub fn fn_path_cs(&self, f: hir::Function) -> String {
+        match f.container(self.db) {
+            ItemContainer::Impl(impl_) if let Some(adt) = impl_.self_ty(self.db).as_adt() => {
+                let mut path = self.module_class_cs(adt.module(self.db));
+                path.push('.');
+                path.push_str(&names::struct_name(adt.name(self.db).as_str()));
+                path.push('.');
+                path.push_str(&names::method_name(f.name(self.db).as_str()));
+                path
+            }
+            ItemContainer::Impl(impl_)
+                if let Some(primitive) = impl_.self_ty(self.db).as_builtin() =>
+            {
+                let mut path = String::from(primitive.name().as_str());
+                path.push('.');
+                path.push_str(&names::method_name(f.name(self.db).as_str()));
+                path
+            }
+            ItemContainer::Module(module) => {
+                let mut path = self.module_class_cs(module);
+                path.push('.');
+                path.push_str(&names::method_name(f.name(self.db).as_str()));
+                path
+            }
+            //ItemContainer::Trait(_) => {}
+            //ItemContainer::ExternBlock(_) => {}
+            //ItemContainer::Crate(_) => {}
+            unsupported => {
+                eprintln!("Unsupported function type: {:?}", unsupported);
+                let mut path = self.module_class_cs(f.module(self.db));
+                path.push('.');
+                path.push_str(&names::method_name(f.name(self.db).as_str()));
+                path
+            }
+        }
     }
 
     pub fn const_path_cs(&self, adt: hir::Const) -> String {
