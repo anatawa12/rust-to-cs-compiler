@@ -148,7 +148,7 @@ impl<'db> CodeGenerator<'db> {
                 t
             }
         } else if let rustc_type_ir::TyKind::Error(_) = ty.ns_ty().kind() {
-            "(object /* error type */)".to_string()
+            "object /* error type */".to_string()
         } else if ty.is_fn() {
             // Closure types, fn pointers, etc. — use Action/Func
             "Action".to_string()
