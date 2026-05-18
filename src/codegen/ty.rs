@@ -488,8 +488,8 @@ mod rustc_ty {
     use hir_ty::display::HirDisplay;
     use hir_ty::next_solver::{
         AnyImplId, Binder, ClauseKind, Const, ConstKind, DbInterner, ErrorGuaranteed, GenericArg,
-        GenericArgKind, GenericArgs, ParamEnv, PredicateKind, SolverDefId, Term, TermKind,
-        TraitRef, Ty,
+        GenericArgKind, GenericArgs, ImplOrTraitAssocTermId, ParamEnv, PredicateKind, SolverDefId,
+        Term, TermId, TermKind, TraitAssocTermId, TraitAssocTyId, TraitRef, Ty,
     };
     use rustc_type_ir::inherent::{GenericsOf as _, IntoKind, SliceLike, Term as _};
     use rustc_type_ir::solve::{Goal, GoalSource, NoSolution};
@@ -515,7 +515,7 @@ mod rustc_ty {
                 return assoc_ty;
             };
             let AliasTyKind::Projection {
-                def_id: SolverDefId::TypeAliasId(alias_id),
+                def_id: TraitAssocTyId(alias_id),
             } = alias.kind
             else {
                 panic!("Tries to assoc but not assoc: {assoc_ty:?}")
@@ -546,7 +546,7 @@ mod rustc_ty {
                         #[allow(dead_code)]
                         Trait(PredicatePolarity, TraitRef<'db>),
                     }
-                    let predicates = def_id.expect_opaque_ty().predicates(db).skip_binder();
+                    let predicates = def_id.0.predicates(db).skip_binder();
                     let preds = predicates
                         .iter()
                         .filter_map(|pred| match pred.kind().skip_binder() {
@@ -558,7 +558,8 @@ mod rustc_ty {
                                     .first()
                                     .and_then(|x| x.ty())
                                     == Some(self_ty)
-                                    && proj.def_id() == SolverDefId::TypeAliasId(alias_id) =>
+                                    && proj.def_id()
+                                        == TraitAssocTermId(TermId::TypeAliasId(alias_id)) =>
                             {
                                 match proj.term.kind() {
                                     TermKind::Ty(ty) => Some(Pred::Ty(ty)),
@@ -635,7 +636,9 @@ mod rustc_ty {
                                 return;
                             };
 
-                            assert!(self.interner.has_item_definition(alias.into()));
+                            assert!(self.interner.has_item_definition(ImplOrTraitAssocTermId(
+                                TermId::TypeAliasId(alias)
+                            )));
 
                             let ty = db.ty(alias.into());
                             let args = self.translate_args(impl_id, self_ty);
@@ -675,7 +678,10 @@ mod rustc_ty {
         #[tracing::instrument(skip(self))]
         fn translate_args(&self, target: ImplId, self_ty: Ty<'db>) -> GenericArgs<'db> {
             let db = self.db;
-            let impl_self_ty = db.impl_self_ty(target).instantiate_identity();
+            let impl_self_ty = db
+                .impl_self_ty(target)
+                .instantiate_identity()
+                .skip_norm_wip();
             let (self_adt, self_args) = self_ty.as_adt().unwrap();
             match impl_self_ty.kind() {
                 TyKind::Param(param_ty) => {
@@ -768,20 +774,20 @@ mod rustc_ty {
                         .field(&std::fmt::from_fn(move |f| match alias.kind {
                             AliasTyKind::Projection { def_id } => f
                                 .debug_struct("Projection")
-                                .field("def_id", &self.def_id_to_str(def_id))
+                                .field("def_id", &self.def_id_to_str(def_id.into()))
                                 .finish(),
                             AliasTyKind::Inherent { def_id } => f
                                 .debug_struct("Inherent")
-                                .field("def_id", &self.def_id_to_str(def_id))
+                                .field("def_id", &self.def_id_to_str(def_id.into()))
                                 .finish(),
                             AliasTyKind::Opaque { def_id } => f
                                 .debug_struct("Opaque")
-                                .field("def_id", &self.def_id_to_str(def_id))
-                                .field("interned", &self.interner.type_of(def_id))
+                                .field("def_id", &self.def_id_to_str(def_id.into()))
+                                .field("interned", &self.interner.type_of(def_id.into()))
                                 .finish(),
                             AliasTyKind::Free { def_id } => f
                                 .debug_struct("Free")
-                                .field("def_id", &self.def_id_to_str(def_id))
+                                .field("def_id", &self.def_id_to_str(def_id.into()))
                                 .finish(),
                         }))
                         .field(&self.args_to_str(alias.args))
@@ -846,7 +852,7 @@ mod rustc_ty {
     pub fn alias_of_type_params(ty: &Type) -> Option<(hir::TypeParam, hir::TypeAlias)> {
         if let TyKind::Alias(alias) = ty.ns_ty().kind()
             && let AliasTyKind::Projection { def_id } = alias.kind
-            && let SolverDefId::TypeAliasId(alias_id) = def_id
+            && let TraitAssocTyId(alias_id) = def_id
             && let TyKind::Param(param) = alias.args.as_slice()[0].expect_ty().kind()
         {
             let param = hir::TypeParam::from(param.id);
@@ -874,7 +880,7 @@ mod ty_and_type {
     use hir_def::resolver::{HasResolver, Resolver};
     use hir_ty::ParamEnvAndCrate;
     use hir_ty::db::HirDatabase;
-    use hir_ty::next_solver::{ParamEnv, Ty};
+    use hir_ty::next_solver::{DbInterner, ParamEnv, Ty};
     use ide_db::base_db;
     use ide_db::base_db::{CrateOrigin, LangCrateOrigin, all_crates};
 
@@ -914,7 +920,7 @@ mod ty_and_type {
             | TyKind::Int(_)
             | TyKind::Uint(_)
             | TyKind::Float(_)
-            | TyKind::Str => empty_param_env(core_crate(db)),
+            | TyKind::Str => empty_param_env(db, core_crate(db)),
 
             TyKind::Adt(a, _) => param_env_from_resolver(db, &a.def_id().resolver(db)),
             TyKind::Foreign(f) => param_env_from_resolver(db, &f.0.resolver(db)),
@@ -930,7 +936,7 @@ mod ty_and_type {
             },
 
             // unknown types are fell backed to current drate with emtpy
-            _ => empty_param_env(krate),
+            _ => empty_param_env(db, krate),
             /*
             TyKind::FnPtr(_, _) => empty_param_env(krate),
             TyKind::UnsafeBinder(_) => empty_param_env(krate),
@@ -970,18 +976,20 @@ mod ty_and_type {
         resolver: &Resolver<'_>,
     ) -> ParamEnvAndCrate<'db> {
         ParamEnvAndCrate {
-            param_env: resolver
-                .generic_def()
-                .map_or_else(ParamEnv::empty, |generic_def| {
-                    db.trait_environment(generic_def.into())
-                }),
+            param_env: resolver.generic_def().map_or_else(
+                || ParamEnv::empty(DbInterner::new_no_crate(db)),
+                |generic_def| db.trait_environment(generic_def.into()),
+            ),
             krate: resolver.krate(),
         }
     }
 
-    fn empty_param_env<'db>(krate: base_db::Crate) -> ParamEnvAndCrate<'db> {
+    fn empty_param_env<'db>(
+        db: &'db dyn HirDatabase,
+        krate: base_db::Crate,
+    ) -> ParamEnvAndCrate<'db> {
         ParamEnvAndCrate {
-            param_env: ParamEnv::empty(),
+            param_env: ParamEnv::empty(DbInterner::new_with(db, krate)),
             krate,
         }
     }
