@@ -6,6 +6,7 @@ use crate::codegen::ty::Constructable;
 use hir::next_solver::GenericArgs;
 use hir::{Adt, InFile, Local, ModuleDef, PathResolution, StructKind, Variant};
 use itertools::Either;
+use rustc_type_ir::Upcast;
 use syntax::ast::{self, AstNode as _, HasArgList as _, HasLoopBody as _, HasName, RangeItem as _};
 use syntax::ast::{BinaryOp, RangeOp, UnaryOp};
 
@@ -72,7 +73,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
     }
 
     fn label_name(&self, l: ast::Lifetime) -> String {
-        names::camel(l.text().as_str())
+        names::camel(&l.text().as_str()[1..])
     }
 
     /// Emit the full function body block.
@@ -93,19 +94,25 @@ impl<'g, 'db> BodyGen<'g, 'db> {
             }
         }
         if let Some(body) = f.body() {
-            self.emit_expr_as_stmt_ast(out, ast::Expr::BlockExpr(body), true);
+            self.emit_expr_as_stmt_ast(out, ast::Expr::BlockExpr(body), true, true);
         } else {
             out.wln("throw new System.NotImplementedException(\"builtin-derive\");");
         }
     }
 
     /// Emit an expression as a statement (with semicolon if needed).
-    fn emit_expr_as_stmt_ast(&mut self, out: &mut Code, expr: ast::Expr, is_tail: bool) {
+    fn emit_expr_as_stmt_ast(
+        &mut self,
+        out: &mut Code,
+        expr: ast::Expr,
+        is_tail: bool,
+        returning: bool,
+    ) {
         match expr {
             ast::Expr::BlockExpr(block_expr) => {
                 let statements = block_expr.statements();
                 let tail = block_expr.tail_expr();
-                self.emit_block_contents(out, statements, tail, is_tail);
+                self.emit_block_contents(out, statements, tail, is_tail, returning);
             }
             ast::Expr::ReturnExpr(ret_expr) => {
                 let val = ret_expr
@@ -122,18 +129,18 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 let cond = self.emit_expr_str_ast(&condition);
                 out.w("if (").w(cond).wln(") {");
                 out.indent();
-                self.emit_expr_as_stmt_ast(out, then_branch.into(), false);
+                self.emit_expr_as_stmt_ast(out, then_branch.into(), is_tail, returning);
                 out.dedent();
                 match else_branch {
                     Some(ast::ElseBranch::IfExpr(else_if)) => {
                         out.w("} else ");
-                        self.emit_expr_as_stmt_ast(out, else_if.into(), is_tail);
+                        self.emit_expr_as_stmt_ast(out, else_if.into(), is_tail, returning);
                     }
                     Some(ast::ElseBranch::Block(else_e)) => {
                         out.w("} else {");
                         out.wln("");
                         out.indent();
-                        self.emit_expr_as_stmt_ast(out, else_e.into(), is_tail);
+                        self.emit_expr_as_stmt_ast(out, else_e.into(), is_tail, returning);
                         out.dedent();
                         out.wln("}");
                     }
@@ -147,14 +154,54 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 let body = loop_expr.loop_body().unwrap();
 
                 let label_str = label
-                    .map(|l| {
-                        // TODO?: Should we strip '\''?
-                        format!("{}: ", self.label_name(l.lifetime().unwrap()))
-                    })
+                    .map(|l| format!("{}: ", self.label_name(l.lifetime().unwrap())))
                     .unwrap_or_default();
-                out.wln(&format!("{}while (true) {{", label_str));
+                out.w(label_str).wln("while (true) {");
                 out.indent();
-                self.emit_expr_as_stmt_ast(out, body.into(), false);
+                self.emit_expr_as_stmt_ast(out, body.into(), false, false);
+                out.dedent();
+                out.wln("}");
+            }
+            ast::Expr::WhileExpr(while_expr) => {
+                let label = while_expr.label();
+                let condition = while_expr.condition().unwrap();
+                let body = while_expr.loop_body().unwrap();
+
+                let label_str = label
+                    .map(|l| format!("{}: ", self.label_name(l.lifetime().unwrap())))
+                    .unwrap_or_default();
+                out.w(label_str)
+                    .w("while (")
+                    .w(self.emit_expr_str_ast(&condition))
+                    .wln(") {");
+                out.indent();
+                self.emit_expr_as_stmt_ast(out, body.into(), false, false);
+                out.dedent();
+                out.wln("}");
+            }
+            ast::Expr::ForExpr(for_expr) => {
+                let label = for_expr.label();
+                let pat = for_expr.pat().unwrap();
+                let iterable = for_expr.iterable().unwrap();
+                let body = for_expr.loop_body().unwrap();
+
+                let label_str = label
+                    .map(|l| format!("{}: ", self.label_name(l.lifetime().unwrap())))
+                    .unwrap_or_default();
+                let temp_name = {
+                    let match_index = self.match_index;
+                    self.match_index += 1;
+                    format!("__temp_{}", match_index)
+                };
+                out.w(label_str)
+                    .w("foreach (var ")
+                    .w(&temp_name)
+                    .w(" in ")
+                    .w(self.emit_expr_str_ast(&iterable))
+                    .wln(") {");
+                out.indent();
+                self.emit_let_stmt(out, &pat, code!(&temp_name), Self::emit_unreachable);
+                self.emit_expr_as_stmt_ast(out, body.into(), false, false);
                 out.dedent();
                 out.wln("}");
             }
@@ -164,22 +211,25 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 let match_expr = match_expr.expr().unwrap();
                 let scrutinee = self.emit_expr_str_ast(&match_expr);
                 out.w("switch (").w(scrutinee).wln(") {");
+                out.indent();
 
                 for arm in arms.arms() {
                     // Emit pattern check
                     let pat_cs = self.emit_pattern_ast(&arm.pat().unwrap());
 
-                    out.w("case ").w(pat_cs).w(": ");
+                    out.w("case ").w(pat_cs).w(" ");
                     if let Some(guard) = arm.guard() {
                         out.w("when ");
                         out.w(self.emit_expr_str_ast(&guard.condition().unwrap()));
                     }
-                    out.wln("{");
+                    out.wln(":{");
                     out.indent();
-                    self.emit_expr_as_stmt_ast(out, arm.expr().unwrap(), is_tail);
+                    self.emit_expr_as_stmt_ast(out, arm.expr().unwrap(), is_tail, returning);
+                    out.wln("break;");
                     out.dedent();
                     out.wln("}");
                 }
+                out.dedent();
 
                 out.wln("}");
             }
@@ -214,12 +264,30 @@ impl<'g, 'db> BodyGen<'g, 'db> {
         }
     }
 
+    fn emit_let_stmt(
+        &mut self,
+        out: &mut Code,
+        pat: &ast::Pat,
+        value_cs: Code,
+        else_gen: impl FnOnce(&mut BodyGen<'g, 'db>, &mut Code),
+    ) {
+        let pattern_cs = self.emit_pattern_ast(pat);
+
+        out.w("if (!(").w(value_cs).w(" is ").w(pattern_cs).w(")) ");
+        else_gen(self, out);
+    }
+
+    fn emit_unreachable(&mut self, out: &mut Code) {
+        out.wln("throw new Exception(\"unreachable\");");
+    }
+
     fn emit_block_contents(
         &mut self,
         out: &mut Code,
         statements: impl IntoIterator<Item = ast::Stmt>,
         tail: Option<ast::Expr>,
         is_tail: bool,
+        returning: bool,
     ) {
         for stmt in statements {
             match stmt {
@@ -229,71 +297,51 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     let initializer = let_stmt.initializer();
                     let else_branch = let_stmt.let_else().and_then(|x| x.block_expr());
 
-                    let bindings = self.collect_bindings_in_pat_ast(&pat);
-
-                    //*
                     if let Some(init) = initializer {
                         let init_str = self.emit_expr_str_ast(&init);
-                        if bindings.len() == 1 {
-                            let bid = bindings[0];
-                            let cs_name = self.alloc_binding_ast(&bid);
-                            let cs_type = self.rust_type_to_cs(&bid.ty(self.db));
-                            out.w("var ")
-                                .w(cs_name)
-                                .w(" = new r2CsRuntime.Slot<")
-                                .w(cs_type)
-                                .w(">(")
-                                .w(init_str)
-                                .wln(");");
-                        } else if bindings.is_empty() {
-                            out.w(init_str).wln(";");
+                        if let Some(else_branch) = else_branch {
+                            self.emit_let_stmt(out, &pat, init_str, |this, out| {
+                                out.wln("{").indent();
+                                this.emit_expr_as_stmt_ast(
+                                    out,
+                                    else_branch.into(),
+                                    is_tail,
+                                    returning,
+                                );
+                                out.dedent();
+                                out.wln("}");
+                            });
                         } else {
-                            self.match_index += 1;
-                            let tmp = format!("__tmp_{:?}", self.match_index);
-                            out.w("var ").w(&tmp).w(" = ").w(init_str).wln(";");
-                            for b in &bindings {
-                                let cs_type = self.rust_type_to_cs(&b.ty(self.db));
-                                let cs_name = self.alloc_binding_ast(&b);
-                                let rust_name = b.name(self.db).as_str().to_string();
-                                out.wln(format!(
-                                    "var {} = new r2CsRuntime.Slot<{}>({}.{});",
-                                    cs_name,
-                                    cs_type,
-                                    tmp,
-                                    names::field_name(&rust_name)
-                                ));
-                            }
+                            self.emit_let_stmt(out, &pat, init_str, Self::emit_unreachable);
                         }
                     } else {
+                        let bindings = self.collect_bindings_in_pat_ast(&pat);
                         for b in &bindings {
                             let cs_type = self.rust_type_to_cs(&b.ty(self.db));
                             let cs_name = self.alloc_binding_ast(&b);
-                            out.wln(format!(
-                                "var {} = new r2CsRuntime.Slot<{}>(default!);",
-                                cs_name, cs_type
-                            ));
+                            out.wln(format!("{} {} = (default!);", cs_type, cs_name));
                         }
-                    }
-
-                    if let Some(_else_e) = else_branch {
-                        out.wln("// let-else not fully supported");
                     }
                 }
                 ast::Stmt::ExprStmt(expr_stmt) => {
-                    self.emit_expr_as_stmt_ast(out, expr_stmt.expr().unwrap(), false);
+                    self.emit_expr_as_stmt_ast(out, expr_stmt.expr().unwrap(), false, returning);
                 }
                 ast::Stmt::Item(_) => {}
             }
         }
 
         if let Some(tail_expr) = tail {
-            let tail_str = self.emit_expr_str_ast(&tail_expr);
-            if is_tail {
-                if tail_str != "()".into() && !tail_str.is_empty() {
-                    out.w("return ").w(&tail_str).wln(";");
+            if returning {
+                let tail_str = self.emit_expr_str_ast(&tail_expr);
+                if is_tail {
+                    if tail_str != "()".into() && !tail_str.is_empty() {
+                        out.w("return ").w(&tail_str).wln(";");
+                    }
+                } else if tail_str != "()".into() && !tail_str.is_empty() {
+                    out.w(&tail_str).wln(";");
                 }
-            } else if tail_str != "()".into() && !tail_str.is_empty() {
-                out.w(&tail_str).wln(";");
+            } else {
+                self.emit_expr_as_stmt_ast(out, tail_expr, true, false);
             }
         }
     }
@@ -638,7 +686,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
             }
             ast::Expr::TupleExpr(tuple_expr) => {
                 if tuple_expr.fields().next().is_none() {
-                    "/* unit */0".into()
+                    "default(global::System.ValueTuple)".into()
                 } else {
                     let parts = tuple_expr.fields().map(|e| self.emit_expr_str_ast(&e));
                     code!("(", join(parts, ", "), ")")
@@ -683,7 +731,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                             .map(|f| self.rust_type_to_cs(&f.ty(self.db).to_type(self.db)))
                             .unwrap_or_else(|| "object /*unknown field type*/".into());
                         let val = self.emit_expr_str_ast(&f.expr().unwrap());
-                        code!(cs_f, " = new r2CsRuntime.Slot<", cs_ty, ">(", val, ")")
+                        code!(cs_f, " = (", val, ")")
                     });
                 code!(
                     "new ",
@@ -749,7 +797,8 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     .map(|(i, p)| {
                         let bindings = self.collect_bindings_in_pat_ast(&p.pat().unwrap());
                         if bindings.len() == 1 {
-                            names::local_name(bindings[0].name(self.db).as_str(), 0)
+                            let binding = self.alloc_binding_ast(&bindings[0]);
+                            binding
                         } else {
                             format!("__cp{}", i)
                         }
@@ -758,7 +807,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 for p in closure.param_list().unwrap().params() {
                     let bindings = self.collect_bindings_in_pat_ast(&p.pat().unwrap());
                     for b in bindings {
-                        self.alloc_binding_ast(&b); // TODO
+                        //self.alloc_binding_ast(&b); // TODO
                     }
                 }
                 let body_str = self.emit_expr_str_ast(&closure.body().unwrap());
@@ -812,7 +861,10 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 code!("(", self.emit_expr_str_ast(&paran.expr().unwrap()), ")")
             }
             ast::Expr::OffsetOfExpr(_) | ast::Expr::AsmExpr(_) => {
-                "/* asm/offsetof */ default!".into()
+                panic!(
+                    "Unsupported Expression: Offsetof / assembly at {}",
+                    self.expr_location_ast(expr)
+                );
             }
             ast::Expr::LoopExpr(_)
             | ast::Expr::ForExpr(_)
@@ -870,14 +922,9 @@ impl<'g, 'db> BodyGen<'g, 'db> {
             .iter()
             .zip(args.iter())
             .map(|(field, arg)| {
-                let field_ty = field.ty(self.db).to_type(self.db);
-                let cs_ty = {
-                    let t = self.rust_type_to_cs(&field_ty);
-                    if t == "void" { "object".to_string() } else { t }
-                };
                 let f_name = names::field_name(field.name(self.db).as_str());
                 let val = self.emit_expr_str_ast(arg);
-                code!(f_name, " = new r2CsRuntime.Slot<", cs_ty, ">(", val, ")")
+                code!(f_name, " = (", val, ")")
             })
             .collect()
     }
@@ -1024,6 +1071,44 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 );
 
                 code!("(", join(pattern_codes, ","), ")")
+            }
+            ast::Pat::RangePat(range_pat) => {
+                match (
+                    range_pat.start(),
+                    range_pat.op_kind().unwrap(),
+                    range_pat.end(),
+                ) {
+                    (Some(lower), RangeOp::Exclusive, Some(upper)) => {
+                        code!(
+                            "(>=",
+                            self.emit_pattern_ast(&lower),
+                            " and <",
+                            self.emit_pattern_ast(&upper),
+                            ")"
+                        )
+                    }
+                    (Some(lower), RangeOp::Inclusive, Some(upper)) => {
+                        code!(
+                            "(>=",
+                            self.emit_pattern_ast(&lower),
+                            " and <=",
+                            self.emit_pattern_ast(&upper),
+                            ")"
+                        )
+                    }
+                    (Some(lower), RangeOp::Exclusive, None) => {
+                        code!("(>=", self.emit_pattern_ast(&lower), ")")
+                    }
+                    (None, RangeOp::Exclusive, Some(upper)) => {
+                        code!("(<", self.emit_pattern_ast(&upper), ")")
+                    }
+                    (None, RangeOp::Inclusive, Some(upper)) => {
+                        code!("(<=", self.emit_pattern_ast(&upper), ")")
+                    }
+                    (lower, op, upper) => {
+                        panic!("Bad pattern: {lower:?} {op:?} {upper:?}")
+                    }
+                }
             }
             pat => {
                 eprintln!(

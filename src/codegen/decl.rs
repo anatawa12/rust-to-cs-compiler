@@ -111,7 +111,7 @@ impl<'db> CodeGenerator<'db> {
             let f_ty_ns = field.ty(db);
             let f_ty = f_ty_ns.to_type(db);
             let cs_ty = self.rust_type_to_cs(&f_ty);
-            out.wln(&format!("public r2CsRuntime.Slot<{}> {};", cs_ty, f_name));
+            out.wln(&format!("public {} {};", cs_ty, f_name));
         }
 
         out.close_brace();
@@ -144,7 +144,7 @@ impl<'db> CodeGenerator<'db> {
                 let f_ty = f_ty_ns.to_type(db);
                 let cs_ty = self.rust_type_to_cs(&f_ty);
                 let f_name = names::field_name(field.name(db).as_str());
-                out.wln(format!("public r2CsRuntime.Slot<{}> {};", cs_ty, f_name));
+                out.wln(format!("public {} {};", cs_ty, f_name));
             }
             out.close_brace();
             out.blank_line();

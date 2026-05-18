@@ -396,6 +396,16 @@ impl<'db> CodeGenerator<'db> {
             //ItemContainer::Trait(_) => {}
             //ItemContainer::ExternBlock(_) => {}
             //ItemContainer::Crate(_) => {}
+            ItemContainer::Impl(impl_) => {
+                eprintln!(
+                    "Unsupported function type with self: {:?}",
+                    impl_.self_ty(self.db)
+                );
+                let mut path = self.module_class_cs(f.module(self.db));
+                path.push('.');
+                path.push_str(&names::method_name(f.name(self.db).as_str()));
+                path
+            }
             unsupported => {
                 eprintln!("Unsupported function type: {:?}", unsupported);
                 let mut path = self.module_class_cs(f.module(self.db));

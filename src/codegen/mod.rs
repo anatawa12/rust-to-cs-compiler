@@ -130,6 +130,7 @@ impl<'db> CodeGenerator<'db> {
         out.wln("using System;");
         out.wln("using System.Collections.Generic;");
         out.wln("using r2CsRuntime;");
+        out.wln("using static r2CsRuntime.Helpers;");
         out.blank_line();
 
         let crate_name = krate
@@ -302,10 +303,7 @@ impl<'db> CodeGenerator<'db> {
                     let f_ty = f_ty_ns.to_type(db);
                     let cs_ty = self.rust_type_to_cs(&f_ty);
                     let f_name = names::field_name(field.name(db).as_str());
-                    out.wln(format!(
-                        "public Slot<{}> {} = new(default!);",
-                        cs_ty, f_name
-                    ));
+                    out.wln(format!("public {} {} = default!;", cs_ty, f_name));
                 }
                 if !s.fields(db).is_empty() {
                     out.blank_line();
@@ -341,10 +339,7 @@ impl<'db> CodeGenerator<'db> {
                         let f_ty = f_ty_ns.to_type(db);
                         let cs_ty = self.rust_type_to_cs(&f_ty);
                         let f_name = names::field_name(field.name(db).as_str());
-                        out.wln(format!(
-                            "public Slot<{}> {} = new(default!);",
-                            cs_ty, f_name
-                        ));
+                        out.wln(format!("public {} {} = default!;", cs_ty, f_name));
                     }
                     match variant.kind(self.db) {
                         StructKind::Record => {}
