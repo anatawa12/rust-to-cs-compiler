@@ -271,10 +271,16 @@ impl<'g, 'db> BodyGen<'g, 'db> {
         value_cs: Code,
         else_gen: impl FnOnce(&mut BodyGen<'g, 'db>, &mut Code),
     ) {
-        let pattern_cs = self.emit_pattern_ast(pat);
+        if let ast::Pat::IdentPat(ident_pat) = pat {
+            let local = self.sem.to_def(ident_pat).unwrap();
+            let cs_local_name = self.alloc_binding_ast(&local);
+            out.w("var ").w(cs_local_name).w(" = ").w(value_cs).wln(";");
+        } else {
+            let pattern_cs = self.emit_pattern_ast(pat);
 
-        out.w("if (!(").w(value_cs).w(" is ").w(pattern_cs).w(")) ");
-        else_gen(self, out);
+            out.w("if (!(").w(value_cs).w(" is ").w(pattern_cs).w(")) ");
+            else_gen(self, out);
+        }
     }
 
     fn emit_unreachable(&mut self, out: &mut Code) {
