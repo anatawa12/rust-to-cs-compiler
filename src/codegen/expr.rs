@@ -240,8 +240,9 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 let label = break_expr.lifetime();
                 let break_expr = break_expr.expr();
 
+                // TODO: Labelled break
                 let label_str = label
-                    .map(|l| format!(" {}", self.label_name(l)))
+                    .map(|l| format!(" /*{}*/", self.label_name(l)))
                     .unwrap_or_default();
                 if let Some(e) = break_expr {
                     let val = self.emit_expr_str_ast(&e);
@@ -252,8 +253,9 @@ impl<'g, 'db> BodyGen<'g, 'db> {
             }
             ast::Expr::ContinueExpr(continue_expr) => {
                 let label = continue_expr.lifetime();
+                // TODO: Labelled continue
                 let label_str = label
-                    .map(|l| format!(" {}", self.label_name(l)))
+                    .map(|l| format!(" /*{}*/", self.label_name(l)))
                     .unwrap_or_default();
                 out.wln(&format!("continue{};", label_str));
             }
@@ -700,8 +702,11 @@ impl<'g, 'db> BodyGen<'g, 'db> {
             ast::Expr::RefExpr(ref_expr) => self.emit_expr_str_ast(&ref_expr.expr().unwrap()),
             //Expr::Box { expr: inner } => self.emit_expr_str(*inner),
             ast::Expr::CastExpr(cast_expr) => {
+                // TODO: Cast might not be compatible
                 code!(
-                    "(/* cast */) ",
+                    "(",
+                    self.rust_type_to_cs(&self.sem.resolve_type(&cast_expr.ty().unwrap()).unwrap()),
+                    ") ",
                     self.emit_expr_str_ast(&cast_expr.expr().unwrap())
                 )
             }
