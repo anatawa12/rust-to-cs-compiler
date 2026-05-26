@@ -318,12 +318,17 @@ impl<'db> CodeGenerator<'db> {
                 out.blank_line();
             }
             Adt::Enum(e) => {
+                out.wln("[global::System.Runtime.CompilerServices.UnionAttribute]");
                 out.wln(format!(
-                    "public abstract partial class {}{}{}",
+                    "public sealed partial class {}{}{}",
                     cs_name, generics, interfaces_part
                 ));
                 out.open_brace();
-                out.wln(format!("private {}() {{}}", cs_name));
+                out.wln("private object inner;");
+                out.wln("public object Value => inner;");
+                out.wln(format!(
+                    "public void set({cs_name}{generics} o) => inner = o.inner;"
+                ));
                 out.blank_line();
 
                 // Variants
@@ -331,8 +336,10 @@ impl<'db> CodeGenerator<'db> {
                     let v_name = names::variant_name(variant.name(db).as_str());
                     let fields = variant.fields(db);
                     out.wln(format!(
-                        "public sealed partial class {v_name} : {cs_name}{generics}",
+                        "public {}({v_name} value) => inner = value;",
+                        cs_name
                     ));
+                    out.wln(format!("public sealed partial class {v_name}",));
                     out.open_brace();
                     for field in &fields {
                         let f_ty_ns = field.ty(db);
@@ -361,7 +368,7 @@ impl<'db> CodeGenerator<'db> {
 
                             for field in &fields {
                                 let f_name = names::field_name(field.name(db).as_str());
-                                out.wln(format!("this.{f_name} = new({f_name});"));
+                                out.wln(format!("this.{f_name} = {f_name};"));
                             }
                             out.close_brace();
                         }

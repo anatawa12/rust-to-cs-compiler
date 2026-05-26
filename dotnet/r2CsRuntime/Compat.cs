@@ -9,4 +9,7 @@ namespace System.Runtime.CompilerServices
 
         public Type BuilderType { get; }
     }
+
+    [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = false)]
+    public class UnionAttribute : Attribute {}
 }

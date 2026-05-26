@@ -39,7 +39,11 @@ public static class Helpers
 
     public static T Try<T, R>(VrcGetVpm.mod_Core.mod_Result.s_Result<T, R> result)
     {
-        return ((VrcGetVpm.mod_Core.mod_Result.s_Result<T, R>.v_Ok)result).f_0;
+        return result switch
+        {
+            VrcGetVpm.mod_Core.mod_Result.s_Result<T, R>.v_Ok ok => ok.f_0,
+            _ => throw new NotImplementedException()
+        };
     }
 }
 

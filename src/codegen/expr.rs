@@ -2,7 +2,7 @@
 use std::collections::HashMap;
 
 use super::{CodeGenerator, names, output::Code};
-use crate::codegen::ty::Constructable;
+use crate::codegen::ty::{Constructable, TypeExt};
 use hir::next_solver::GenericArgs;
 use hir::{Adt, InFile, Local, ModuleDef, PathResolution, StructKind, Variant};
 use itertools::Either;
@@ -256,7 +256,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
             }
             _ => {
                 // Generic expression: emit as expression statement
-                let s = self.emit_expr_str_ast(&expr);
+                let s = self.emit_expr_str_ast_inner(&expr, true);
                 if !s.is_empty() && s != "()".into() {
                     out.w(s).wln(";");
                 }
@@ -347,6 +347,10 @@ impl<'g, 'db> BodyGen<'g, 'db> {
     }
 
     pub fn emit_expr_str_ast(&mut self, expr: &ast::Expr) -> Code {
+        self.emit_expr_str_ast_inner(expr, false)
+    }
+
+    pub fn emit_expr_str_ast_inner(&mut self, expr: &ast::Expr, statement: bool) -> Code {
         match expr {
             //Expr::Missing => "/* missing */default!".into(),
             ast::Expr::Literal(lit) => self.emit_literal_ast(&lit),
@@ -403,26 +407,14 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         )
                     }
                      */
-                    Ok(Some(hir::PathResolution::Def(hir::ModuleDef::EnumVariant(variant)))) => {
-                        // TODO: Generic Args
-                        match variant.kind(self.db) {
+                    Ok(Some(hir::PathResolution::Def(hir::ModuleDef::EnumVariant(
+                        enum_valiant,
+                    )))) => {
+                        match enum_valiant.kind(self.db) {
                             StructKind::Unit => {
-                                fcode!(
-                                    "{}.instance",
-                                    self.enum_variant_cs1(
-                                        variant,
-                                        GenericArgs::empty(self.interner) // GenericArgs::error_for_item(self.interner,hir_def::EnumVariantId::from(variant).into())
-                                    )
-                                )
-                            }
-                            StructKind::Tuple => {
-                                fcode!(
-                                    "new {}",
-                                    self.enum_variant_cs1(
-                                        variant,
-                                        GenericArgs::empty(self.interner) //GenericArgs::error_for_item(self.interner,hir_def::EnumVariantId::from(variant).into())
-                                    )
-                                )
+                                let ty_args = (self.sem.type_of_expr(expr).unwrap().original)
+                                    .expect_adt_of(enum_valiant.parent_enum(self.db).into());
+                                fcode!("{}.instance", self.enum_variant_cs2(enum_valiant, ty_args))
                             }
                             kind => {
                                 eprintln!(
@@ -435,10 +427,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                                     //)
                                 );
 
-                                fcode!(
-                                    "new /* unexpected struct kind and infer */ {}",
-                                    self.enum_variant_cs(variant)
-                                )
+                                fcode!("new /* unexpected struct kind and infer */ UnknownType")
                             }
                         }
                     }
@@ -527,10 +516,10 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 match self.sem.resolve_field(&field_expr) {
                     None => {
                         eprintln!("Unresolved field at {}", self.expr_location_ast(field_expr));
-                        code!(receiver, "./* unresolved field */.value")
+                        code!(receiver, "./* unresolved field */")
                     }
                     Some(Either::Left(field)) => {
-                        code!(receiver, ".", self.field_name(&field), ".value")
+                        code!(receiver, ".", self.field_name(&field))
                     }
                     Some(Either::Right(field)) => {
                         code!(receiver, ".", field.index + 1)
@@ -565,12 +554,33 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 }
             }
             ast::Expr::CallExpr(call_expr) => {
-                let callee_str = self.emit_expr_str_ast(&call_expr.expr().unwrap());
-                let args_str = call_expr
-                    .arg_list()
-                    .unwrap()
-                    .args()
-                    .map(|a| self.emit_expr_str_ast(&a));
+                let callee = call_expr.expr().unwrap();
+                let args = call_expr.arg_list().unwrap().args();
+                if let ast::Expr::PathExpr(path) = &callee {
+                    match self.sem.resolve_path(&path.path().unwrap()) {
+                        Some(PathResolution::Def(ModuleDef::EnumVariant(variant))) => {
+                            let expr_type = self.sem.type_of_expr(expr).unwrap().original;
+                            let generic_args =
+                                expr_type.expect_adt_of(variant.parent_enum(self.db).into());
+                            let callee_type = self.enum_variant_cs2(variant, generic_args);
+                            let args_str = args.map(|a| self.emit_expr_str_ast(&a));
+                            return code!("new ", callee_type, "(", join(args_str, ", "), ")");
+                        }
+                        Some(PathResolution::Def(ModuleDef::Adt(Adt::Struct(struct_)))) => {
+                            let expr_type = self.sem.type_of_expr(expr).unwrap().original;
+                            let generic_args = expr_type.expect_adt_of(struct_.into());
+                            let callee_type = self.rust_type_to_cs(
+                                &Adt::Struct(struct_).ty_with_args(self.db, generic_args),
+                            );
+                            let args_str = args.map(|a| self.emit_expr_str_ast(&a));
+                            return code!("new ", callee_type, "(", join(args_str, ", "), ")");
+                        }
+                        _ => {}
+                    }
+                }
+
+                let callee_str = self.emit_expr_str_ast(&callee);
+                let args_str = args.map(|a| self.emit_expr_str_ast(&a));
                 code!(callee_str, "(", join(args_str, ", "), ")")
             }
             ast::Expr::AwaitExpr(await_expr) => {
@@ -633,7 +643,11 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         .replace("div", "/=")
                         .replace("rem", "%="),
                 };
-                code!("(", lhs_code, " ", op_str, " ", rhs_code, ")")
+                if statement {
+                    code!(lhs_code, " ", op_str, " ", rhs_code)
+                } else {
+                    code!("(", lhs_code, " ", op_str, " ", rhs_code, ")")
+                }
             }
             //Expr::Assignment { target, value } => {
             //    let target_str = self.emit_pat_as_lvalue(*target);
@@ -705,8 +719,17 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                             record_expr.syntax().text().to_string()
                         );
                     }
-                    Some(hir::Variant::Struct(struct_ty)) => Constructable::Struct(struct_ty),
-                    Some(hir::Variant::EnumVariant(variant)) => Constructable::EnumVariant(variant),
+                    Some(hir::Variant::Struct(struct_ty)) => {
+                        let ty_args = (self.sem.type_of_expr(expr).unwrap().original)
+                            .expect_adt_of(struct_ty.into());
+
+                        Constructable::Struct(struct_ty, ty_args)
+                    }
+                    Some(hir::Variant::EnumVariant(enum_valiant)) => {
+                        let ty_args = (self.sem.type_of_expr(expr).unwrap().original)
+                            .expect_adt_of(enum_valiant.parent_enum(self.db).into());
+                        Constructable::EnumVariant(enum_valiant, ty_args)
+                    }
                     Some(hir::Variant::Union(_)) => {
                         eprintln!("Union unsupported at {}", self.expr_location_ast(expr));
 
@@ -716,7 +739,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         );
                     }
                 };
-                let type_name = self.constructable_name_cs(c);
+                let type_name = self.constructable_name_cs(&c);
 
                 let field_inits = record_expr
                     .record_expr_field_list()
@@ -753,11 +776,11 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 let start_code = range_expr
                     .start()
                     .map(|e| self.emit_expr_str_ast(&e))
-                    .unwrap_or_default();
+                    .unwrap_or(code!("unspecified"));
                 let end_code = range_expr
                     .end()
                     .map(|e| self.emit_expr_str_ast(&e))
-                    .unwrap_or_default();
+                    .unwrap_or(code!("unspecified"));
                 let dots = match range_expr.op_kind().unwrap() {
                     RangeOp::Exclusive => "..",
                     RangeOp::Inclusive => "..=",
@@ -842,7 +865,35 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 "/* unsafe block */ default!".into()
             }
              */
-            ast::Expr::MatchExpr(match_expr) => "/* block-expr-value */ default!".into(),
+            ast::Expr::MatchExpr(match_expr) => {
+                let arms = match_expr.match_arm_list().unwrap();
+                let match_expr = match_expr.expr().unwrap();
+                let scrutinee = self.emit_expr_str_ast(&match_expr);
+
+                let mut out = Code::new();
+
+                out.w("(").w(scrutinee).wln(") switch {");
+                out.indent();
+
+                for arm in arms.arms() {
+                    // Emit pattern check
+                    let pat_cs = self.emit_pattern_ast(&arm.pat().unwrap());
+
+                    out.w("").w(pat_cs).w(" ");
+                    if let Some(guard) = arm.guard() {
+                        out.w("when ");
+                        out.w(self.emit_expr_str_ast(&guard.condition().unwrap()));
+                    }
+                    out.w("=> ")
+                        .w(self.emit_expr_str_ast(&arm.expr().unwrap()))
+                        .wln(",");
+                }
+                out.dedent();
+
+                out.w("}");
+
+                out
+            }
             ast::Expr::BreakExpr(break_expr) => break_expr
                 .expr()
                 .map(|e| self.emit_expr_str_ast(&e))
@@ -866,13 +917,17 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     self.expr_location_ast(expr)
                 );
             }
-            ast::Expr::LoopExpr(_)
-            | ast::Expr::ForExpr(_)
-            | ast::Expr::MacroExpr(_)
-            | ast::Expr::WhileExpr(_)
-            | ast::Expr::FormatArgsExpr(_) => {
+            ast::Expr::LoopExpr(_) | ast::Expr::ForExpr(_) | ast::Expr::WhileExpr(_) => {
                 // TODO
                 "/* loop */ default!".into()
+            }
+            ast::Expr::FormatArgsExpr(_) => {
+                // TODO
+                "/* FormatArgsExpr */ default!".into()
+            }
+            ast::Expr::MacroExpr(_) => {
+                // TODO
+                "/* macro */ default!".into()
             }
 
             ast::Expr::YeetExpr(_) => {
@@ -963,15 +1018,22 @@ impl<'g, 'db> BodyGen<'g, 'db> {
             }
             ast::Pat::TupleStructPat(tuple_struct) => {
                 let path = tuple_struct.path().unwrap();
+
                 let (cs_type_name, field_count) = match self.sem.resolve_path(&path) {
                     Some(PathResolution::Def(ModuleDef::EnumVariant(enum_valiant))) => {
+                        let ty_args = (self.sem.type_of_pat(pat).unwrap().original)
+                            .expect_adt_of(enum_valiant.parent_enum(self.db).into());
                         let field_count = enum_valiant.fields(self.db).len();
-                        let cs_variant = self.enum_variant_cs(enum_valiant);
+                        let cs_variant = self.enum_variant_cs2(enum_valiant, ty_args);
                         (cs_variant, field_count)
                     }
                     Some(PathResolution::Def(ModuleDef::Adt(Adt::Struct(struct_def)))) => {
+                        let ty_args = (self.sem.type_of_pat(pat).unwrap().original)
+                            .expect_adt_of(struct_def.into());
                         let field_count = struct_def.fields(self.db).len();
-                        let cs_variant = self.rust_type_to_cs(&struct_def.ty(self.db));
+                        let cs_variant = self.rust_type_to_cs(
+                            &Adt::Struct(struct_def).ty_with_args(self.db, ty_args),
+                        );
                         (cs_variant, field_count)
                     }
                     resolved => {
@@ -1000,6 +1062,18 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     Some(PathResolution::Def(ModuleDef::Const(const_))) => {
                         code!(self.const_path_cs(const_))
                     }
+                    Some(PathResolution::Def(ModuleDef::EnumVariant(enum_valiant))) => {
+                        let ty_args = (self.sem.type_of_pat(pat).unwrap().original)
+                            .expect_adt_of(enum_valiant.parent_enum(self.db).into());
+                        code!(self.enum_variant_cs2(enum_valiant, ty_args))
+                    }
+                    Some(PathResolution::Def(ModuleDef::Adt(Adt::Struct(struct_def)))) => {
+                        let ty_args = (self.sem.type_of_pat(pat).unwrap().original)
+                            .expect_adt_of(struct_def.into());
+                        code!(self.rust_type_to_cs(
+                            &Adt::Struct(struct_def).ty_with_args(self.db, ty_args),
+                        ))
+                    }
                     resolved => {
                         eprintln!(
                             "Unable to resolve path in pattern {resolved:?}: {}",
@@ -1013,13 +1087,19 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 let path = record_pat.path().unwrap();
                 let (cs_type_name, field_count) = match self.sem.resolve_path(&path) {
                     Some(PathResolution::Def(ModuleDef::EnumVariant(enum_valiant))) => {
+                        let ty_args = (self.sem.type_of_pat(pat).unwrap().original)
+                            .expect_adt_of(enum_valiant.parent_enum(self.db).into());
                         let field_count = enum_valiant.fields(self.db).len();
-                        let cs_variant = self.enum_variant_cs(enum_valiant);
+                        let cs_variant = self.enum_variant_cs2(enum_valiant, ty_args);
                         (cs_variant, field_count)
                     }
                     Some(PathResolution::Def(ModuleDef::Adt(Adt::Struct(struct_def)))) => {
+                        let ty_args = (self.sem.type_of_pat(pat).unwrap().original)
+                            .expect_adt_of(struct_def.into());
                         let field_count = struct_def.fields(self.db).len();
-                        let cs_variant = self.rust_type_to_cs(&struct_def.ty(self.db));
+                        let cs_variant = self.rust_type_to_cs(
+                            &Adt::Struct(struct_def).ty_with_args(self.db, ty_args),
+                        );
                         (cs_variant, field_count)
                     }
                     resolved => {

@@ -438,16 +438,17 @@ impl<'db> CodeGenerator<'db> {
         path
     }
 
-    pub fn enum_variant_cs1(&self, v: hir::EnumVariant, generic: GenericArgs<'db>) -> String {
+    pub fn enum_variant_cs2(&self, v: hir::EnumVariant, generic: Vec<Type<'db>>) -> String {
         let mut path =
-            self.rust_type_to_cs(&self.adt_with_generic(v.parent_enum(self.db).into(), generic));
+            self.rust_type_to_cs(&Adt::Enum(v.parent_enum(self.db)).ty_with_args(self.db, generic));
         path.push('.');
         path.push_str(&names::variant_name(v.name(self.db).as_str()));
         path
     }
 
-    pub fn enum_variant_cs(&self, v: hir::EnumVariant) -> String {
-        let mut path = self.rust_type_to_cs(&v.parent_enum(self.db).ty(self.db));
+    pub fn enum_variant_cs1(&self, v: hir::EnumVariant, generic: GenericArgs<'db>) -> String {
+        let mut path =
+            self.rust_type_to_cs(&self.adt_with_generic(v.parent_enum(self.db).into(), generic));
         path.push('.');
         path.push_str(&names::variant_name(v.name(self.db).as_str()));
         path
@@ -463,10 +464,12 @@ impl<'db> CodeGenerator<'db> {
         })
     }
 
-    pub fn constructable_name_cs(&self, c: Constructable) -> String {
+    pub fn constructable_name_cs(&self, c: &Constructable<'db>) -> String {
         match c {
-            Constructable::Struct(s) => self.adt_name_cs(s.into()),
-            Constructable::EnumVariant(v) => self.enum_variant_cs(v.into()),
+            Constructable::Struct(s, args) => {
+                self.rust_type_to_cs(&Adt::Struct(*s).ty_with_args(self.db, args.clone()))
+            }
+            Constructable::EnumVariant(v, args) => self.enum_variant_cs2(*v, args.clone()),
         }
     }
 }
@@ -546,9 +549,10 @@ mod rustc_ty {
                         #[allow(dead_code)]
                         Trait(PredicatePolarity, TraitRef<'db>),
                     }
-                    let predicates = def_id.expect_opaque_ty().predicates(db).skip_binder();
-                    let preds = predicates
-                        .iter()
+                    let preds = def_id
+                        .expect_opaque_ty()
+                        .predicates(db)
+                        .iter_instantiated_copied(self.interner, self_ty_alias.args.as_slice())
                         .filter_map(|pred| match pred.kind().skip_binder() {
                             ClauseKind::Projection(proj)
                                 if proj
@@ -597,8 +601,10 @@ mod rustc_ty {
                         )
                         // */
                     }
-
-                    unimplemented!("assoc {assoc_ty:?} {preds:?}")
+                    unimplemented!(
+                        "{assoc_ty_rs}",
+                        assoc_ty_rs = assoc_ty.display(self.db, self.display_target()),
+                    )
                 }
                 TyKind::Adt(adt, args) => {
                     let mut resolved_impl_assoc = None;
@@ -786,6 +792,11 @@ mod rustc_ty {
                         }))
                         .field(&self.args_to_str(alias.args))
                         .finish(),
+                    TyKind::Param(param) => f
+                        .debug_struct("Param")
+                        .field("id", &param.id)
+                        .field("index", &param.index)
+                        .finish(),
 
                     //TyKind::FnDef(_, _) => {}
                     //TyKind::FnPtr(_, _) => {}
@@ -797,7 +808,6 @@ mod rustc_ty {
                     //TyKind::CoroutineWitness(_, _) => {}
                     //TyKind::Never => {}
                     //TyKind::Tuple(_) => {}
-                    //TyKind::Param(_) => {}
                     //TyKind::Bound(_, _) => {}
                     //TyKind::Placeholder(_) => {}
                     //TyKind::Infer(_) => {}
@@ -988,17 +998,38 @@ mod ty_and_type {
 }
 
 // TODO: Generic Args
-#[derive(Debug, Clone, Copy)]
-pub enum Constructable {
-    Struct(hir::Struct),
-    EnumVariant(hir::EnumVariant),
+#[derive(Debug, Clone)]
+pub enum Constructable<'db> {
+    Struct(hir::Struct, Vec<Type<'db>>),
+    EnumVariant(hir::EnumVariant, Vec<Type<'db>>),
 }
 
-impl Constructable {
-    pub fn fields(self, db: &dyn HirDatabase) -> Vec<hir::Field> {
+impl<'db> Constructable<'db> {
+    pub fn fields(&self, db: &dyn HirDatabase) -> Vec<hir::Field> {
         match self {
-            Constructable::Struct(s) => s.fields(db),
-            Constructable::EnumVariant(v) => v.fields(db),
+            Constructable::Struct(s, _) => s.fields(db),
+            Constructable::EnumVariant(v, _) => v.fields(db),
         }
+    }
+}
+
+pub trait TypeExt<'db> {
+    fn expect_adt_with_args(&self) -> (Adt, Vec<Option<Type<'db>>>);
+    fn expect_adt_of(&self, adt: Adt) -> Vec<Type<'db>>;
+}
+
+impl<'db> TypeExt<'db> for Type<'db> {
+    fn expect_adt_with_args(&self) -> (Adt, Vec<Option<Type<'db>>>) {
+        self.as_adt_with_args()
+            .unwrap_or_else(|| panic!("expected adt but was {self:?}"))
+    }
+
+    fn expect_adt_of(&self, adt: Adt) -> Vec<Type<'db>> {
+        let (adt_of_ty, types) = self
+            .as_adt_with_args()
+            .unwrap_or_else(|| panic!("expected adt of {adt:?} but was {self:?}"));
+        assert_eq!(adt_of_ty, adt, "expected adt of {adt:?} but was {self:?}");
+
+        types.into_iter().flatten().collect()
     }
 }
