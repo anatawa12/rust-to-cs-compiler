@@ -7,7 +7,10 @@ use hir::next_solver::GenericArgs;
 use hir::{Adt, InFile, Local, ModuleDef, PathResolution, StructKind, Variant};
 use itertools::Either;
 use rustc_type_ir::Upcast;
-use syntax::ast::{self, AstNode as _, HasArgList as _, HasLoopBody as _, HasName, RangeItem as _};
+use syntax::ast::{
+    self, ArithOp, AstNode as _, HasArgList as _, HasLoopBody as _, HasName, LogicOp,
+    RangeItem as _,
+};
 use syntax::ast::{BinaryOp, RangeOp, UnaryOp};
 
 /// Generates C# for the body of a single function.
@@ -597,57 +600,56 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 let lhs_code = self.emit_expr_str_ast(&bin_expr.lhs().unwrap());
                 let rhs_code = self.emit_expr_str_ast(&bin_expr.rhs().unwrap());
                 let op_str = match bin_expr.op_kind() {
-                    None => "/* op= */ =".to_string(),
-                    Some(BinaryOp::ArithOp(a)) => format!("{:?}", a)
-                        .to_lowercase()
-                        .replace("add", "+")
-                        .replace("sub", "-")
-                        .replace("mul", "*")
-                        .replace("div", "/")
-                        .replace("rem", "%")
-                        .replace("shl", "<<")
-                        .replace("shr", ">>")
-                        .replace("bitxor", "^")
-                        .replace("bitor", "|")
-                        .replace("bitand", "&"),
+                    None => "/* op= */ =",
+                    Some(BinaryOp::ArithOp(ArithOp::Add)) => "+",
+                    Some(BinaryOp::ArithOp(ArithOp::Mul)) => "*",
+                    Some(BinaryOp::ArithOp(ArithOp::Sub)) => "-",
+                    Some(BinaryOp::ArithOp(ArithOp::Div)) => "/",
+                    Some(BinaryOp::ArithOp(ArithOp::Rem)) => "%",
+                    Some(BinaryOp::ArithOp(ArithOp::Shl)) => "<<",
+                    Some(BinaryOp::ArithOp(ArithOp::Shr)) => ">>",
+                    Some(BinaryOp::ArithOp(ArithOp::BitXor)) => "^",
+                    Some(BinaryOp::ArithOp(ArithOp::BitOr)) => "|",
+                    Some(BinaryOp::ArithOp(ArithOp::BitAnd)) => "&",
                     Some(BinaryOp::CmpOp(c)) => {
                         use hir_def::hir::{CmpOp, Ordering};
                         match c {
-                            CmpOp::Eq { negated: false } => "==".to_string(),
-                            CmpOp::Eq { negated: true } => "!=".to_string(),
+                            CmpOp::Eq { negated: false } => "==",
+                            CmpOp::Eq { negated: true } => "!=",
                             CmpOp::Ord {
                                 ordering: Ordering::Less,
                                 strict: true,
-                            } => "<".to_string(),
+                            } => "<",
                             CmpOp::Ord {
                                 ordering: Ordering::Less,
                                 strict: false,
-                            } => "<=".to_string(),
+                            } => "<=",
                             CmpOp::Ord {
                                 ordering: Ordering::Greater,
                                 strict: true,
-                            } => ">".to_string(),
+                            } => ">",
                             CmpOp::Ord {
                                 ordering: Ordering::Greater,
                                 strict: false,
-                            } => ">=".to_string(),
+                            } => ">=",
                         }
                     }
-                    Some(BinaryOp::LogicOp(l)) => {
-                        use hir_def::hir::LogicOp;
-                        match l {
-                            LogicOp::And => "&&".to_string(),
-                            LogicOp::Or => "||".to_string(),
-                        }
-                    }
-                    Some(BinaryOp::Assignment { op: None }) => "=".to_string(),
-                    Some(BinaryOp::Assignment { op: Some(a) }) => format!("{:?}=", a)
-                        .to_lowercase()
-                        .replace("add", "+=")
-                        .replace("sub", "-=")
-                        .replace("mul", "*=")
-                        .replace("div", "/=")
-                        .replace("rem", "%="),
+                    Some(BinaryOp::LogicOp(LogicOp::And)) => "&&",
+                    Some(BinaryOp::LogicOp(LogicOp::Or)) => "&&",
+
+                    Some(BinaryOp::Assignment { op }) => match op {
+                        None => "=",
+                        Some(ArithOp::Add) => "+=",
+                        Some(ArithOp::Mul) => "*=",
+                        Some(ArithOp::Sub) => "-=",
+                        Some(ArithOp::Div) => "/=",
+                        Some(ArithOp::Rem) => "%=",
+                        Some(ArithOp::Shl) => "<<=",
+                        Some(ArithOp::Shr) => ">>=",
+                        Some(ArithOp::BitXor) => "^=",
+                        Some(ArithOp::BitOr) => "|=",
+                        Some(ArithOp::BitAnd) => "&=",
+                    },
                 };
                 if statement {
                     code!(lhs_code, " ", op_str, " ", rhs_code)
