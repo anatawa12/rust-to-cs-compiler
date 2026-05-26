@@ -377,6 +377,33 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     Ok(Some(hir::PathResolution::Def(hir::ModuleDef::Function(f)))) => {
                         self.fn_path_cs(f).into()
                     }
+                    Ok(Some(hir::PathResolution::Def(hir::ModuleDef::Adt(Adt::Struct(
+                        struct_,
+                    ))))) => match struct_.kind(self.db) {
+                        StructKind::Unit => {
+                            let ty_args = (self.sem.type_of_expr(expr).unwrap().original)
+                                .expect_adt_of(struct_.into());
+                            fcode!(
+                                "{}.instance",
+                                self.rust_type_to_cs(
+                                    &Adt::from(struct_).ty_with_args(self.db, ty_args)
+                                )
+                            )
+                        }
+                        kind => {
+                            eprintln!(
+                                "Unexpected struct kind and infer for struct path at {loc}\n\
+                                        \tkind: {kind:?}",
+                                loc = self.expr_location_ast(path),
+                                //type = self.new_type(infer).display(
+                                //    self.db,
+                                //    self.krate.to_display_target(self.db)
+                                //)
+                            );
+
+                            fcode!("new /* unexpected struct kind and infer */ UnknownType")
+                        }
+                    },
                     Ok(Some(hir::PathResolution::Def(hir::ModuleDef::Adt(adt)))) => {
                         // TODO: Generic Args
                         fcode!("new {}", self.rust_type_to_cs(&adt.ty(self.db)))
