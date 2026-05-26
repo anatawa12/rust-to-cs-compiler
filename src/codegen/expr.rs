@@ -2,7 +2,7 @@
 use std::collections::HashMap;
 
 use super::{CodeGenerator, names, output::Code};
-use crate::codegen::ty::{Constructable, TypeExt};
+use crate::codegen::ty::{Constructable, ConstructableDef, TypeExt};
 use hir::next_solver::GenericArgs;
 use hir::{Adt, InFile, Local, ModuleDef, PathResolution, StructKind, Variant};
 use itertools::Either;
@@ -379,33 +379,35 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     Ok(Some(hir::PathResolution::Def(hir::ModuleDef::Function(f)))) => {
                         self.fn_path_cs(f).into()
                     }
-                    Ok(Some(hir::PathResolution::Def(hir::ModuleDef::Adt(Adt::Struct(
-                        struct_,
-                    ))))) => match struct_.kind(self.db) {
-                        StructKind::Unit => {
-                            let ty_args = (self.sem.type_of_expr(expr).unwrap().original)
-                                .expect_adt_of(struct_.into());
-                            fcode!(
-                                "{}.instance",
-                                self.rust_type_to_cs(
-                                    &Adt::from(struct_).ty_with_args(self.db, ty_args)
+                    Ok(Some(hir::PathResolution::Def(module_def)))
+                        if let Some(def) = ConstructableDef::from_module_def(module_def) =>
+                    {
+                        match def.kind(self.db) {
+                            StructKind::Unit => {
+                                let ty_args = (self.sem.type_of_expr(expr).unwrap().original)
+                                    .expect_adt_of(def.adt(self.db));
+                                fcode!(
+                                    "{}.instance",
+                                    self.constructable_name_cs(&Constructable::new(def, ty_args))
                                 )
-                            )
-                        }
-                        kind => {
-                            eprintln!(
-                                "Unexpected struct kind and infer for struct path at {loc}\n\
+                            }
+                            kind => {
+                                eprintln!(
+                                    "Unexpected struct kind and infer for enum variant path at {loc}\n\
                                         \tkind: {kind:?}",
-                                loc = self.expr_location_ast(path),
-                                //type = self.new_type(infer).display(
-                                //    self.db,
-                                //    self.krate.to_display_target(self.db)
-                                //)
-                            );
+                                    loc = self.expr_location_ast(path),
+                                    //type = self.new_type(infer).display(
+                                    //    self.db,
+                                    //    self.krate.to_display_target(self.db)
+                                    //)
+                                );
 
-                            fcode!("new /* unexpected struct kind and infer */ UnknownType")
+                                fcode!(
+                                    "new /* unexpected struct/enum kind and infer */ UnknownType"
+                                )
+                            }
                         }
-                    },
+                    }
                     Ok(Some(hir::PathResolution::Def(hir::ModuleDef::Adt(adt)))) => {
                         // TODO: Generic Args
                         fcode!("new {}", self.rust_type_to_cs(&adt.ty(self.db)))
@@ -430,51 +432,11 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         path.into()
                     }
                     //Ok(Some(hir::PathResolution::Def(hir::ModuleDef::Adt(hir::Adt::Enum(enum_))))) => {} // handled above
-                    /*
-                    Ok(Some(hir::PathResolution::Def(hir::ModuleDef::EnumVariant(variant)))) => {
-                        // TODO: Generic Args
-                        fcode!(
-                            "new {}",
-                            self.enum_variant_cs1(
-                                variant,
-                                GenericArgs::error_for_item(
-                                    self.interner,
-                                    hir_def::EnumVariantId::from(variant).into()
-                                )
-                            )
-                        )
-                    }
-                     */
-                    Ok(Some(hir::PathResolution::Def(hir::ModuleDef::EnumVariant(
-                        enum_valiant,
-                    )))) => {
-                        match enum_valiant.kind(self.db) {
-                            StructKind::Unit => {
-                                let ty_args = (self.sem.type_of_expr(expr).unwrap().original)
-                                    .expect_adt_of(enum_valiant.parent_enum(self.db).into());
-                                fcode!("{}.instance", self.enum_variant_cs2(enum_valiant, ty_args))
-                            }
-                            kind => {
-                                eprintln!(
-                                    "Unexpected struct kind and infer for enum variant path at {loc}\n\
-                                        \tkind: {kind:?}",
-                                    loc = self.expr_location_ast(path),
-                                    //type = self.new_type(infer).display(
-                                    //    self.db,
-                                    //    self.krate.to_display_target(self.db)
-                                    //)
-                                );
-
-                                fcode!("new /* unexpected struct kind and infer */ UnknownType")
-                            }
-                        }
-                    }
                     Ok(Some(hir::PathResolution::TypeParam(param))) => {
                         eprintln!("GenericParam at {}", self.expr_location_ast(expr));
                         "(GenericParam)".into()
                     }
 
-                    //Ok(Some(hir::PathResolution::Def(hir::ModuleDef::EnumVariant(variant)))) => {}
                     Ok(Some(resolved)) => {
                         eprintln!(
                             "Path at {loc}: {resolved:?}",
@@ -596,20 +558,13 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 let args = call_expr.arg_list().unwrap().args();
                 if let ast::Expr::PathExpr(path) = &callee {
                     match self.sem.resolve_path(&path.path().unwrap()) {
-                        Some(PathResolution::Def(ModuleDef::EnumVariant(variant))) => {
+                        Some(PathResolution::Def(def))
+                            if let Some(def) = ConstructableDef::from_module_def(def) =>
+                        {
                             let expr_type = self.sem.type_of_expr(expr).unwrap().original;
-                            let generic_args =
-                                expr_type.expect_adt_of(variant.parent_enum(self.db).into());
-                            let callee_type = self.enum_variant_cs2(variant, generic_args);
-                            let args_str = args.map(|a| self.emit_expr_str_ast(&a));
-                            return code!("new ", callee_type, "(", join(args_str, ", "), ")");
-                        }
-                        Some(PathResolution::Def(ModuleDef::Adt(Adt::Struct(struct_)))) => {
-                            let expr_type = self.sem.type_of_expr(expr).unwrap().original;
-                            let generic_args = expr_type.expect_adt_of(struct_.into());
-                            let callee_type = self.rust_type_to_cs(
-                                &Adt::Struct(struct_).ty_with_args(self.db, generic_args),
-                            );
+                            let generic_args = expr_type.expect_adt_of(def.adt(self.db));
+                            let callee_type =
+                                self.constructable_name_cs(&Constructable::new(def, generic_args));
                             let args_str = args.map(|a| self.emit_expr_str_ast(&a));
                             return code!("new ", callee_type, "(", join(args_str, ", "), ")");
                         }
@@ -759,18 +714,13 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                             record_expr.syntax().text().to_string()
                         );
                     }
-                    Some(hir::Variant::Struct(struct_ty)) => {
+                    Some(variant) if let Some(def) = ConstructableDef::from_variant(variant) => {
                         let ty_args = (self.sem.type_of_expr(expr).unwrap().original)
-                            .expect_adt_of(struct_ty.into());
+                            .expect_adt_of(def.adt(self.db));
 
-                        Constructable::Struct(struct_ty, ty_args)
+                        Constructable::new(def, ty_args)
                     }
-                    Some(hir::Variant::EnumVariant(enum_valiant)) => {
-                        let ty_args = (self.sem.type_of_expr(expr).unwrap().original)
-                            .expect_adt_of(enum_valiant.parent_enum(self.db).into());
-                        Constructable::EnumVariant(enum_valiant, ty_args)
-                    }
-                    Some(hir::Variant::Union(_)) => {
+                    Some(_) => {
                         eprintln!("Union unsupported at {}", self.expr_location_ast(expr));
 
                         return fcode!(
@@ -983,31 +933,6 @@ impl<'g, 'db> BodyGen<'g, 'db> {
         }
     }
 
-    /// Emit a tuple-struct or enum-variant constructor call.
-    fn emit_constructor_call(&mut self, variant_id: Variant, args: &[ast::Expr]) -> Code {
-        match variant_id {
-            Variant::Struct(s) => {
-                let cs_name = names::struct_name(s.name(self.db).as_str());
-                let fields = s.fields(self.db);
-                if fields.is_empty() || args.is_empty() {
-                    return fcode!("new {}()", cs_name);
-                }
-                let inits = self.build_positional_field_inits(&fields, args);
-                code!(format("new {cs_name}()"), "{", join(inits, ", "), "}")
-            }
-            Variant::EnumVariant(v) => {
-                let cs_name = names::variant_name(v.name(self.db).as_str());
-                let fields = v.fields(self.db);
-                if fields.is_empty() || args.is_empty() {
-                    return fcode!("new {}()", cs_name);
-                }
-                let inits = self.build_positional_field_inits(&fields, args);
-                code!(format("new {cs_name}()"), "{", join(inits, ", "), "}")
-            }
-            Variant::Union(_) => "default! /* union ctor */".into(),
-        }
-    }
-
     fn build_positional_field_inits(
         &mut self,
         fields: &[hir::Field],
@@ -1060,20 +985,14 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 let path = tuple_struct.path().unwrap();
 
                 let (cs_type_name, field_count) = match self.sem.resolve_path(&path) {
-                    Some(PathResolution::Def(ModuleDef::EnumVariant(enum_valiant))) => {
+                    Some(PathResolution::Def(module_def))
+                        if let Some(def) = ConstructableDef::from_module_def(module_def) =>
+                    {
                         let ty_args = (self.sem.type_of_pat(pat).unwrap().original)
-                            .expect_adt_of(enum_valiant.parent_enum(self.db).into());
-                        let field_count = enum_valiant.fields(self.db).len();
-                        let cs_variant = self.enum_variant_cs2(enum_valiant, ty_args);
-                        (cs_variant, field_count)
-                    }
-                    Some(PathResolution::Def(ModuleDef::Adt(Adt::Struct(struct_def)))) => {
-                        let ty_args = (self.sem.type_of_pat(pat).unwrap().original)
-                            .expect_adt_of(struct_def.into());
-                        let field_count = struct_def.fields(self.db).len();
-                        let cs_variant = self.rust_type_to_cs(
-                            &Adt::Struct(struct_def).ty_with_args(self.db, ty_args),
-                        );
+                            .expect_adt_of(def.adt(self.db));
+                        let field_count = def.fields(self.db).len();
+                        let cs_variant =
+                            self.constructable_name_cs(&Constructable::new(def, ty_args));
                         (cs_variant, field_count)
                     }
                     resolved => {
@@ -1102,17 +1021,12 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     Some(PathResolution::Def(ModuleDef::Const(const_))) => {
                         code!(self.const_path_cs(const_))
                     }
-                    Some(PathResolution::Def(ModuleDef::EnumVariant(enum_valiant))) => {
+                    Some(PathResolution::Def(module_def))
+                        if let Some(def) = ConstructableDef::from_module_def(module_def) =>
+                    {
                         let ty_args = (self.sem.type_of_pat(pat).unwrap().original)
-                            .expect_adt_of(enum_valiant.parent_enum(self.db).into());
-                        code!(self.enum_variant_cs2(enum_valiant, ty_args))
-                    }
-                    Some(PathResolution::Def(ModuleDef::Adt(Adt::Struct(struct_def)))) => {
-                        let ty_args = (self.sem.type_of_pat(pat).unwrap().original)
-                            .expect_adt_of(struct_def.into());
-                        code!(self.rust_type_to_cs(
-                            &Adt::Struct(struct_def).ty_with_args(self.db, ty_args),
-                        ))
+                            .expect_adt_of(def.adt(self.db));
+                        code!(self.constructable_name_cs(&Constructable::new(def, ty_args)))
                     }
                     resolved => {
                         eprintln!(
@@ -1126,20 +1040,14 @@ impl<'g, 'db> BodyGen<'g, 'db> {
             ast::Pat::RecordPat(record_pat) => {
                 let path = record_pat.path().unwrap();
                 let (cs_type_name, field_count) = match self.sem.resolve_path(&path) {
-                    Some(PathResolution::Def(ModuleDef::EnumVariant(enum_valiant))) => {
+                    Some(PathResolution::Def(module_def))
+                        if let Some(def) = ConstructableDef::from_module_def(module_def) =>
+                    {
                         let ty_args = (self.sem.type_of_pat(pat).unwrap().original)
-                            .expect_adt_of(enum_valiant.parent_enum(self.db).into());
-                        let field_count = enum_valiant.fields(self.db).len();
-                        let cs_variant = self.enum_variant_cs2(enum_valiant, ty_args);
-                        (cs_variant, field_count)
-                    }
-                    Some(PathResolution::Def(ModuleDef::Adt(Adt::Struct(struct_def)))) => {
-                        let ty_args = (self.sem.type_of_pat(pat).unwrap().original)
-                            .expect_adt_of(struct_def.into());
-                        let field_count = struct_def.fields(self.db).len();
-                        let cs_variant = self.rust_type_to_cs(
-                            &Adt::Struct(struct_def).ty_with_args(self.db, ty_args),
-                        );
+                            .expect_adt_of(def.adt(self.db));
+                        let field_count = def.fields(self.db).len();
+                        let cs_variant =
+                            self.constructable_name_cs(&Constructable::new(def, ty_args));
                         (cs_variant, field_count)
                     }
                     resolved => {

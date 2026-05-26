@@ -465,11 +465,14 @@ impl<'db> CodeGenerator<'db> {
     }
 
     pub fn constructable_name_cs(&self, c: &Constructable<'db>) -> String {
-        match c {
-            Constructable::Struct(s, args) => {
-                self.rust_type_to_cs(&Adt::Struct(*s).ty_with_args(self.db, args.clone()))
+        match c.def {
+            ConstructableDef::Struct(s) => {
+                self.rust_type_to_cs(&Adt::Struct(s).ty_with_args(self.db, c.args.clone()))
             }
-            Constructable::EnumVariant(v, args) => self.enum_variant_cs2(*v, args.clone()),
+            ConstructableDef::EnumVariant(v) => self.enum_variant_cs2(v, c.args.clone()),
+            //hir::Variant::Union(u) => {
+            //    self.rust_type_to_cs(&Adt::Union(u).ty_with_args(self.db, c.args.clone()))
+            //}
         }
     }
 }
@@ -997,19 +1000,98 @@ mod ty_and_type {
     }
 }
 
-// TODO: Generic Args
-#[derive(Debug, Clone)]
-pub enum Constructable<'db> {
-    Struct(hir::Struct, Vec<Type<'db>>),
-    EnumVariant(hir::EnumVariant, Vec<Type<'db>>),
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum ConstructableDef {
+    Struct(hir::Struct),
+    EnumVariant(hir::EnumVariant),
+}
+
+impl From<hir::Struct> for ConstructableDef {
+    fn from(value: hir::Struct) -> Self {
+        ConstructableDef::Struct(value)
+    }
+}
+
+impl From<hir::EnumVariant> for ConstructableDef {
+    fn from(value: hir::EnumVariant) -> Self {
+        ConstructableDef::EnumVariant(value)
+    }
+}
+
+impl ConstructableDef {
+    pub fn from_variant(variant: hir::Variant) -> Option<Self> {
+        match variant {
+            hir::Variant::Struct(s) => Some(Self::Struct(s)),
+            hir::Variant::EnumVariant(e) => Some(Self::EnumVariant(e)),
+            _ => None,
+        }
+    }
+
+    pub fn from_module_def(resolution: hir::ModuleDef) -> Option<Self> {
+        match resolution {
+            hir::ModuleDef::EnumVariant(variant) => Some(variant.into()),
+            hir::ModuleDef::Adt(hir::Adt::Struct(variant)) => Some(variant.into()),
+            _ => None,
+        }
+    }
+
+    pub fn fields(self, db: &dyn HirDatabase) -> Vec<hir::Field> {
+        match self {
+            Self::Struct(it) => it.fields(db),
+            Self::EnumVariant(it) => it.fields(db),
+        }
+    }
+
+    pub fn module(self, db: &dyn HirDatabase) -> Module {
+        match self {
+            Self::Struct(it) => it.module(db),
+            Self::EnumVariant(it) => it.module(db),
+        }
+    }
+
+    pub fn name(&self, db: &dyn HirDatabase) -> Name {
+        match self {
+            Self::Struct(s) => (*s).name(db),
+            Self::EnumVariant(e) => (*e).name(db),
+        }
+    }
+
+    pub fn adt(&self, db: &dyn HirDatabase) -> Adt {
+        match *self {
+            Self::Struct(it) => it.into(),
+            Self::EnumVariant(it) => it.parent_enum(db).into(),
+        }
+    }
+
+    pub fn kind(&self, db: &dyn HirDatabase) -> hir::StructKind {
+        match *self {
+            Self::Struct(it) => it.kind(db),
+            Self::EnumVariant(it) => it.kind(db),
+        }
+    }
+}
+
+pub struct Constructable<'db> {
+    pub def: ConstructableDef,
+    pub args: Vec<Type<'db>>,
 }
 
 impl<'db> Constructable<'db> {
+    pub fn new(def: ConstructableDef, args: Vec<Type<'db>>) -> Self {
+        Self { def, args }
+    }
+
     pub fn fields(&self, db: &dyn HirDatabase) -> Vec<hir::Field> {
-        match self {
-            Constructable::Struct(s, _) => s.fields(db),
-            Constructable::EnumVariant(v, _) => v.fields(db),
-        }
+        self.def.fields(db)
+    }
+}
+
+pub fn variant_from_module_def(resolution: hir::ModuleDef) -> Option<hir::Variant> {
+    match resolution {
+        hir::ModuleDef::EnumVariant(variant) => Some(variant.into()),
+        hir::ModuleDef::Adt(hir::Adt::Struct(variant)) => Some(variant.into()),
+        hir::ModuleDef::Adt(hir::Adt::Union(variant)) => Some(variant.into()),
+        _ => None,
     }
 }
 
