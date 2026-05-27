@@ -329,6 +329,9 @@ impl<'db> CodeGenerator<'db> {
     }
 
     pub fn trait_itf_cs(&self, t: Trait) -> String {
+        if Some(t.into()) == self.lang_items.Future {
+            return "r2CsRuntime.RustTask".into();
+        }
         let mut path = self.module_class_cs(t.module(self.db));
         path.push('.');
         path.push_str(&names::trait_name(t.name(self.db).as_str()));
