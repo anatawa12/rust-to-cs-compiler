@@ -391,6 +391,15 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                                     self.constructable_name_cs(&Constructable::new(def, ty_args))
                                 )
                             }
+                            StructKind::Tuple => {
+                                let fn_type = self.sem.type_of_expr(expr).unwrap().original;
+                                let ret_ty = fn_type.as_callable(self.db).unwrap().return_type();
+                                let ty_args = ret_ty.expect_adt_of(def.adt(self.db));
+                                fcode!(
+                                    "{}.ctor",
+                                    self.constructable_name_cs(&Constructable::new(def, ty_args))
+                                )
+                            }
                             kind => {
                                 eprintln!(
                                     "Unexpected struct kind and infer for enum variant path at {loc}\n\
