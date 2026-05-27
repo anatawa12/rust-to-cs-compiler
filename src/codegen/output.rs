@@ -191,8 +191,7 @@ macro_rules! code {
     };
 
     (@args [$output: expr] [join($iter:expr, $sep: expr) $(, $($rem:tt)*)?]) => {
-        {
-            let mut it = ::core::iter::IntoIterator::into_iter($iter);
+        {match ::core::iter::IntoIterator::into_iter($iter) { mut it => {
             let sep = $sep;
             if let Some(first) = it.next() {
                 $output.w(first);
@@ -201,7 +200,7 @@ macro_rules! code {
                     $output.w(&second);
                 }
             }
-        }
+        }}}
 
         $crate::codegen::output::code!(@args [$output] [$($($rem)*)?]);
     };

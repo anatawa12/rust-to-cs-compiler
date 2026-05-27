@@ -12,6 +12,7 @@ use crate::codegen::decl::{
 };
 use crate::codegen::id_map::IdMap;
 use crate::codegen::names::mod_name;
+use crate::codegen::ty::ConstructableDef;
 use hir::{
     Adt, AssocItem, Crate, GenericDef, HasSource, HirFileId, Impl, InFile, Module, ModuleDef, Name,
     Semantics, StructKind, TypeParam, db::HirDatabase,
@@ -297,17 +298,8 @@ impl<'db> CodeGenerator<'db> {
                 ));
                 out.open_brace();
 
-                // Fields
-                for field in s.fields(db) {
-                    let f_ty_ns = field.ty(db);
-                    let f_ty = f_ty_ns.to_type(db);
-                    let cs_ty = self.rust_type_to_cs(&f_ty);
-                    let f_name = names::field_name(field.name(db).as_str());
-                    out.wln(format!("public {} {} = default!;", cs_ty, f_name));
-                }
-                if !s.fields(db).is_empty() {
-                    out.blank_line();
-                }
+                self.emit_constructable_def(out, &cs_name, s.into());
+                out.blank_line();
 
                 // Methods from all impl blocks
                 for impl_ in impls {
@@ -341,46 +333,8 @@ impl<'db> CodeGenerator<'db> {
                     ));
                     out.wln(format!("public sealed partial class {v_name}",));
                     out.open_brace();
-                    for field in &fields {
-                        let f_ty_ns = field.ty(db);
-                        let f_ty = f_ty_ns.to_type(db);
-                        let cs_ty = self.rust_type_to_cs(&f_ty);
-                        let f_name = names::field_name(field.name(db).as_str());
-                        out.wln(format!("public {} {} = default!;", cs_ty, f_name));
-                    }
-                    match variant.kind(self.db) {
-                        StructKind::Record => {}
-                        StructKind::Tuple => {
-                            out.wln(format!(
-                                "public {v_name}({params})",
-                                params = fields
-                                    .iter()
-                                    .map(|field| {
-                                        format!(
-                                            "{} {}",
-                                            self.rust_type_to_cs(&field.ty(db).to_type(db)),
-                                            names::field_name(field.name(db).as_str())
-                                        )
-                                    })
-                                    .join(", ")
-                            ));
-                            out.open_brace();
 
-                            for field in &fields {
-                                let f_name = names::field_name(field.name(db).as_str());
-                                out.wln(format!("this.{f_name} = {f_name};"));
-                            }
-                            out.close_brace();
-                        }
-                        StructKind::Unit => {
-                            out.w("private ").w(&v_name).wln("(){}");
-                            out.w("public static ")
-                                .w(&v_name)
-                                .w(" instance = new ")
-                                .w(&v_name)
-                                .wln("();");
-                        }
-                    }
+                    self.emit_constructable_def(out, &v_name, variant.into());
                     out.close_brace();
                     out.blank_line();
                 }
@@ -395,6 +349,65 @@ impl<'db> CodeGenerator<'db> {
             }
             Adt::Union(_) => {
                 // Skip unions
+            }
+        }
+    }
+
+    fn emit_constructable_def(&self, out: &mut Code, cs_name: &str, s: ConstructableDef) {
+        let db = self.db;
+
+        // Fields
+        for field in s.fields(db) {
+            let f_ty_ns = field.ty(db);
+            let f_ty = f_ty_ns.to_type(db);
+            let cs_ty = self.rust_type_to_cs(&f_ty);
+            let f_name = names::field_name(field.name(db).as_str());
+            out.wln(format!("public {} {} = default!;", cs_ty, f_name));
+        }
+
+        match s.kind(self.db) {
+            StructKind::Record => {}
+            StructKind::Tuple => {
+                if !s.fields(db).is_empty() {
+                    out.blank_line();
+                }
+                // create tuple constructor
+                out.w(code!(
+                    "public static ",
+                    cs_name,
+                    " ctor(",
+                    join(
+                        s.fields(db).iter().map(|field| {
+                            let f_ty_ns = field.ty(db);
+                            let f_ty = f_ty_ns.to_type(db);
+                            let cs_ty = self.rust_type_to_cs(&f_ty);
+                            let f_name = names::field_name(field.name(db).as_str());
+                            code!(cs_ty, " ", f_name)
+                        }),
+                        ", "
+                    ),
+                    ") => new ",
+                    cs_name,
+                    "() {\n",
+                    indent,
+                    join(
+                        s.fields(db).iter().map(|field| {
+                            let f_name = names::field_name(field.name(db).as_str());
+                            code!(f_name, " = ", f_name, ",\n")
+                        }),
+                        ""
+                    ),
+                    dedent,
+                    "};\n"
+                ));
+            }
+            StructKind::Unit => {
+                out.w("private ").w(cs_name).wln("(){}");
+                out.w("public static ")
+                    .w(cs_name)
+                    .w(" instance = new ")
+                    .w(cs_name)
+                    .wln("();");
             }
         }
     }

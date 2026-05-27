@@ -566,7 +566,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                             let callee_type =
                                 self.constructable_name_cs(&Constructable::new(def, generic_args));
                             let args_str = args.map(|a| self.emit_expr_str_ast(&a));
-                            return code!("new ", callee_type, "(", join(args_str, ", "), ")");
+                            return code!(callee_type, ".ctor(", join(args_str, ", "), ")");
                         }
                         _ => {}
                     }
