@@ -60,6 +60,12 @@ impl<'db> CodeGenerator<'db> {
             if fields.is_empty() {
                 return "global::System.ValueTuple".to_string();
             }
+            if fields.len() == 1 {
+                return format!(
+                    "global::System.ValueTuple<{}>",
+                    self.rust_type_to_cs_inner(&fields[0], false)
+                );
+            }
             let parts: Vec<String> = fields
                 .iter()
                 .map(|t| self.rust_type_to_cs_inner(t, false))
