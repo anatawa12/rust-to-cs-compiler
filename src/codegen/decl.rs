@@ -100,7 +100,7 @@ impl<'db> CodeGenerator<'db> {
         let name = s.name(db);
         let cs_name = names::struct_name(name.as_str());
         let gen_params = GenericDef::from(s).params(db);
-        let (tp_names, _) = self.generic_params_cs(&gen_params, db);
+        let (tp_names, _) = self.generic_params_cs(&gen_params);
         let generics = self.format_generics(&tp_names);
 
         out.wln(&format!("public class {}{}", cs_name, generics));
@@ -125,7 +125,7 @@ impl<'db> CodeGenerator<'db> {
         let name = e.name(db);
         let cs_name = names::struct_name(name.as_str());
         let gen_params = GenericDef::from(e).params(db);
-        let (tp_names, _) = self.generic_params_cs(&gen_params, db);
+        let (tp_names, _) = self.generic_params_cs(&gen_params);
         let generics = self.format_generics(&tp_names);
 
         out.wln(format!("public class {}{}", cs_name, generics));
@@ -163,21 +163,21 @@ impl<'db> CodeGenerator<'db> {
         let cs_dyn_iface = names::dyn_trait_name(name.as_str());
 
         let gen_params = GenericDef::from(t).params(db);
-        let (tp_names, _) = self.generic_params_cs(&gen_params, db);
+        let (mut all_params, mut constraints) = self.generic_params_cs(&gen_params);
 
-        // Build generic list with "Self" first
-        let mut all_params = vec![];
-        all_params.extend(tp_names.iter().cloned());
+        // For non-dyn compatible trait, we insert 'Self' type parameter
+        if t.dyn_compatibility(db).is_some() {
+            all_params.insert(0, "P_Self".into());
+            constraints.push(format!("P_Self : {}<{}>", cs_iface, all_params.join(", ")));
+        }
+
         let generics = format!("<{}>", all_params.join(", "));
-
-        // F-bounded self constraint
-        let self_iface_args = tp_names.join(", ");
-        let self_bound = format!("P_Self : {}<{}>", cs_iface, self_iface_args);
-
-        writeln!(
-            out,
-            "public interface {cs_iface}{generics} where {self_bound}"
-        );
+        writeln!(out, "public interface {cs_iface}{generics}");
+        out.indent();
+        for constraint in constraints {
+            out.w("where ").wln(constraint);
+        }
+        out.dedent();
         out.open_brace();
 
         for item in t.items(db) {
@@ -260,7 +260,7 @@ impl<'db> CodeGenerator<'db> {
         let params = self.build_param_list(f);
 
         let gen_params = GenericDef::from(f).params(db);
-        let (tp_names, _) = self.generic_params_cs(&gen_params, db);
+        let (tp_names, _) = self.generic_params_cs(&gen_params);
         let generics = self.format_generics(&tp_names);
 
         // Determine the class this method belongs to

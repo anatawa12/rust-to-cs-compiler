@@ -275,7 +275,7 @@ impl<'db> CodeGenerator<'db> {
         }
 
         let gen_params = GenericDef::from(adt).params(db);
-        let (tp_names, _) = self.generic_params_cs(&gen_params, db);
+        let (tp_names, _) = self.generic_params_cs(&gen_params);
         let generics = if tp_names.is_empty() {
             String::new()
         } else {

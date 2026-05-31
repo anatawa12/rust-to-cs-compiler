@@ -3,7 +3,7 @@ use crate::codegen::names::mod_name;
 /// Converts Rust HIR types to C# type strings.
 use hir::db::HirDatabase;
 use hir::next_solver::GenericArgs;
-use hir::{Adt, BuiltinType, HasContainer, ItemContainer, Module, Name, Trait, Type};
+use hir::{Adt, BuiltinType, HasContainer, ItemContainer, Module, Name, Trait, Type, sym};
 use hir_ty::display::HirDisplay;
 use ide_db::base_db;
 use rustc_type_ir::inherent::IntoKind;
@@ -87,7 +87,7 @@ impl<'db> CodeGenerator<'db> {
             }
         } else if let Some(trait_) = ty.as_dyn_trait() {
             // dyn Trait → T_TraitName (dyn interface)
-            names::dyn_trait_name(trait_.name(db).as_str())
+            self.trait_itf_cs(trait_)
         } else if let Some(param) = ty.as_type_param(db) {
             // Generic parameter
             let name = param.name(db).as_str().to_string();
@@ -277,16 +277,19 @@ impl<'db> CodeGenerator<'db> {
     }
 
     /// Format a C# generic argument list for a function/type.
-    pub fn generic_params_cs(
-        &self,
-        params: &[hir::GenericParam],
-        db: &dyn HirDatabase,
-    ) -> (Vec<String>, Vec<String>) {
+    pub fn generic_params_cs(&self, params: &[hir::GenericParam]) -> (Vec<String>, Vec<String>) {
+        let db = self.db;
+
         let mut type_params = Vec::new();
         let mut constraints = Vec::new();
 
         for param in params {
             match param {
+                hir::GenericParam::TypeParam(param)
+                    if param.is_implicit(db) && param.name(db) == sym::Self_ =>
+                {
+                    // self is proceed externally
+                }
                 hir::GenericParam::TypeParam(param) => {
                     let name = names::generic_param(param.name(db).as_str());
                     type_params.push(if !param.name(db).is_missing() {
