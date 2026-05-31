@@ -978,8 +978,24 @@ impl<'g, 'db> BodyGen<'g, 'db> {
             ast::Pat::IdentPat(ident_pat)
                 if let Some(const_ref) = self.sem.resolve_bind_pat_to_const(ident_pat) =>
             {
-                // TODO
-                code!(format!("{:?}", const_ref))
+                match const_ref {
+                    ModuleDef::EnumVariant(variant) => {
+                        let ty_args = (self.sem.type_of_pat(pat).unwrap().original)
+                            .expect_adt_of(variant.parent_enum(self.db).into());
+
+                        fcode!(
+                            "{}",
+                            self.constructable_name_cs(&Constructable::new(
+                                variant.into(),
+                                ty_args
+                            ))
+                        )
+                    }
+                    _ => {
+                        // TODO
+                        code!(format!("{:?}", const_ref))
+                    }
+                }
             }
             ast::Pat::IdentPat(ident_pat) => {
                 let local = self.sem.to_def(ident_pat).unwrap();
