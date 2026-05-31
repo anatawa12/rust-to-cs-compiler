@@ -3,10 +3,13 @@ use crate::codegen::names::mod_name;
 /// Converts Rust HIR types to C# type strings.
 use hir::db::HirDatabase;
 use hir::next_solver::GenericArgs;
-use hir::{Adt, BuiltinType, HasContainer, ItemContainer, Module, Name, Trait, Type, sym};
+use hir::{
+    Adt, AssocItem, BuiltinType, HasContainer, ItemContainer, Module, Name, Trait, Type, sym,
+};
 use hir_ty::display::HirDisplay;
 use ide_db::base_db;
-use rustc_type_ir::inherent::IntoKind;
+use itertools::Itertools;
+use rustc_type_ir::inherent::{IntoKind, SliceLike};
 
 impl<'db> CodeGenerator<'db> {
     pub fn rust_type_to_cs(&self, ty: &Type<'db>) -> String {
@@ -291,13 +294,47 @@ impl<'db> CodeGenerator<'db> {
                     // self is proceed externally
                 }
                 hir::GenericParam::TypeParam(param) => {
-                    let name = names::generic_param(param.name(db).as_str());
-                    type_params.push(if !param.name(db).is_missing() {
-                        name
+                    let name = if !param.name(db).is_missing() {
+                        names::generic_param(param.name(db).as_str())
                     } else {
                         format!("/* implicit */ {}", self.impl_ty_param_id.id_name(param))
-                    });
-                    // TODO: add where clauses from bounds
+                    };
+
+                    type_params.push(name.clone());
+
+                    let traits = param.trait_bounds_with_args(db);
+                    if !traits.is_empty() {
+                        let mut cs_constraints = vec![];
+                        for &(t, ref args) in &traits {
+                            let mut constraint = self.trait_itf_cs(t);
+                            let mut args = args
+                                .iter()
+                                .map(|t| self.rust_type_to_cs(t))
+                                .collect::<Vec<_>>();
+
+                            if t.dyn_compatibility(db).is_none() {
+                                args.remove(0);
+                            }
+
+                            for item in t.items(db) {
+                                let AssocItem::TypeAlias(a) = item else {
+                                    continue;
+                                };
+
+                                let assoc_name = format!("{}_{}", name, a.name(db).as_str());
+                                type_params.push(assoc_name.clone());
+                                args.push(assoc_name);
+                            }
+
+                            if !args.is_empty() {
+                                constraint.push('<');
+                                constraint.push_str(&args.join(", "));
+                                constraint.push('>');
+                            }
+                            cs_constraints.push(constraint);
+                        }
+                        constraints.push(format!("{name} : {}", cs_constraints.join(", ")));
+                    }
                 }
                 hir::GenericParam::ConstParam(_cp) => {
                     // C# doesn't support const generics in the same way; skip for now
@@ -885,6 +922,11 @@ pub trait TyFromType<'db> {
         db: &'db dyn HirDatabase,
         krate: base_db::Crate,
     ) -> Self;
+    fn from_ty_resolver(
+        ty: hir::next_solver::Ty<'db>,
+        db: &'db dyn HirDatabase,
+        resolver: &hir_def::resolver::Resolver<'_>,
+    ) -> Self;
 }
 
 mod ty_and_type {
@@ -914,6 +956,19 @@ mod ty_and_type {
             unsafe {
                 std::mem::transmute::<TypeMap<'db>, Self>(TypeMap {
                     env: ty_env(db, krate, ty),
+                    ty,
+                })
+            }
+        }
+
+        fn from_ty_resolver(
+            ty: hir::next_solver::Ty<'db>,
+            db: &'db dyn HirDatabase,
+            resolver: &hir_def::resolver::Resolver<'_>,
+        ) -> Self {
+            unsafe {
+                std::mem::transmute::<TypeMap<'db>, Self>(TypeMap {
+                    env: param_env_from_resolver(db, resolver),
                     ty,
                 })
             }
@@ -1119,5 +1174,48 @@ impl<'db> TypeExt<'db> for Type<'db> {
         assert_eq!(adt_of_ty, adt, "expected adt of {adt:?} but was {self:?}");
 
         types.into_iter().flatten().collect()
+    }
+}
+
+pub trait TypeParamExt {
+    fn trait_bounds_with_args(self, db: &'_ dyn HirDatabase) -> Vec<(Trait, Vec<Type>)>;
+}
+
+mod ty_param_ext {
+    use crate::codegen::ty::{TyFromType, TypeParamExt};
+    use hir::{Trait, Type, TypeParam};
+    use hir_def::TypeParamId;
+    use hir_def::resolver::HasResolver;
+    use hir_ty::GenericPredicates;
+    use hir_ty::db::HirDatabase;
+    use hir_ty::next_solver::{ClauseKind, GenericArgKind};
+    use rustc_type_ir::inherent::IntoKind;
+
+    impl TypeParamExt for TypeParam {
+        fn trait_bounds_with_args(self, db: &'_ dyn HirDatabase) -> Vec<(Trait, Vec<Type>)> {
+            let self_ty = self.ty(db).ns_ty();
+            let resolver = TypeParamId::from(self).parent().resolver(db);
+            GenericPredicates::query_explicit(db, TypeParamId::from(self).parent())
+                .iter_identity()
+                .filter_map(|pred| match &pred.kind().skip_binder() {
+                    ClauseKind::Trait(trait_ref) if trait_ref.self_ty() == self_ty => {
+                        let types = trait_ref
+                            .trait_ref
+                            .args
+                            .as_slice()
+                            .iter()
+                            .flat_map(|arg| match arg.kind() {
+                                GenericArgKind::Type(ty) => {
+                                    Some(Type::from_ty_resolver(ty, db, &resolver))
+                                }
+                                _ => None,
+                            })
+                            .collect();
+                        Some((Trait::from(trait_ref.def_id().0), types))
+                    }
+                    _ => None,
+                })
+                .collect()
+        }
     }
 }

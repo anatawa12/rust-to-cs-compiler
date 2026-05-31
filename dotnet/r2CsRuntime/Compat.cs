@@ -12,4 +12,6 @@ namespace System.Runtime.CompilerServices
 
     [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = false)]
     public class UnionAttribute : Attribute {}
+    public class RequiredMemberAttribute : Attribute {}
+    public class CompilerFeatureRequiredAttribute : Attribute {}
 }

@@ -275,7 +275,7 @@ impl<'db> CodeGenerator<'db> {
         }
 
         let gen_params = GenericDef::from(adt).params(db);
-        let (tp_names, _) = self.generic_params_cs(&gen_params);
+        let (tp_names, constraints) = self.generic_params_cs(&gen_params);
         let generics = if tp_names.is_empty() {
             String::new()
         } else {
@@ -296,6 +296,11 @@ impl<'db> CodeGenerator<'db> {
                 out.wln(format!(
                     "public partial class {cs_name}{generics}{interfaces_part}",
                 ));
+                out.indent();
+                for constraint in constraints {
+                    out.w("where ").wln(constraint);
+                }
+                out.dedent();
                 out.open_brace();
 
                 self.emit_constructable_def(out, &cs_name, s.into());
@@ -315,6 +320,11 @@ impl<'db> CodeGenerator<'db> {
                     "public sealed partial class {}{}{}",
                     cs_name, generics, interfaces_part
                 ));
+                out.indent();
+                for constraint in constraints {
+                    out.w("where ").wln(constraint);
+                }
+                out.dedent();
                 out.open_brace();
                 out.wln("private object inner;");
                 out.wln("public object Value => inner;");
@@ -326,7 +336,6 @@ impl<'db> CodeGenerator<'db> {
                 // Variants
                 for variant in e.variants(db) {
                     let v_name = names::variant_name(variant.name(db).as_str());
-                    let fields = variant.fields(db);
                     out.wln(format!(
                         "public {}({v_name} value) => inner = value;",
                         cs_name

@@ -165,13 +165,26 @@ impl<'db> CodeGenerator<'db> {
         let gen_params = GenericDef::from(t).params(db);
         let (mut all_params, mut constraints) = self.generic_params_cs(&gen_params);
 
+        for item in t.items(db) {
+            let AssocItem::TypeAlias(a) = item else {
+                continue;
+            };
+
+            let a_name = names::assoc_type_param(a.name(db).as_str());
+            all_params.push(a_name);
+        }
+
         // For non-dyn compatible trait, we insert 'Self' type parameter
         if t.dyn_compatibility(db).is_some() {
             all_params.insert(0, "P_Self".into());
             constraints.push(format!("P_Self : {}<{}>", cs_iface, all_params.join(", ")));
         }
 
-        let generics = format!("<{}>", all_params.join(", "));
+        let generics = if all_params.is_empty() {
+            String::new()
+        } else {
+            format!("<{}>", all_params.join(", "))
+        };
         writeln!(out, "public interface {cs_iface}{generics}");
         out.indent();
         for constraint in constraints {
@@ -260,7 +273,7 @@ impl<'db> CodeGenerator<'db> {
         let params = self.build_param_list(f);
 
         let gen_params = GenericDef::from(f).params(db);
-        let (tp_names, _) = self.generic_params_cs(&gen_params);
+        let (tp_names, constraints) = self.generic_params_cs(&gen_params);
         let generics = self.format_generics(&tp_names);
 
         // Determine the class this method belongs to
@@ -275,16 +288,27 @@ impl<'db> CodeGenerator<'db> {
             );
             writeln!(
                 out,
-                "public {is_static_kw} partial {cs_ret} {m_name}{generics}({params});",
+                "public {is_static_kw} partial {cs_ret} {m_name}{generics}({params})",
             );
+            out.indent();
+            for constraint in constraints {
+                out.w("where ").wln(constraint);
+            }
+            out.dedent();
+            out.wln(";");
             return;
         }
         writeln!(out, "// method on {}", cs_self);
         writeln!(
             out,
-            "public {is_static_kw}{async_kw}{cs_ret} {m_name}{generics}({params}) {{",
+            "public {is_static_kw}{async_kw}{cs_ret} {m_name}{generics}({params})",
         );
         out.indent();
+        for constraint in constraints {
+            out.w("where ").wln(constraint);
+        }
+        out.dedent();
+        out.open_brace();
 
         // Try to generate a real body using BodyGen
         let mut body_gen = BodyGen::new(self, is_async);
