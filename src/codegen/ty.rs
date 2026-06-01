@@ -182,7 +182,6 @@ impl<'db> CodeGenerator<'db> {
                     cs_type.push_str(&cs_generic_args.join(", "));
                     cs_type.push('>');
                 }
-                // TODO: Associated types as generic parameters
                 if Some(trait_.into()) == self.lang_items.Future {
                     ty.normalize_trait_assoc_type(
                         db,
@@ -387,24 +386,55 @@ impl<'db> CodeGenerator<'db> {
         (type_params, constraints)
     }
 
-    pub fn trait_itf_cs1(
-        &self,
-        trait_: Trait,
-        args: GenericArgs,
-        self_ty: Option<&Type<'db>>,
-    ) -> String {
+    pub fn trait_itf_cs1(&self, trait_: Trait, args: GenericArgs<'db>) -> String {
+        self.trait_itf_cs2(trait_, self.generic_args_to_types(args).collect())
+    }
+
+    pub fn trait_itf_cs2(&self, trait_: Trait, args: Vec<Type<'db>>) -> String {
         let db = self.db;
 
-        // TODO: args
-        if !trait_.with_self_in_cs(db) {
-            self.trait_itf_cs(trait_)
-        } else {
-            let mut path = self.trait_itf_cs(trait_);
-            path.push('<');
-            path.push_str(&self.rust_type_to_cs(self_ty.unwrap()));
-            path.push('>');
-            path
+        let mut cs_type_params = Vec::new();
+
+        for x in &args {
+            cs_type_params.push(self.rust_type_to_cs_inner(x, false));
         }
+
+        if !trait_.with_self_in_cs(db) && !cs_type_params.is_empty() {
+            cs_type_params.remove(0);
+        }
+
+        let self_ty = &args[0];
+        for alias in trait_.assoc_types(db) {
+            match self_ty
+                .normalize_trait_assoc_type(db, &args, alias)
+                .map(|x| self.resolve_assoc_of_impl(&x))
+            {
+                None => {
+                    eprintln!(
+                        "Failed to resolve type {alias} of {ty}",
+                        alias = alias.display(db, self.display_target()),
+                        ty = self_ty.display(db, self.display_target())
+                    );
+                    cs_type_params.push(format!(
+                        "void /* {alias} of {ty} */",
+                        alias = alias.display(db, self.display_target()),
+                        ty = self_ty.display(db, self.display_target()),
+                    ));
+                }
+                Some(ty) => {
+                    cs_type_params.push(self.rust_type_to_cs(&ty));
+                }
+            }
+        }
+
+        let mut path = self.trait_itf_cs(trait_);
+        if !cs_type_params.is_empty() {
+            path.push('<');
+            path.push_str(&cs_type_params.join(", "));
+            path.push('>');
+        }
+
+        path
     }
 
     pub fn trait_itf_cs(&self, t: Trait) -> String {

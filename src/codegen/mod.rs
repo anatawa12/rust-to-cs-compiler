@@ -263,13 +263,24 @@ impl<'db> CodeGenerator<'db> {
         let mut trait_interfaces: Vec<String> = Vec::new();
         for &impl_ in impls {
             if let Some(trait_) = impl_.trait_(db) {
-                let args = match AnyImplId::from(impl_) {
+                let cs_iface = match AnyImplId::from(impl_) {
                     AnyImplId::ImplId(impl_id) => {
-                        db.impl_trait(impl_id).unwrap().skip_binder().args
+                        let args = db.impl_trait(impl_id).unwrap().skip_binder().args;
+                        self.trait_itf_cs1(trait_, args)
                     }
-                    AnyImplId::BuiltinDeriveImplId(_) => GenericArgs::empty(self.interner),
+                    AnyImplId::BuiltinDeriveImplId(_) => {
+                        let self_ty = impl_.self_ty(db);
+                        let mut args = vec![self_ty.clone()];
+
+                        if self.lang_items.PartialEq == Some(trait_.into()) {
+                            args.push(self_ty.clone());
+                        } else if self.lang_items.PartialOrd == Some(trait_.into()) {
+                            args.push(self_ty.clone());
+                        }
+
+                        self.trait_itf_cs2(trait_, args)
+                    }
                 };
-                let cs_iface = self.trait_itf_cs1(trait_, args, Some(&impl_.self_ty(db)));
                 trait_interfaces.push(cs_iface);
             }
         }
