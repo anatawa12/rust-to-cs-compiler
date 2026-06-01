@@ -197,7 +197,7 @@ impl<'db> CodeGenerator<'db> {
                 }
                 AssocItem::Const(c) => {
                     if let Some(cn) = c.name(db) {
-                        let c_name = names::method_name(cn.as_str());
+                        let c_name = names::const_name(cn.as_str());
                         let c_ty = self.rust_type_to_cs(&c.ty(db));
                         out.wln(&format!("{} {}(); // const", c_ty, c_name));
                     }
@@ -225,7 +225,7 @@ impl<'db> CodeGenerator<'db> {
         let is_async = f.is_async(db);
         let ret_ty = f.ret_type(db);
         let cs_ret = self.cs_ret_type(is_async, &ret_ty);
-        let m_name = names::method_name(f.name(db).as_str());
+        let m_name = self.function_name(f);
         let params = self.build_param_list(f);
         out.wln(&format!("{} {}({});", cs_ret, m_name, params));
     }
@@ -264,7 +264,7 @@ impl<'db> CodeGenerator<'db> {
         let ret_ty = f.async_ret_type(db).unwrap_or(f.ret_type(db));
         let cs_ret = self.cs_ret_type(is_async, &ret_ty);
         let async_kw = if is_async { "async " } else { "" };
-        let m_name = names::method_name(f.name(db).as_str());
+        let m_name = self.function_name(f);
         let has_self = f.has_self_param(db);
         let is_static_kw = if !has_self { "static " } else { "" };
         let params = self.build_param_list(f);

@@ -11,7 +11,6 @@ use crate::codegen::decl::{
     is_adt_cfg_disabled, is_adt_r2cs_native, is_impl_cfg_disabled, is_module_cfg_disabled,
 };
 use crate::codegen::id_map::IdMap;
-use crate::codegen::names::mod_name;
 use crate::codegen::ty::ConstructableDef;
 use hir::{
     Adt, AssocItem, Crate, GenericDef, HasSource, HirFileId, Impl, InFile, Module, ModuleDef, Name,
@@ -179,14 +178,7 @@ impl<'db> CodeGenerator<'db> {
             return;
         }
 
-        let module_name = mod_name(
-            module
-                .name(db)
-                .as_ref()
-                .map(Name::as_str)
-                .or(name_override)
-                .unwrap(),
-        );
+        let module_name = self.mod_simple_name(module);
         out.w(&format!("public static partial class {} ", module_name));
         out.open_brace();
 
@@ -200,12 +192,7 @@ impl<'db> CodeGenerator<'db> {
         // Emit type aliases and free functions
         for def in module.declarations(db) {
             if let ModuleDef::Function(f) = def {
-                let mod_name = module
-                    .name(db)
-                    .map(|n| names::mod_name(n.as_str()))
-                    .unwrap_or_else(|| {
-                        names::mod_name(&module.krate(db).display_name(db).unwrap().as_str())
-                    });
+                let mod_name = self.mod_simple_name(module);
                 out.wln(format!(
                     "// function {} in module {}",
                     f.name(db).as_str(),

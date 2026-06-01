@@ -1,5 +1,4 @@
 use super::{CodeGenerator, names};
-use crate::codegen::names::mod_name;
 /// Converts Rust HIR types to C# type strings.
 use hir::db::HirDatabase;
 use hir::next_solver::GenericArgs;
@@ -450,33 +449,15 @@ impl<'db> CodeGenerator<'db> {
     pub fn module_class_cs(&self, module: Module) -> String {
         if let Some(parent) = module.parent(self.db) {
             let mut path = self.module_class_cs(parent);
-            let module_name = module.name(self.db);
-            let module_name = module_name.as_ref().map(|m| m.as_str()).unwrap_or_else(|| {
-                let src = module.definition_source(self.db);
-
-                eprintln!(
-                    "Unsupported: module (crate) does not have a name in {path} at {:?}",
-                    self.location_with_file(src)
-                );
-                return "unnamed_mod";
-            });
             path.push('.');
-            path.push_str(&mod_name(module_name));
+            path.push_str(&self.mod_simple_name(module));
             path
         } else {
-            if !module.is_crate_root(self.db) {
-                eprintln!("Unsupported: non-crate root module without parent module: {module:?}")
-            }
-            let crate_name = module.krate(self.db).display_name(self.db);
-            let crate_name = crate_name.as_ref().map(|x| x.as_str()).unwrap_or_else(|| {
-                eprintln!("Unsupported: module (crate) does not have a name");
-                return "unnamed_crate";
-            });
             let mut path = String::new();
             path.push_str("global::");
             path.push_str(&self.root_namespace);
             path.push_str(".");
-            path.push_str(mod_name(&crate_name).as_str());
+            path.push_str(self.mod_simple_name(module).as_str());
             path
         }
     }
@@ -488,7 +469,7 @@ impl<'db> CodeGenerator<'db> {
                 path.push('.');
                 path.push_str(&names::struct_name(adt.name(self.db).as_str()));
                 path.push('.');
-                path.push_str(&names::method_name(f.name(self.db).as_str()));
+                path.push_str(&self.function_name(f));
                 path
             }
             ItemContainer::Impl(impl_)
@@ -496,13 +477,13 @@ impl<'db> CodeGenerator<'db> {
             {
                 let mut path = String::from(primitive.name().as_str());
                 path.push('.');
-                path.push_str(&names::method_name(f.name(self.db).as_str()));
+                path.push_str(&self.function_name(f));
                 path
             }
             ItemContainer::Module(module) => {
                 let mut path = self.module_class_cs(module);
                 path.push('.');
-                path.push_str(&names::method_name(f.name(self.db).as_str()));
+                path.push_str(&self.function_name(f));
                 path
             }
             //ItemContainer::Trait(_) => {}
@@ -515,14 +496,14 @@ impl<'db> CodeGenerator<'db> {
                 );
                 let mut path = self.module_class_cs(f.module(self.db));
                 path.push('.');
-                path.push_str(&names::method_name(f.name(self.db).as_str()));
+                path.push_str(&self.function_name(f));
                 path
             }
             unsupported => {
                 eprintln!("Unsupported function type: {:?}", unsupported);
                 let mut path = self.module_class_cs(f.module(self.db));
                 path.push('.');
-                path.push_str(&names::method_name(f.name(self.db).as_str()));
+                path.push_str(&self.function_name(f));
                 path
             }
         }
@@ -531,7 +512,7 @@ impl<'db> CodeGenerator<'db> {
     pub fn const_path_cs(&self, adt: hir::Const) -> String {
         let mut path = self.module_class_cs(adt.module(self.db));
         path.push('.');
-        path.push_str(&names::method_name(
+        path.push_str(&names::const_name(
             adt.name(self.db)
                 .as_ref()
                 .map(Name::as_str)

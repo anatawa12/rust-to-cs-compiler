@@ -539,7 +539,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 let receiver = self.emit_expr_str_ast(&method_call.receiver().unwrap());
                 match self.sem.resolve_method_call(method_call) {
                     Some(resolved) => {
-                        let method_cs = self.function_name(&resolved);
+                        let method_cs = self.function_name(resolved);
                         let args = method_call
                             .arg_list()
                             .unwrap()
