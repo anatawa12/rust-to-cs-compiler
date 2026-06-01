@@ -4,7 +4,8 @@ use crate::codegen::names::mod_name;
 use hir::db::HirDatabase;
 use hir::next_solver::GenericArgs;
 use hir::{
-    Adt, AssocItem, BuiltinType, HasContainer, ItemContainer, Module, Name, Trait, Type, sym,
+    Adt, AssocItem, BuiltinType, HasContainer, HasCrate, ItemContainer, Module, Name, Trait, Type,
+    sym,
 };
 use hir_ty::display::HirDisplay;
 use ide_db::base_db;
@@ -155,7 +156,7 @@ impl<'db> CodeGenerator<'db> {
                 let rs_generic_args = self.generic_args_to_types(args).collect::<Vec<_>>();
                 let mut cs_generic_args = rs_generic_args
                     .iter()
-                    .skip(trait_.dyn_compatibility(db).is_none() as usize)
+                    .skip((!trait_.with_self_in_cs(db)) as usize)
                     .map(|x| self.rust_type_to_cs(x))
                     .collect::<Vec<_>>();
                 for alias in trait_.assoc_types(db) {
@@ -354,7 +355,7 @@ impl<'db> CodeGenerator<'db> {
                                 .map(|t| self.rust_type_to_cs(t))
                                 .collect::<Vec<_>>();
 
-                            if t.dyn_compatibility(db).is_none() {
+                            if !t.with_self_in_cs(db) {
                                 args.remove(0);
                             }
 
@@ -395,7 +396,7 @@ impl<'db> CodeGenerator<'db> {
         let db = self.db;
 
         // TODO: args
-        if trait_.dyn_compatibility(db).is_none() {
+        if !trait_.with_self_in_cs(db) {
             self.trait_itf_cs(trait_)
         } else {
             let mut path = self.trait_itf_cs(trait_);
@@ -1259,10 +1260,19 @@ mod ty_param_ext {
 }
 
 pub trait TraitExt {
+    fn with_self_in_cs(&self, db: &dyn HirDatabase) -> bool;
     fn assoc_types(&self, db: &dyn HirDatabase) -> Vec<hir::TypeAlias>;
 }
 
 impl TraitExt for Trait {
+    fn with_self_in_cs(&self, db: &dyn HirDatabase) -> bool {
+        if self.dyn_compatibility(db).is_some() {
+            return true;
+        }
+
+        false
+    }
+
     fn assoc_types(&self, db: &dyn HirDatabase) -> Vec<hir::TypeAlias> {
         self.items(db)
             .into_iter()

@@ -172,7 +172,7 @@ impl<'db> CodeGenerator<'db> {
         }
 
         // For non-dyn compatible trait, we insert 'Self' type parameter
-        if t.dyn_compatibility(db).is_some() {
+        if t.with_self_in_cs(db) {
             all_params.insert(0, "P_Self".into());
             constraints.push(format!("P_Self : {}<{}>", cs_iface, all_params.join(", ")));
         }
