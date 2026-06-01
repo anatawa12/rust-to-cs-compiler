@@ -1,4 +1,5 @@
 use super::{CodeGenerator, expr::BodyGen, names, output::Code};
+use crate::codegen::ty::TraitExt;
 use cfg::CfgExpr;
 /// Generates C# type declarations from Rust HIR types.
 use hir::{
@@ -165,11 +166,7 @@ impl<'db> CodeGenerator<'db> {
         let gen_params = GenericDef::from(t).params(db);
         let (mut all_params, mut constraints) = self.generic_params_cs(&gen_params);
 
-        for item in t.items(db) {
-            let AssocItem::TypeAlias(a) = item else {
-                continue;
-            };
-
+        for a in t.assoc_types(db) {
             let a_name = names::assoc_type_param(a.name(db).as_str());
             all_params.push(a_name);
         }

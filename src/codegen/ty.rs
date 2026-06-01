@@ -108,12 +108,20 @@ impl<'db> CodeGenerator<'db> {
                 format!("/* implicit */ {}", self.impl_ty_param_id.id_name(&param))
             }
         } else if let Some((param, alias)) = rustc_ty::alias_of_type_params(ty) {
-            format!(
-                "{}_{} /* {} */",
-                self.rust_type_to_cs_inner(&param.ty(db), false),
-                alias.name(db).as_str(),
-                ty.display(db, self.display_target())
-            )
+            if param.is_implicit(db) && param.name(db) == sym::Self_ {
+                format!(
+                    "A_{} /* {} */",
+                    alias.name(db).as_str(),
+                    ty.display(db, self.display_target())
+                )
+            } else {
+                format!(
+                    "{}_{} /* {} */",
+                    self.rust_type_to_cs_inner(&param.ty(db), false),
+                    alias.name(db).as_str(),
+                    ty.display(db, self.display_target())
+                )
+            }
         } else if let Some(_) = ty.as_impl_traits(db) {
             use hir_ty::next_solver::ClauseKind;
             // Unfortunately hir crate does not provide us generic parameters of trait so we access
@@ -143,18 +151,46 @@ impl<'db> CodeGenerator<'db> {
                 "object".to_string()
             } else {
                 let (trait_, args) = traits[0];
-                let t = self.trait_itf_cs(trait_);
+                let mut cs_type = self.trait_itf_cs(trait_);
+                let rs_generic_args = self.generic_args_to_types(args).collect::<Vec<_>>();
+                let mut cs_generic_args = rs_generic_args
+                    .iter()
+                    .skip(trait_.dyn_compatibility(db).is_none() as usize)
+                    .map(|x| self.rust_type_to_cs(x))
+                    .collect::<Vec<_>>();
+                for alias in trait_.assoc_types(db) {
+                    match ty
+                        .normalize_trait_assoc_type(db, &rs_generic_args, alias)
+                        .map(|x| self.resolve_assoc_of_impl(&x))
+                    {
+                        None => {
+                            eprintln!(
+                                "Failed to resolve type {alias} of {ty}",
+                                alias = alias.display(db, self.display_target()),
+                                ty = ty.display(db, self.display_target())
+                            );
+                            cs_generic_args.push("void/* Type */".into());
+                        }
+                        Some(type_) => {
+                            cs_generic_args.push(self.rust_type_to_cs(&type_));
+                        }
+                    }
+                }
+                if !cs_generic_args.is_empty() {
+                    cs_type.push('<');
+                    cs_type.push_str(&cs_generic_args.join(", "));
+                    cs_type.push('>');
+                }
                 // TODO: Associated types as generic parameters
                 if Some(trait_.into()) == self.lang_items.Future {
-                    let generic_args = self.generic_args_to_types(args).collect::<Vec<_>>();
                     ty.normalize_trait_assoc_type(
                         db,
-                        &generic_args,
+                        &rs_generic_args,
                         self.lang_items.FutureOutput.unwrap().into(),
                     )
                     .map(|x| self.resolve_assoc_of_impl(&x));
                 }
-                t
+                cs_type
             }
         } else if let rustc_type_ir::TyKind::Error(_) = ty.ns_ty().kind() {
             "object /* error type */".to_string()
@@ -322,11 +358,7 @@ impl<'db> CodeGenerator<'db> {
                                 args.remove(0);
                             }
 
-                            for item in t.items(db) {
-                                let AssocItem::TypeAlias(a) = item else {
-                                    continue;
-                                };
-
+                            for a in t.assoc_types(db) {
                                 let assoc_name = format!("{}_{}", name, a.name(db).as_str());
                                 type_params.push(assoc_name.clone());
                                 args.push(assoc_name);
@@ -1223,5 +1255,21 @@ mod ty_param_ext {
                 })
                 .collect()
         }
+    }
+}
+
+pub trait TraitExt {
+    fn assoc_types(&self, db: &dyn HirDatabase) -> Vec<hir::TypeAlias>;
+}
+
+impl TraitExt for Trait {
+    fn assoc_types(&self, db: &dyn HirDatabase) -> Vec<hir::TypeAlias> {
+        self.items(db)
+            .into_iter()
+            .flat_map(|x| match x {
+                hir::AssocItem::TypeAlias(t) => Some(t),
+                _ => None,
+            })
+            .collect()
     }
 }
