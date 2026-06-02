@@ -225,9 +225,23 @@ impl<'db> CodeGenerator<'db> {
         let is_async = f.is_async(db);
         let ret_ty = f.ret_type(db);
         let cs_ret = self.cs_ret_type(is_async, &ret_ty);
+        let has_self = f.has_self_param(db);
+        let is_static_kw = if !has_self { "static " } else { "" };
         let m_name = self.function_name(f);
         let params = self.build_param_list(f);
-        out.wln(&format!("{} {}({});", cs_ret, m_name, params));
+        let static_comment = if !has_self { "// " } else { "" };
+
+        let gen_params = GenericDef::from(f).params(db);
+        let (mut all_params, mut constraints) = self.generic_params_cs(&gen_params);
+
+        let generics = if all_params.is_empty() {
+            String::new()
+        } else {
+            format!("<{}>", all_params.join(", "))
+        };
+        out.wln(format!(
+            "{static_comment}{is_static_kw}{cs_ret} {m_name}{generics}({params});"
+        ));
     }
 
     /// Emit methods from an impl block onto the appropriate class.
@@ -318,7 +332,7 @@ impl<'db> CodeGenerator<'db> {
 
     fn cs_ret_type(&self, is_async: bool, ret_ty: &hir::Type<'db>) -> String {
         if is_async {
-            format!("r2CsRuntime.RustTask<{}>", self.rust_type_to_cs(&ret_ty))
+            format!("r2CsRuntime.RustTask<{}>", self.rust_type_to_cs(ret_ty))
         } else if ret_ty.is_unit() {
             "void".to_string()
         } else {

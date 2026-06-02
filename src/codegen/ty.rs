@@ -101,7 +101,7 @@ impl<'db> CodeGenerator<'db> {
             // Generic parameter
             let name = param.name(db).as_str().to_string();
             if name == "Self" {
-                "Self".to_string()
+                "P_Self".to_string()
             } else if !param.is_implicit(db) {
                 names::generic_param(&name)
             } else {
