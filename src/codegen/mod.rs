@@ -14,13 +14,14 @@ use crate::codegen::id_map::IdMap;
 use crate::codegen::ty::ConstructableDef;
 use hir::{
     Adt, AssocItem, Crate, GenericDef, HasSource, HirFileId, Impl, InFile, Module, ModuleDef, Name,
-    Semantics, StructKind, TypeParam, db::HirDatabase,
+    Semantics, StructKind, Type, TypeParam, db::HirDatabase,
 };
 use hir_def::lang_item::{LangItems, lang_items};
 use hir_ty::display::DisplayTarget;
 use hir_ty::next_solver::{AnyImplId, DbInterner, GenericArgs};
 use ide_db::line_index;
 use itertools::Itertools;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::env::var;
 use syntax::{SyntaxNode, SyntaxNodePtr};
@@ -36,6 +37,8 @@ pub struct CodeGenerator<'db> {
     root_namespace: String,
     // some internal information that hard is to determine
     impl_ty_param_id: IdMap<TypeParam>,
+    // This map holds specially handled types like type arguments mirroring impl Fn()
+    special_types: RefCell<HashMap<TypeParam, String>>,
 }
 
 impl<'db> CodeGenerator<'db> {
@@ -55,6 +58,7 @@ impl<'db> CodeGenerator<'db> {
             root_namespace,
 
             impl_ty_param_id: IdMap::new("impl_"),
+            special_types: RefCell::new(HashMap::new()),
         }
     }
 

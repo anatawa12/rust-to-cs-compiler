@@ -98,6 +98,10 @@ impl<'db> CodeGenerator<'db> {
             // dyn Trait → T_TraitName (dyn interface)
             self.trait_itf_cs(trait_)
         } else if let Some(param) = ty.as_type_param(db) {
+            if let Some(cs) = self.special_types.borrow().get(&param) {
+                return cs.clone();
+            }
+
             // Generic parameter
             let name = param.name(db).as_str().to_string();
             if name == "Self" {
@@ -335,6 +339,57 @@ impl<'db> CodeGenerator<'db> {
                     // self is proceed externally
                 }
                 hir::GenericParam::TypeParam(param) => {
+                    if param.is_implicit(db)
+                        && let bounds = param
+                            .trait_bounds_with_args(db)
+                            .into_iter()
+                            .filter(|&(t, _)| Some(t.into()) != self.lang_items.Sized)
+                            .filter(|&(t, _)| Some(t.into()) != self.lang_items.Sync)
+                            //.filter(|&(t, _)| Some(t.into()) != self.lang_items.Send)
+                            .collect::<Vec<_>>()
+                        && let &[(trait_, ref args)] = bounds.as_slice()
+                        && let trait_id = trait_.into()
+                        && (Some(trait_id) == self.lang_items.Fn
+                            || Some(trait_id) == self.lang_items.FnMut
+                            || Some(trait_id) == self.lang_items.FnOnce)
+                    {
+                        assert_eq!(args.len(), 2); // one for self, one for parameters
+                        let self_ty = &args[0];
+                        let parameters = args[1].tuple_fields(db);
+                        let output = self_ty
+                            .normalize_trait_assoc_type(
+                                db,
+                                &args,
+                                self.lang_items.FnOnceOutput.unwrap().into(),
+                            )
+                            .expect("No output for fn");
+                        let output = self.resolve_assoc_of_impl(&output);
+
+                        let parameters = parameters
+                            .as_slice()
+                            .iter()
+                            .map(|x| self.rust_type_to_cs(x))
+                            .collect::<Vec<_>>();
+
+                        let cs_type = if output.is_unit() {
+                            if parameters.is_empty() {
+                                format!("global::System.Action")
+                            } else {
+                                format!("global::System.Action<{}>", parameters.join(", "))
+                            }
+                        } else {
+                            let output = self.rust_type_to_cs(&output);
+                            let mut types = parameters;
+                            types.push(output);
+                            format!("global::System.Func<{}>", types.join(", "))
+                        };
+
+                        eprintln!("{param:?}: {cs_type:?}");
+                        self.special_types.borrow_mut().insert(*param, cs_type);
+
+                        continue;
+                    }
+
                     let name = if !param.name(db).is_missing() {
                         names::generic_param(param.name(db).as_str())
                     } else {
@@ -577,18 +632,20 @@ mod rustc_ty {
     //! we don't want to use those type generally
 
     use crate::codegen::CodeGenerator;
-    use crate::codegen::ty::TyFromType;
-    use hir::{Adt, Type};
+    use crate::codegen::ty::{TyFromType, TypeParamExt};
+    use hir::{Adt, Trait, Type};
+    use hir_def::resolver::HasResolver;
     use hir_def::signatures::TypeAliasSignature;
     use hir_def::{
         AdtId, AssocItemId, GenericDefId, GenericParamId, HasModule, ImplId, ItemContainerId,
-        Lookup,
+        Lookup, TypeAliasId, TypeParamId,
     };
+    use hir_ty::GenericPredicates;
     use hir_ty::display::HirDisplay;
     use hir_ty::next_solver::{
-        AnyImplId, Binder, ClauseKind, Const, ConstKind, DbInterner, ErrorGuaranteed, GenericArg,
-        GenericArgKind, GenericArgs, ParamEnv, PredicateKind, SolverDefId, Term, TermKind,
-        TraitRef, Ty,
+        AnyImplId, Binder, Clause, ClauseKind, Const, ConstKind, DbInterner, ErrorGuaranteed,
+        GenericArg, GenericArgKind, GenericArgs, ParamEnv, PredicateKind, SolverDefId, Term,
+        TermKind, TraitRef, Ty,
     };
     use rustc_type_ir::inherent::{GenericsOf as _, IntoKind, SliceLike, Term as _};
     use rustc_type_ir::solve::{Goal, GoalSource, NoSolution};
@@ -639,67 +696,15 @@ mod rustc_ty {
                         return self_ty; // can be projection
                         //panic!("Tries to assoc but not assoc (self is not opaque): {assoc_ty:?}")
                     };
-                    #[derive(Debug)]
-                    enum Pred<'db> {
-                        Ty(Ty<'db>),
-                        #[allow(dead_code)]
-                        Trait(PredicatePolarity, TraitRef<'db>),
-                    }
-                    let preds = def_id
-                        .expect_opaque_ty()
-                        .predicates(db)
-                        .iter_instantiated_copied(self.interner, self_ty_alias.args.as_slice())
-                        .filter_map(|pred| match pred.kind().skip_binder() {
-                            ClauseKind::Projection(proj)
-                                if proj
-                                    .projection_term
-                                    .args
-                                    .as_slice()
-                                    .first()
-                                    .and_then(|x| x.ty())
-                                    == Some(self_ty)
-                                    && proj.def_id() == SolverDefId::TypeAliasId(alias_id) =>
-                            {
-                                match proj.term.kind() {
-                                    TermKind::Ty(ty) => Some(Pred::Ty(ty)),
-                                    TermKind::Const(_) => {
-                                        unreachable!("Associated type is not type")
-                                    }
-                                }
-                            }
-                            ClauseKind::Trait(trait_)
-                                if (trait_.trait_ref.args.as_slice())
-                                    .first()
-                                    .and_then(|x| x.ty())
-                                    == Some(assoc_ty) =>
-                            {
-                                Some(Pred::Trait(trait_.polarity, trait_.trait_ref))
-                            }
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>();
 
-                    // If there is <Assoc = SomeType> part, we pick the type
-                    if let Some(pred) = preds.iter().find_map(|x| match x {
-                        Pred::Ty(ty) => Some(ty),
-                        _ => None,
-                    }) {
-                        return *pred;
-                    }
-
-                    // If there is no such, we need create impl SpecifiedTraits
-                    if cfg!(false) {
-                        /*
-                        ImplTraitId::TypeAliasImplTrait(type_alias_id, )
-                        Ty::new(
-                            self.interner,
-                            TyKind::Alias(AliasTy::new(self.interner, AliasTyKind::Opaque { def_id })),
-                        )
-                        // */
-                    }
-                    unimplemented!(
-                        "{assoc_ty_rs}",
-                        assoc_ty_rs = assoc_ty.display(self.db, self.display_target()),
+                    self.bounds_to_type(
+                        def_id
+                            .expect_opaque_ty()
+                            .predicates(db)
+                            .iter_instantiated_copied(self.interner, self_ty_alias.args.as_slice()),
+                        assoc_ty,
+                        self_ty,
+                        alias_id,
                     )
                 }
                 TyKind::Adt(adt, args) => {
@@ -764,6 +769,12 @@ mod rustc_ty {
 
                     resolved_impl_assoc.unwrap()
                 }
+                TyKind::Param(param) => self.bounds_to_type(
+                    GenericPredicates::query_explicit(db, param.id.parent()).iter_identity(),
+                    assoc_ty,
+                    self_ty,
+                    alias_id,
+                ),
                 TyKind::Error(_) => assoc_ty,
                 _ => {
                     eprintln!(
@@ -772,6 +783,74 @@ mod rustc_ty {
                     Ty::new(self.interner, TyKind::Error(ErrorGuaranteed))
                 }
             }
+        }
+
+        fn bounds_to_type(
+            &self,
+            bounds: impl Iterator<Item = Clause<'db>>,
+            assoc_ty: Ty<'db>,
+            self_ty: Ty<'db>,
+            alias_id: TypeAliasId,
+        ) -> Ty<'db> {
+            #[derive(Debug)]
+            enum Pred<'db> {
+                Ty(Ty<'db>),
+                #[allow(dead_code)]
+                Trait(PredicatePolarity, TraitRef<'db>),
+            }
+            let preds = bounds
+                .filter_map(|clause| match clause.kind().skip_binder() {
+                    ClauseKind::Projection(proj)
+                        if proj
+                            .projection_term
+                            .args
+                            .as_slice()
+                            .first()
+                            .and_then(|x| x.ty())
+                            == Some(self_ty)
+                            && proj.def_id() == SolverDefId::TypeAliasId(alias_id) =>
+                    {
+                        match proj.term.kind() {
+                            TermKind::Ty(ty) => Some(Pred::Ty(ty)),
+                            TermKind::Const(_) => {
+                                unreachable!("Associated type is not type")
+                            }
+                        }
+                    }
+                    ClauseKind::Trait(trait_)
+                        if (trait_.trait_ref.args.as_slice())
+                            .first()
+                            .and_then(|x| x.ty())
+                            == Some(assoc_ty) =>
+                    {
+                        Some(Pred::Trait(trait_.polarity, trait_.trait_ref))
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+
+            // If there is <Assoc = SomeType> part, we pick the type
+            if let Some(pred) = preds.iter().find_map(|x| match x {
+                Pred::Ty(ty) => Some(ty),
+                _ => None,
+            }) {
+                return *pred;
+            }
+
+            // If there is no such, we need create impl SpecifiedTraits
+            if cfg!(false) {
+                /*
+                ImplTraitId::TypeAliasImplTrait(type_alias_id, )
+                Ty::new(
+                    self.interner,
+                    TyKind::Alias(AliasTy::new(self.interner, AliasTyKind::Opaque { def_id })),
+                )
+                // */
+            }
+            unimplemented!(
+                "{assoc_ty_rs}",
+                assoc_ty_rs = assoc_ty.display(self.db, self.display_target()),
+            )
         }
 
         #[tracing::instrument(skip(self))]

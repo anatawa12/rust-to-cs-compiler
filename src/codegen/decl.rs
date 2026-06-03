@@ -274,6 +274,10 @@ impl<'db> CodeGenerator<'db> {
             return;
         }
 
+        let gen_params = GenericDef::from(f).params(db);
+        let (tp_names, constraints) = self.generic_params_cs(&gen_params);
+        let generics = self.format_generics(&tp_names);
+
         let is_async = f.is_async(db);
         let ret_ty = f.async_ret_type(db).unwrap_or(f.ret_type(db));
         let cs_ret = self.cs_ret_type(is_async, &ret_ty);
@@ -282,10 +286,6 @@ impl<'db> CodeGenerator<'db> {
         let has_self = f.has_self_param(db);
         let is_static_kw = if !has_self { "static " } else { "" };
         let params = self.build_param_list(f);
-
-        let gen_params = GenericDef::from(f).params(db);
-        let (tp_names, constraints) = self.generic_params_cs(&gen_params);
-        let generics = self.format_generics(&tp_names);
 
         // Determine the class this method belongs to
         let cs_self = impl_ctx
