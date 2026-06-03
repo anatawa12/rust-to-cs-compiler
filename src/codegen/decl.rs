@@ -3,8 +3,8 @@ use crate::codegen::ty::TraitExt;
 use cfg::CfgExpr;
 /// Generates C# type declarations from Rust HIR types.
 use hir::{
-    Adt, AssocItem, DefWithBody, Enum, GenericDef, HasAttrs, HasCrate, HasSource, Impl, Struct,
-    Trait, db::HirDatabase,
+    Adt, AssocItem, DefWithBody, Enum, GenericDef, HasAttrs, HasContainer, HasCrate, HasSource,
+    Impl, ItemContainer, Struct, Trait, db::HirDatabase,
 };
 use syntax::ast::HasAttrs as AstHasAttrs;
 
@@ -274,7 +274,23 @@ impl<'db> CodeGenerator<'db> {
             return;
         }
 
-        let gen_params = GenericDef::from(f).params(db);
+        let gen_params = if let ItemContainer::Impl(impl_) = f.container(db)
+            && let Some(trait_) = impl_.trait_(db)
+            && Some(trait_.into()) == self.lang_items.Hash
+            && f.name(db) == hir::sym::hash
+        {
+            // it's hash. Derive method has <H> but `GenericDef::from` returns empty array
+            // so we retrieve the H from parameter instead of GenericDef
+            let param = f.params_without_self(db).swap_remove(0);
+            let param_type = param.ty();
+            let param_type = param_type.remove_ref().unwrap();
+            let type_param = param_type
+                .as_type_param(db)
+                .unwrap_or_else(|| panic!("type {param_type:?} is not type_param"));
+            vec![type_param.into()]
+        } else {
+            GenericDef::from(f).params(db)
+        };
         let (tp_names, constraints) = self.generic_params_cs(&gen_params);
         let generics = self.format_generics(&tp_names);
 
