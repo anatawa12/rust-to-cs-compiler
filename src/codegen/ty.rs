@@ -1,10 +1,10 @@
-use super::{CodeGenerator, names};
+use super::{CodeGenerator, generic_args, names};
 /// Converts Rust HIR types to C# type strings.
 use hir::db::HirDatabase;
 use hir::next_solver::GenericArgs;
 use hir::{
-    Adt, AssocItem, BuiltinType, HasContainer, HasCrate, ItemContainer, Module, Name, Trait, Type,
-    sym,
+    Adt, AssocItem, BuiltinType, GenericDef, HasContainer, HasCrate, ItemContainer, Module, Name,
+    Trait, Type, sym,
 };
 use hir_ty::display::HirDisplay;
 use ide_db::base_db;
@@ -82,13 +82,12 @@ impl<'db> CodeGenerator<'db> {
             }
 
             let cs_path = self.adt_name_cs(adt);
+            let param_sources = self.generic_params_cs_sources(&GenericDef::from(adt).params(db));
+            let type_args = self.map_type_param_source(
+                &param_sources,
+                &args.into_iter().flatten().collect::<Vec<_>>(),
+            );
 
-            let type_args: Vec<String> = args
-                .iter()
-                .filter_map(|a| a.as_ref())
-                .map(|a| self.rust_type_to_cs_inner(a, false))
-                .filter(|s| s != "void")
-                .collect();
             if type_args.is_empty() {
                 cs_path
             } else {
@@ -155,13 +154,12 @@ impl<'db> CodeGenerator<'db> {
                 "object".to_string()
             } else {
                 let (trait_, args) = traits[0];
-                let mut cs_type = self.trait_itf_cs(trait_);
                 let rs_generic_args = self.generic_args_to_types(args).collect::<Vec<_>>();
-                let mut cs_generic_args = rs_generic_args
-                    .iter()
-                    .skip((!trait_.with_self_in_cs(db)) as usize)
-                    .map(|x| self.rust_type_to_cs(x))
-                    .collect::<Vec<_>>();
+
+                let param_sources =
+                    self.generic_params_cs_sources(&GenericDef::from(trait_).params(db));
+                let mut cs_generic_args =
+                    self.map_type_param_source(&param_sources, &rs_generic_args);
                 for alias in trait_.assoc_types(db) {
                     match ty
                         .normalize_trait_assoc_type(db, &rs_generic_args, alias)
@@ -180,20 +178,7 @@ impl<'db> CodeGenerator<'db> {
                         }
                     }
                 }
-                if !cs_generic_args.is_empty() {
-                    cs_type.push('<');
-                    cs_type.push_str(&cs_generic_args.join(", "));
-                    cs_type.push('>');
-                }
-                if Some(trait_.into()) == self.lang_items.Future {
-                    ty.normalize_trait_assoc_type(
-                        db,
-                        &rs_generic_args,
-                        self.lang_items.FutureOutput.unwrap().into(),
-                    )
-                    .map(|x| self.resolve_assoc_of_impl(&x));
-                }
-                cs_type
+                generic_args(self.trait_itf_cs(trait_), cs_generic_args)
             }
         } else if let rustc_type_ir::TyKind::Error(_) = ty.ns_ty().kind() {
             "object /* error type */".to_string()
@@ -326,118 +311,203 @@ impl<'db> CodeGenerator<'db> {
 
     /// Format a C# generic argument list for a function/type.
     pub fn generic_params_cs(&self, params: &[hir::GenericParam]) -> (Vec<String>, Vec<String>) {
+        self.register_special_impls(params);
+        let type_params = self.map_type_param_source(
+            &self.generic_params_cs_sources(params),
+            &generic_types(params)
+                .map(|param| param.ty(self.db))
+                .collect::<Vec<_>>(),
+        );
+        let constraints = self.generic_params_cs_constraints(params);
+
+        (type_params, constraints)
+    }
+}
+
+pub enum CsTypeParamSource {
+    TypeParam(usize),
+    AliasOfParam(usize, hir::TypeAlias),
+}
+
+fn generic_types(params: &[hir::GenericParam]) -> impl Iterator<Item = hir::TypeParam> {
+    params.iter().filter_map(|&x| match x {
+        hir::GenericParam::TypeParam(param) => Some(param),
+        _ => None,
+    })
+}
+
+impl<'db> CodeGenerator<'db> {
+    pub fn register_special_impls(&self, params: &[hir::GenericParam]) {
+        let db = self.db;
+
+        for param in generic_types(params) {
+            if param.is_implicit(db) && param.name(db) == sym::Self_ {
+                continue;
+            }
+
+            if let Some((output, parameters)) = self.func_impl_type_param(param) {
+                let parameters = parameters
+                    .as_slice()
+                    .iter()
+                    .map(|x| self.rust_type_to_cs(x))
+                    .collect::<Vec<_>>();
+
+                let cs_type = if output.is_unit() {
+                    if parameters.is_empty() {
+                        format!("global::System.Action")
+                    } else {
+                        format!("global::System.Action<{}>", parameters.join(", "))
+                    }
+                } else {
+                    let output = self.rust_type_to_cs(&output);
+                    let mut types = parameters;
+                    types.push(output);
+                    format!("global::System.Func<{}>", types.join(", "))
+                };
+
+                eprintln!("{param:?}: {cs_type:?}");
+                self.special_types.borrow_mut().insert(param, cs_type);
+
+                continue;
+            }
+        }
+    }
+
+    pub fn generic_params_cs_sources(
+        &self,
+        params: &[hir::GenericParam],
+    ) -> Vec<CsTypeParamSource> {
         let db = self.db;
 
         let mut type_params = Vec::new();
-        let mut constraints = Vec::new();
 
-        for param in params {
-            match param {
-                hir::GenericParam::TypeParam(param)
-                    if param.is_implicit(db) && param.name(db) == sym::Self_ =>
-                {
-                    // self is proceed externally
-                }
-                hir::GenericParam::TypeParam(param) => {
-                    if param.is_implicit(db)
-                        && let bounds = param
-                            .trait_bounds_with_args(db)
-                            .into_iter()
-                            .filter(|&(t, _)| Some(t.into()) != self.lang_items.Sized)
-                            .filter(|&(t, _)| Some(t.into()) != self.lang_items.Sync)
-                            //.filter(|&(t, _)| Some(t.into()) != self.lang_items.Send)
-                            .collect::<Vec<_>>()
-                        && let &[(trait_, ref args)] = bounds.as_slice()
-                        && let trait_id = trait_.into()
-                        && (Some(trait_id) == self.lang_items.Fn
-                            || Some(trait_id) == self.lang_items.FnMut
-                            || Some(trait_id) == self.lang_items.FnOnce)
-                    {
-                        assert_eq!(args.len(), 2); // one for self, one for parameters
-                        let self_ty = &args[0];
-                        let parameters = args[1].tuple_fields(db);
-                        let output = self_ty
-                            .normalize_trait_assoc_type(
-                                db,
-                                &args,
-                                self.lang_items.FnOnceOutput.unwrap().into(),
-                            )
-                            .expect("No output for fn");
-                        let output = self.resolve_assoc_of_impl(&output);
+        for (index, param) in generic_types(params).enumerate() {
+            if param.is_implicit(db) && param.name(db) == sym::Self_ {
+                continue;
+            }
 
-                        let parameters = parameters
-                            .as_slice()
-                            .iter()
-                            .map(|x| self.rust_type_to_cs(x))
-                            .collect::<Vec<_>>();
+            if self.func_impl_type_param(param).is_some() {
+                continue;
+            }
 
-                        let cs_type = if output.is_unit() {
-                            if parameters.is_empty() {
-                                format!("global::System.Action")
-                            } else {
-                                format!("global::System.Action<{}>", parameters.join(", "))
-                            }
-                        } else {
-                            let output = self.rust_type_to_cs(&output);
-                            let mut types = parameters;
-                            types.push(output);
-                            format!("global::System.Func<{}>", types.join(", "))
-                        };
+            type_params.push(CsTypeParamSource::TypeParam(index));
 
-                        eprintln!("{param:?}: {cs_type:?}");
-                        self.special_types.borrow_mut().insert(*param, cs_type);
-
-                        continue;
-                    }
-
-                    let name = if !param.name(db).is_missing() {
-                        names::generic_param(param.name(db).as_str())
-                    } else {
-                        format!("/* implicit */ {}", self.impl_ty_param_id.id_name(param))
-                    };
-
-                    type_params.push(name.clone());
-
-                    let traits = param.trait_bounds_with_args(db);
-                    if !traits.is_empty() {
-                        let mut cs_constraints = vec![];
-                        for &(t, ref args) in &traits {
-                            let mut constraint = self.trait_itf_cs(t);
-                            let mut args = args
-                                .iter()
-                                .map(|t| self.rust_type_to_cs(t))
-                                .collect::<Vec<_>>();
-
-                            if !t.with_self_in_cs(db) {
-                                args.remove(0);
-                            }
-
-                            for a in t.assoc_types(db) {
-                                let assoc_name = format!("{}_{}", name, a.name(db).as_str());
-                                type_params.push(assoc_name.clone());
-                                args.push(assoc_name);
-                            }
-
-                            if !args.is_empty() {
-                                constraint.push('<');
-                                constraint.push_str(&args.join(", "));
-                                constraint.push('>');
-                            }
-                            cs_constraints.push(constraint);
+            let traits = param.trait_bounds_with_args(db);
+            if !traits.is_empty() {
+                for &(trait_, ref args) in &traits {
+                    for alias in trait_.assoc_types(db) {
+                        let instance = param
+                            .ty(db)
+                            .normalize_trait_assoc_type(db, &[], alias)
+                            .unwrap();
+                        if let Some((param_instance, alias_instance)) =
+                            rustc_ty::alias_of_type_params(&instance)
+                            && alias_instance == alias
+                            && param_instance == param
+                        {
+                            type_params.push(CsTypeParamSource::AliasOfParam(index, alias));
+                            continue;
                         }
-                        constraints.push(format!("{name} : {}", cs_constraints.join(", ")));
                     }
-                }
-                hir::GenericParam::ConstParam(_cp) => {
-                    // C# doesn't support const generics in the same way; skip for now
-                }
-                hir::GenericParam::LifetimeParam(_) => {
-                    // Lifetimes don't translate to C#
                 }
             }
         }
 
-        (type_params, constraints)
+        type_params
+    }
+
+    pub fn map_type_param_source(
+        &self,
+        params: &[CsTypeParamSource],
+        instances: &[Type<'db>],
+    ) -> Vec<String> {
+        params
+            .iter()
+            .map(|x| match *x {
+                CsTypeParamSource::TypeParam(i) => self.rust_type_to_cs(&instances[i]),
+                CsTypeParamSource::AliasOfParam(i, alias) => {
+                    self.rust_type_to_cs(&self.new_alias_ty(&instances[i], alias))
+                }
+            })
+            .collect()
+    }
+
+    pub fn generic_params_cs_constraints(&self, params: &[hir::GenericParam]) -> Vec<String> {
+        let db = self.db;
+
+        let mut constraints = Vec::new();
+
+        for param in generic_types(params) {
+            if param.is_implicit(db) && param.name(db) == sym::Self_ {
+                continue;
+            }
+
+            if self.func_impl_type_param(param).is_some() {
+                continue;
+            }
+
+            let name = self.rust_type_to_cs(&param.ty(db));
+
+            let traits = param.trait_bounds_with_args(db);
+            if !traits.is_empty() {
+                let mut cs_constraints = vec![];
+                for &(trait_, ref args) in &traits {
+                    let generic_args = args
+                        .iter()
+                        .skip((!trait_.with_self_in_cs(db)) as usize)
+                        .cloned();
+                    let assoc_types = trait_.assoc_types(db).into_iter().map(|alias| {
+                        self.resolve_assoc_of_impl(
+                            &param
+                                .ty(db)
+                                .normalize_trait_assoc_type(db, &[], alias)
+                                .unwrap(),
+                        )
+                    });
+
+                    let args = (generic_args.chain(assoc_types))
+                        .map(|t| self.rust_type_to_cs(&t))
+                        .collect::<Vec<_>>();
+
+                    let constraint = self::generic_args(self.trait_itf_cs(trait_), args);
+                    cs_constraints.push(constraint);
+                }
+                constraints.push(format!("{name} : {}", cs_constraints.join(", ")));
+            }
+        }
+
+        constraints
+    }
+
+    fn func_impl_type_param(&self, param: hir::TypeParam) -> Option<(Type<'db>, Vec<Type<'db>>)> {
+        let db = self.db;
+
+        if param.is_implicit(db)
+            && let bounds = param
+                .trait_bounds_with_args(db)
+                .into_iter()
+                .filter(|&(t, _)| Some(t.into()) != self.lang_items.Sized)
+                .filter(|&(t, _)| Some(t.into()) != self.lang_items.Sync)
+                //.filter(|&(t, _)| Some(t.into()) != self.lang_items.Send)
+                .collect::<Vec<_>>()
+            && let &[(trait_, ref args)] = bounds.as_slice()
+            && let trait_id = trait_.into()
+            && (Some(trait_id) == self.lang_items.Fn
+                || Some(trait_id) == self.lang_items.FnMut
+                || Some(trait_id) == self.lang_items.FnOnce)
+        {
+            assert_eq!(args.len(), 2); // one for self, one for parameters
+            let self_ty = &args[0];
+            let parameters = args[1].tuple_fields(db);
+            let output = self_ty
+                .normalize_trait_assoc_type(db, &args, self.lang_items.FnOnceOutput.unwrap().into())
+                .expect("No output for fn");
+            let output = self.resolve_assoc_of_impl(&output);
+
+            Some((output, parameters))
+        } else {
+            None
+        }
     }
 
     pub fn trait_itf_cs1(&self, trait_: Trait, args: GenericArgs<'db>) -> String {
@@ -481,14 +551,7 @@ impl<'db> CodeGenerator<'db> {
             }
         }
 
-        let mut path = self.trait_itf_cs(trait_);
-        if !cs_type_params.is_empty() {
-            path.push('<');
-            path.push_str(&cs_type_params.join(", "));
-            path.push('>');
-        }
-
-        path
+        generic_args(self.trait_itf_cs(trait_), cs_type_params)
     }
 
     pub fn trait_itf_cs(&self, t: Trait) -> String {
@@ -640,16 +703,16 @@ mod rustc_ty {
         AdtId, AssocItemId, GenericDefId, GenericParamId, HasModule, ImplId, ItemContainerId,
         Lookup, TypeAliasId, TypeParamId,
     };
-    use hir_ty::GenericPredicates;
     use hir_ty::display::HirDisplay;
     use hir_ty::next_solver::{
         AnyImplId, Binder, Clause, ClauseKind, Const, ConstKind, DbInterner, ErrorGuaranteed,
         GenericArg, GenericArgKind, GenericArgs, ParamEnv, PredicateKind, SolverDefId, Term,
         TermKind, TraitRef, Ty,
     };
+    use hir_ty::{GenericPredicates, TyDefId};
     use rustc_type_ir::inherent::{GenericsOf as _, IntoKind, SliceLike, Term as _};
     use rustc_type_ir::solve::{Goal, GoalSource, NoSolution};
-    use rustc_type_ir::{AliasTyKind, Interner, PredicatePolarity, TyKind};
+    use rustc_type_ir::{AliasTy, AliasTyKind, Interner, PredicatePolarity, TyKind};
     use tracing::debug;
 
     impl<'db> CodeGenerator<'db> {
@@ -660,6 +723,29 @@ mod rustc_ty {
                 assoc_ty.display(self.db, self.display_target())
             );
             self.new_type(self.resolve_assoc_of_impl_impl(assoc_ty.ns_ty()))
+        }
+
+        pub(super) fn new_alias_ty(
+            &self,
+            self_type: &Type<'db>,
+            alias: hir::TypeAlias,
+        ) -> Type<'db> {
+            let self_ty = self_type.ns_ty();
+            let alias_id = alias.into();
+            let ty = Ty::new(
+                self.interner,
+                TyKind::Alias(
+                    AliasTy::new_from_args(
+                        self.interner,
+                        AliasTyKind::Projection {
+                            def_id: SolverDefId::TypeAliasId(alias_id),
+                        },
+                        GenericArgs::error_for_item(self.interner, alias_id.into()),
+                    )
+                    .with_replaced_self_ty(self.interner, self_ty),
+                ),
+            );
+            Type::from_ty_env(ty, self_type.env())
         }
 
         #[tracing::instrument(skip(self))]
@@ -828,6 +914,10 @@ mod rustc_ty {
                     _ => None,
                 })
                 .collect::<Vec<_>>();
+
+            if preds.is_empty() {
+                return assoc_ty;
+            }
 
             // If there is <Assoc = SomeType> part, we pick the type
             if let Some(pred) = preds.iter().find_map(|x| match x {
@@ -1046,11 +1136,13 @@ mod rustc_ty {
 
 pub trait TyFromType<'db> {
     fn ns_ty(&self) -> hir::next_solver::Ty<'db>;
+    fn env(&self) -> hir_ty::ParamEnvAndCrate<'db>;
     fn from_ty(
         ty: hir::next_solver::Ty<'db>,
         db: &'db dyn HirDatabase,
         krate: base_db::Crate,
     ) -> Self;
+    fn from_ty_env(ty: hir::next_solver::Ty<'db>, env: hir_ty::ParamEnvAndCrate<'db>) -> Self;
     fn from_ty_resolver(
         ty: hir::next_solver::Ty<'db>,
         db: &'db dyn HirDatabase,
@@ -1079,6 +1171,14 @@ mod ty_and_type {
             // SAFETY:  This is NOT safe in rust guaranteed behavior,
             //          but known implementation allows us to do so.
             unsafe { std::mem::transmute::<&Self, &TypeMap<'db>>(self).ty }
+        }
+
+        fn env(&self) -> ParamEnvAndCrate<'db> {
+            unsafe { std::mem::transmute::<&Self, &TypeMap<'db>>(self).env }
+        }
+
+        fn from_ty_env(ty: Ty<'db>, env: ParamEnvAndCrate<'db>) -> Self {
+            unsafe { std::mem::transmute::<TypeMap<'db>, Self>(TypeMap { env, ty }) }
         }
 
         fn from_ty(ty: Ty<'db>, db: &'db dyn HirDatabase, krate: base_db::Crate) -> Self {

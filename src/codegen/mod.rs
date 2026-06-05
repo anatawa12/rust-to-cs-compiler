@@ -428,3 +428,14 @@ impl<'db> CodeGenerator<'db> {
         self.adt_name_cs(adt)
     }
 }
+
+fn generic_args(mut base: String, args: Vec<impl Into<String>>) -> String {
+    if args.is_empty() {
+        base
+    } else {
+        base.push('<');
+        base.push_str(&args.into_iter().map(|x| x.into()).join(", "));
+        base.push('>');
+        base
+    }
+}
