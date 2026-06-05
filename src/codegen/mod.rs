@@ -160,23 +160,12 @@ impl<'db> CodeGenerator<'db> {
             }
         }
 
-        self.emit_module(
-            &mut out,
-            krate.root_module(db),
-            Some(&crate_name),
-            &adt_impls,
-        );
+        self.emit_module(&mut out, krate.root_module(db), &adt_impls);
 
         out.finish()
     }
 
-    fn emit_module(
-        &self,
-        out: &mut Code,
-        module: Module,
-        name_override: Option<&str>,
-        adt_impls: &HashMap<String, Vec<Impl>>,
-    ) {
+    fn emit_module(&self, out: &mut Code, module: Module, adt_impls: &HashMap<String, Vec<Impl>>) {
         let db = self.db;
         if is_module_cfg_disabled(module, db) {
             return;
@@ -219,7 +208,7 @@ impl<'db> CodeGenerator<'db> {
         for def in module.declarations(db) {
             match def {
                 ModuleDef::Module(module) => {
-                    self.emit_module(out, module, None, adt_impls);
+                    self.emit_module(out, module, adt_impls);
                 }
                 _ => {}
             }

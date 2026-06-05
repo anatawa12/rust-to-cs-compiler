@@ -34,6 +34,11 @@ fn mod_name(rust_name: &str) -> String {
     format!("mod_{}", pascal(rust_name))
 }
 
+/// Module → partial class prefix.
+fn crate_name(rust_name: &str) -> String {
+    format!("crt_{}", pascal(rust_name))
+}
+
 /// Field name.
 pub fn field_name(rust_name: &str) -> String {
     format!("f_{}", camel(rust_name))
@@ -156,7 +161,7 @@ impl CodeGenerator<'_> {
                 eprintln!("Unsupported: module (crate) does not have a name");
                 return "unnamed_crate";
             });
-            mod_name(&crate_name)
+            self::crate_name(&crate_name)
         } else {
             let Some(parent) = module.parent(self.db) else {
                 panic!(
