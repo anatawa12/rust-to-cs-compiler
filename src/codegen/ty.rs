@@ -1314,6 +1314,7 @@ mod ty_param_ext {
     use crate::codegen::ty::{TyFromType, TypeParamExt};
     use hir::{Trait, Type, TypeParam};
     use hir_def::TypeParamId;
+    use hir_def::lang_item::lang_items;
     use hir_def::resolver::HasResolver;
     use hir_ty::GenericPredicates;
     use hir_ty::db::HirDatabase;
@@ -1324,6 +1325,7 @@ mod ty_param_ext {
         fn trait_bounds_with_args(self, db: &'_ dyn HirDatabase) -> Vec<(Trait, Vec<Type>)> {
             let self_ty = self.ty(db).ns_ty();
             let resolver = TypeParamId::from(self).parent().resolver(db);
+            let lang_items = lang_items(db, self.module(db).krate(db).into());
             GenericPredicates::query_explicit(db, TypeParamId::from(self).parent())
                 .iter_identity()
                 .filter_map(|pred| match &pred.kind().skip_binder() {
@@ -1344,6 +1346,7 @@ mod ty_param_ext {
                     }
                     _ => None,
                 })
+                .filter(|&(t, _)| Some(t.into()) != lang_items.Sized)
                 .collect()
         }
     }
