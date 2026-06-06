@@ -222,6 +222,9 @@ impl<'db> CodeGenerator<'db> {
     fn emit_trait_method_sig(&self, out: &mut Code, f: hir::Function) {
         let db = self.db;
 
+        let gen_params = GenericDef::from(f).params(db);
+        let (mut all_params, mut constraints) = self.generic_params_cs(&gen_params);
+
         let is_async = f.is_async(db);
         let ret_ty = f.ret_type(db);
         let cs_ret = self.cs_ret_type(is_async, &ret_ty);
@@ -230,9 +233,6 @@ impl<'db> CodeGenerator<'db> {
         let m_name = self.function_name(f);
         let params = self.build_param_list(f);
         let static_comment = if !has_self { "// " } else { "" };
-
-        let gen_params = GenericDef::from(f).params(db);
-        let (mut all_params, mut constraints) = self.generic_params_cs(&gen_params);
 
         let generics = if all_params.is_empty() {
             String::new()

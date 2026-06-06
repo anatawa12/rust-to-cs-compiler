@@ -239,6 +239,9 @@ impl<'db> CodeGenerator<'db> {
             return;
         }
 
+        let gen_params = GenericDef::from(adt).params(db);
+        let (tp_names, constraints) = self.generic_params_cs(&gen_params);
+
         // Compute implemented interfaces
         let mut trait_interfaces: Vec<String> = Vec::new();
         for &impl_ in impls {
@@ -265,8 +268,6 @@ impl<'db> CodeGenerator<'db> {
             }
         }
 
-        let gen_params = GenericDef::from(adt).params(db);
-        let (tp_names, constraints) = self.generic_params_cs(&gen_params);
         let generics = if tp_names.is_empty() {
             String::new()
         } else {
