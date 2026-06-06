@@ -25,6 +25,8 @@ impl<'db> CodeGenerator<'db> {
             return "void".to_string();
         }
 
+        let ty = &self.resolve_assoc_of_impl(ty);
+
         // Primitives
         if let Some(builtin) = ty.as_builtin() {
             return self.builtin_to_cs(builtin);
@@ -856,36 +858,44 @@ mod rustc_ty {
 
         #[tracing::instrument(skip(self))]
         pub(super) fn resolve_assoc_of_impl_impl<T: TypeLike<'db>>(&self, assoc_type: &T) -> T {
-            let db = self.db;
+            let mut alias_list = vec![];
             let assoc_ty = assoc_type.ty();
 
-            let TyKind::Alias(alias) = assoc_ty.kind() else {
-                // likely to be already resolved
-                return assoc_type.clone();
+            let self_ty = {
+                let mut cur = assoc_ty;
+                while let TyKind::Alias(
+                    alias @ hir_ty::next_solver::AliasTy {
+                        kind:
+                            AliasTyKind::Projection {
+                                def_id: SolverDefId::TypeAliasId(alias_id),
+                            },
+                        ..
+                    },
+                ) = cur.kind()
+                {
+                    alias_list.push(hir::TypeAlias::from(alias_id));
+                    cur = alias.self_ty();
+                }
+                cur
             };
-            let AliasTyKind::Projection {
-                def_id: SolverDefId::TypeAliasId(alias_id),
-            } = alias.kind
-            else {
-                panic!("Tries to assoc but not assoc: {assoc_ty:?}");
+
+            if alias_list.is_empty() {
                 return assoc_type.clone();
-            };
+            }
 
-            let self_ty = alias.self_ty();
+            alias_list.reverse();
 
-            //let self_ty = self.resolve_assoc_of_impl_impl(&self_ty);
-
-            //TypeAlias::from(alias_id).;
+            let db = self.db;
 
             match self_ty.kind() {
                 TyKind::Alias(self_ty_alias) => {
                     let AliasTyKind::Opaque { def_id } = self_ty_alias.kind else {
-                        return assoc_type.clone(); // can be projection
                         panic!(
                             "Tries to assoc but not assoc (self is not opaque): {assoc_ty}\nkind: {kind:?}",
                             assoc_ty = assoc_ty.display(self.db, self.display_target()),
                             kind = self_ty_alias.kind,
                         );
+                        return assoc_type.clone();
                     };
                     let bounds = def_id
                         .expect_opaque_ty()
@@ -907,7 +917,28 @@ mod rustc_ty {
                         }
                     }
                 }
+                TyKind::Param(param) => {
+                    let bounds =
+                        GenericPredicates::query_explicit(db, param.id.parent()).iter_identity();
+                    let resolver = param.id.parent().resolver(db);
+                    match parse_bounds_for(bounds, assoc_ty, &resolver, self.db) {
+                        ParsedProjection::NoBounds => assoc_type.clone(),
+                        ParsedProjection::Projection(ty) => T::from_type(ty),
+                        ParsedProjection::Traits(_) => {
+                            /*
+                            unimplemented!(
+                                "{assoc_ty:?}: {assoc_ty_rs}",
+                                assoc_ty_rs = assoc_ty.display(self.db, self.display_target()),
+                            )
+                             */
+                            assoc_type.clone()
+                        }
+                    }
+                }
                 TyKind::Adt(adt, args) => {
+                    let alias_id = TypeAliasId::from(alias_list[0]);
+                    let rest_alias = &alias_list[1..];
+
                     let mut resolved_impl_assoc = None;
 
                     let trait_ = match alias_id.lookup(db).container {
@@ -974,24 +1005,14 @@ mod rustc_ty {
                     // Intener::has_item_definition が true なとき、ちゃんと定義されてて、
                     // EvalCtxt::translate_args Intener::check_args_compatible や　Intener::type_of (db::ty) で最終的に解決する
 
-                    T::from_type(self.new_type(resolved_impl_assoc.unwrap()))
-                }
-                TyKind::Param(param) => {
-                    let bounds =
-                        GenericPredicates::query_explicit(db, param.id.parent()).iter_identity();
-                    let resolver = param.id.parent().resolver(db);
-                    match parse_bounds_for(bounds, assoc_ty, &resolver, self.db) {
-                        ParsedProjection::NoBounds => assoc_type.clone(),
-                        ParsedProjection::Projection(ty) => T::from_type(ty),
-                        ParsedProjection::Traits(_) => {
-                            /*
-                            unimplemented!(
-                                "{assoc_ty:?}: {assoc_ty_rs}",
-                                assoc_ty_rs = assoc_ty.display(self.db, self.display_target()),
-                            )
-                             */
-                            assoc_type.clone()
-                        }
+                    let inner = resolved_impl_assoc.unwrap();
+
+                    if rest_alias.is_empty() {
+                        T::from_type(self.new_type(inner))
+                    } else {
+                        self.resolve_assoc_of_impl_impl(&T::from_type(
+                            self.new_alias_ty(&self.new_type(inner), rest_alias),
+                        ))
                     }
                 }
                 TyKind::Error(_) => assoc_type.clone(),
