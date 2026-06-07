@@ -365,159 +365,83 @@ impl<'g, 'db> BodyGen<'g, 'db> {
         match expr {
             //Expr::Missing => "/* missing */default!".into(),
             ast::Expr::Literal(lit) => self.emit_literal_ast(&lit),
-            ast::Expr::PathExpr(path) => {
-                match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    self.sem.resolve_path(&path.path().unwrap())
-                })) {
-                    Ok(None) => {
-                        eprintln!(
-                            "Unresolved Path at {loc}",
-                            loc = self.expr_location_ast(expr),
-                        );
-                        fcode!("/* {} */", path.syntax().text().to_string())
-                    }
-                    Ok(Some(hir::PathResolution::Def(hir::ModuleDef::Function(f)))) => {
-                        self.fn_path_cs(f).into()
-                    }
-                    Ok(Some(hir::PathResolution::Def(module_def)))
-                        if let Some(def) = ConstructableDef::from_module_def(module_def) =>
-                    {
-                        match def.kind(self.db) {
-                            StructKind::Unit => {
-                                let ty_args = (self.sem.type_of_expr(expr).unwrap().original)
-                                    .expect_adt_of(def.adt(self.db));
-                                fcode!(
-                                    "{}.instance",
-                                    self.constructable_name_cs(&Constructable::new(def, ty_args))
-                                )
-                            }
-                            StructKind::Tuple => {
-                                let fn_type = self.sem.type_of_expr(expr).unwrap().original;
-                                let ret_ty = fn_type.as_callable(self.db).unwrap().return_type();
-                                let ty_args = ret_ty.expect_adt_of(def.adt(self.db));
-                                fcode!(
-                                    "{}.ctor",
-                                    self.constructable_name_cs(&Constructable::new(def, ty_args))
-                                )
-                            }
-                            kind => {
-                                eprintln!(
-                                    "Unexpected struct kind and infer for enum variant path at {loc}\n\
-                                        \tkind: {kind:?}",
-                                    loc = self.expr_location_ast(path),
-                                    //type = self.new_type(infer).display(
-                                    //    self.db,
-                                    //    self.krate.to_display_target(self.db)
-                                    //)
-                                );
-
-                                fcode!(
-                                    "new /* unexpected struct/enum kind and infer */ UnknownType"
-                                )
-                            }
+            ast::Expr::PathExpr(path) => match self
+                .sem
+                .resolve_path_with_subst(&path.path().unwrap())
+            {
+                None => {
+                    eprintln!(
+                        "Unresolved Path at {loc}",
+                        loc = self.expr_location_ast(expr),
+                    );
+                    fcode!("/* {} */", path.syntax().text().to_string())
+                }
+                Some((hir::PathResolution::Def(hir::ModuleDef::Function(f)), args)) => self
+                    .fn_path_cs1(f, &args.map(|x| x.types(self.db)).unwrap_or_default())
+                    .into(),
+                Some((hir::PathResolution::Def(module_def), _))
+                    if let Some(def) = ConstructableDef::from_module_def(module_def) =>
+                {
+                    match def.kind(self.db) {
+                        StructKind::Unit => {
+                            let ty_args = (self.sem.type_of_expr(expr).unwrap().original)
+                                .expect_adt_of(def.adt(self.db));
+                            fcode!(
+                                "{}.instance",
+                                self.constructable_name_cs(&Constructable::new(def, ty_args))
+                            )
                         }
-                    }
-                    Ok(Some(hir::PathResolution::Def(hir::ModuleDef::Adt(adt)))) => {
-                        // TODO: Generic Args
-                        fcode!("new {}", self.rust_type_to_cs(&adt.ty(self.db)))
-                    }
-                    Ok(Some(hir::PathResolution::SelfType(impl_))) => {
-                        eprintln!("ImplSelf at {}", self.expr_location_ast(expr));
-                        "(ImplSelf)".into()
-                    }
-                    Ok(Some(hir::PathResolution::Local(local))) => {
-                        self.binding_name_ast(local).into()
-                    }
-                    //Ok(Some(hir::PathResolution::Def(hir::ModuleDef::Function(function)))) => { // handled above
-                    //    self.fn_path_cs(function).into()
-                    //}
-                    Ok(Some(hir::PathResolution::Def(hir::ModuleDef::Const(const_)))) => {
-                        self.const_path_cs(const_).into()
-                    }
-                    Ok(Some(hir::PathResolution::Def(hir::ModuleDef::Static(static_)))) => {
-                        let mut path = self.module_class_cs(static_.module(self.db));
-                        path.push('.');
-                        path.push_str(static_.name(self.db).as_str());
-                        path.into()
-                    }
-                    //Ok(Some(hir::PathResolution::Def(hir::ModuleDef::Adt(hir::Adt::Enum(enum_))))) => {} // handled above
-                    Ok(Some(hir::PathResolution::TypeParam(param))) => {
-                        eprintln!("GenericParam at {}", self.expr_location_ast(expr));
-                        "(GenericParam)".into()
-                    }
-
-                    Ok(Some(resolved)) => {
-                        eprintln!(
-                            "Path at {loc}: {resolved:?}",
-                            loc = self.expr_location_ast(expr),
-                        );
-                        fcode!("/* {} */", path.syntax().text().to_string())
-                    }
-                    /*
-
-                    Some((
-                        ResolveValueResult::Partial(
-                            ty @ (TypeNs::AdtId(_) | TypeNs::BuiltinType(_) | TypeNs::SelfType(_)),
-                            i,
-                        ),
-                        _,
-                    )) if i == path.segments().len() - 1 => {
-                        let name = path.segments().last().unwrap().name;
-
-                        let ty = match ty {
-                            TypeNs::AdtId(adt) => hir::Adt::from(adt).ty(self.db),
-                            TypeNs::BuiltinType(builtin) => {
-                                hir::BuiltinType::from(builtin).ty(self.db)
-                            }
-                            TypeNs::SelfType(s) => hir::Impl::from(s).self_ty(self.db),
-                            _ => unreachable!(),
-                        };
-                        for impl_ in hir::Impl::all_for_type(self.db, ty) {
-                            if impl_.trait_(self.db).is_none()
-                                && let Some(&item) = impl_
-                                    .items(self.db)
-                                    .iter()
-                                    .find(|i| i.name(self.db).as_ref() == Some(name))
-                            {
-                                return match item {
-                                    AssocItem::Function(f) => self.fn_path_cs(f).into(),
-                                    AssocItem::Const(c) => self.const_path_cs(c).into(),
-                                    AssocItem::TypeAlias(a) => {
-                                        self.rust_type_to_cs(&a.ty(self.db)).into()
-                                    }
-                                };
-                            }
+                        StructKind::Tuple => {
+                            let fn_type = self.sem.type_of_expr(expr).unwrap().original;
+                            let ret_ty = fn_type.as_callable(self.db).unwrap().return_type();
+                            let ty_args = ret_ty.expect_adt_of(def.adt(self.db));
+                            fcode!(
+                                "{}.ctor",
+                                self.constructable_name_cs(&Constructable::new(def, ty_args))
+                            )
                         }
+                        kind => {
+                            eprintln!(
+                                "Unexpected struct kind and infer for enum variant path at {loc}\n\
+                                    \tkind: {kind:?}",
+                                loc = self.expr_location_ast(path),
+                                //type = self.new_type(infer).display(
+                                //    self.db,
+                                //    self.krate.to_display_target(self.db)
+                                //)
+                            );
 
-                        eprintln!(
-                            "Unresolved Partial path {:?} at {} ({path:?})",
-                            self.source(expr_id),
-                            self.expr_location(expr_id)
-                        );
-                        "(PartialPath)".into()
-                    }
-                    Some((ResolveValueResult::Partial(p, x), inf)) => {
-                        eprintln!(
-                            "Partial path {:?} ({p:?}, {x:?}, {inf:?}) at {} ({path:?})",
-                            self.source(expr_id),
-                            self.expr_location(expr_id)
-                        );
-                        "(PartialPath)".into()
-                    }
-                    None => {
-                        eprintln!("Failed to resolve path at {}", self.expr_location(expr_id));
-                        "(UnknownPath)".into()
-                    }
-                     */
-                    Err(panic) => {
-                        eprintln!(
-                            "Path at {loc}: {panic:?}",
-                            loc = self.expr_location_ast(expr),
-                        );
-                        std::panic::resume_unwind(panic);
+                            fcode!("new /* unexpected struct/enum kind and infer */ UnknownType")
+                        }
                     }
                 }
-            }
+                Some((hir::PathResolution::SelfType(impl_), _)) => {
+                    eprintln!("ImplSelf at {}", self.expr_location_ast(expr));
+                    "(ImplSelf)".into()
+                }
+                Some((hir::PathResolution::Local(local), _)) => self.binding_name_ast(local).into(),
+                Some((hir::PathResolution::Def(hir::ModuleDef::Const(const_)), _)) => {
+                    self.const_path_cs(const_).into()
+                }
+                Some((hir::PathResolution::Def(hir::ModuleDef::Static(static_)), _)) => {
+                    let mut path = self.module_class_cs(static_.module(self.db));
+                    path.push('.');
+                    path.push_str(static_.name(self.db).as_str());
+                    path.into()
+                }
+                Some((hir::PathResolution::TypeParam(param), _)) => {
+                    eprintln!("GenericParam at {}", self.expr_location_ast(expr));
+                    "(GenericParam)".into()
+                }
+
+                Some((resolved, _)) => {
+                    eprintln!(
+                        "Path at {loc}: {resolved:?}",
+                        loc = self.expr_location_ast(expr),
+                    );
+                    fcode!("/* {} */", path.syntax().text().to_string())
+                }
+            },
             ast::Expr::FieldExpr(field_expr) => {
                 let name = field_expr.name_ref().unwrap();
                 let receiver_part = field_expr.expr().unwrap();

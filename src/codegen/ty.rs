@@ -3,13 +3,14 @@ use super::{CodeGenerator, generic_args, names};
 use hir::db::HirDatabase;
 use hir::next_solver::GenericArgs;
 use hir::{
-    Adt, AssocItem, BuiltinType, GenericDef, HasContainer, HasCrate, ItemContainer, Module, Name,
-    Trait, Type, sym,
+    Adt, AssocItem, BuiltinType, GenericDef, GenericParam, HasContainer, HasCrate, ItemContainer,
+    Module, Name, Symbol, Trait, Type, sym,
 };
 use hir_ty::display::HirDisplay;
 use ide_db::base_db;
 use itertools::{Either, Itertools};
 use rustc_type_ir::inherent::{IntoKind, SliceLike};
+use std::collections::HashMap;
 
 impl<'db> CodeGenerator<'db> {
     pub fn rust_type_to_cs(&self, ty: &Type<'db>) -> String {
@@ -398,6 +399,21 @@ impl<'db> CodeGenerator<'db> {
                 continue;
             }
 
+            if param.is_unstable(db) {
+                continue;
+            }
+
+            if param
+                .default(db)
+                .and_then(|x| x.as_adt())
+                .map(|x| x.name(db))
+                .as_ref()
+                .map(|x| x.as_str())
+                == Some("RandomState")
+            {
+                continue;
+            }
+
             if self.func_impl_type_param(param).is_special_impl() {
                 continue;
             }
@@ -696,14 +712,31 @@ impl<'db> CodeGenerator<'db> {
         }
     }
 
-    pub fn fn_path_cs(&self, f: hir::Function) -> String {
+    fn params(&self, types: &HashMap<&Symbol, &Type<'db>>, def: GenericDef) -> Vec<String> {
+        let type_params = generic_types(&def.params(self.db))
+            .map(|x| {
+                types
+                    .get(x.name(self.db).symbol())
+                    .copied()
+                    .cloned()
+                    .or_else(|| x.default(self.db))
+                    .unwrap_or_else(|| Type::error(self.db, self.krate.into()))
+            })
+            .collect::<Vec<_>>();
+        let param_sources = self.generic_params_cs_sources(&def.params(self.db));
+        self.map_type_param_source(&param_sources, &type_params)
+    }
+
+    pub fn fn_path_cs1(&self, f: hir::Function, args: &[(Symbol, Type<'db>)]) -> String {
+        let args_by_symbol = args.iter().map(|(x, y)| (x, y)).collect::<HashMap<_, _>>();
+
         match f.container(self.db) {
             ItemContainer::Impl(impl_) if let Some(adt) = impl_.self_ty(self.db).as_adt() => {
-                let mut path = self.module_class_cs(adt.module(self.db));
-                path.push('.');
-                path.push_str(&names::struct_name(adt.name(self.db).as_str()));
+                let mut path = self.adt_name_cs(adt);
+                path = generic_args(path, self.params(&args_by_symbol, adt.into()));
                 path.push('.');
                 path.push_str(&self.function_name(f));
+                path = generic_args(path, self.params(&args_by_symbol, f.into()));
                 path
             }
             ItemContainer::Impl(impl_)
@@ -720,7 +753,12 @@ impl<'db> CodeGenerator<'db> {
                 path.push_str(&self.function_name(f));
                 path
             }
-            //ItemContainer::Trait(_) => {}
+            ItemContainer::Trait(trait_) => {
+                let mut path = self.trait_itf_cs(trait_);
+                path.push('.');
+                path.push_str(&self.function_name(f));
+                path
+            }
             //ItemContainer::ExternBlock(_) => {}
             //ItemContainer::Crate(_) => {}
             ItemContainer::Impl(impl_) => {
@@ -1280,6 +1318,7 @@ pub trait TyFromType<'db> {
         db: &'db dyn HirDatabase,
         resolver: &hir_def::resolver::Resolver<'_>,
     ) -> Self;
+    fn error(db: &'db dyn HirDatabase, krate: base_db::Crate) -> Self;
 }
 
 mod ty_and_type {
@@ -1288,9 +1327,10 @@ mod ty_and_type {
     use hir_def::resolver::{HasResolver, Resolver};
     use hir_ty::ParamEnvAndCrate;
     use hir_ty::db::HirDatabase;
-    use hir_ty::next_solver::{ParamEnv, Ty};
+    use hir_ty::next_solver::{DbInterner, ErrorGuaranteed, ParamEnv, Ty};
     use ide_db::base_db;
     use ide_db::base_db::{CrateOrigin, LangCrateOrigin, all_crates};
+    use rustc_type_ir::TyKind;
 
     #[allow(dead_code)]
     struct TypeMap<'db> {
@@ -1333,6 +1373,14 @@ mod ty_and_type {
                     ty,
                 })
             }
+        }
+
+        fn error(db: &'db dyn HirDatabase, krate: base_db::Crate) -> Self {
+            Self::from_ty(
+                Ty::new(DbInterner::new_no_crate(db), TyKind::Error(ErrorGuaranteed)),
+                db,
+                krate,
+            )
         }
     }
 
