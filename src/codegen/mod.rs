@@ -1,5 +1,7 @@
 #[macro_use]
 pub mod output;
+#[macro_use]
+pub mod delay_format;
 pub mod decl;
 pub mod expr;
 mod id_map;
@@ -10,6 +12,7 @@ use self::output::Code;
 use crate::codegen::decl::{
     is_adt_cfg_disabled, is_adt_r2cs_native, is_impl_cfg_disabled, is_module_cfg_disabled,
 };
+use crate::codegen::delay_format::DelayedFormatString;
 use crate::codegen::id_map::IdMap;
 use crate::codegen::ty::ConstructableDef;
 use hir::{
@@ -38,7 +41,7 @@ pub struct CodeGenerator<'db> {
     // some internal information that hard is to determine
     impl_ty_param_id: IdMap<TypeParam>,
     // This map holds specially handled types like type arguments mirroring impl Fn()
-    special_types: RefCell<HashMap<TypeParam, String>>,
+    special_types: RefCell<HashMap<TypeParam, DelayedFormatString<Type<'db>>>>,
 }
 
 impl<'db> CodeGenerator<'db> {

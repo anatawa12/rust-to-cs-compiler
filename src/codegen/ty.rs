@@ -100,7 +100,7 @@ impl<'db> CodeGenerator<'db> {
             self.trait_itf_cs(trait_)
         } else if let Some(param) = ty.as_type_param(db) {
             if let Some(cs) = self.special_types.borrow().get(&param) {
-                return cs.clone();
+                return cs.format(|t| self.rust_type_to_cs(t));
             }
 
             // Generic parameter
@@ -355,30 +355,31 @@ impl<'db> CodeGenerator<'db> {
                 continue;
             }
 
-            if let Some((output, parameters)) = self.func_impl_type_param(param) {
-                let parameters = parameters
-                    .as_slice()
-                    .iter()
-                    .map(|x| self.rust_type_to_cs(x))
-                    .collect::<Vec<_>>();
-
-                let cs_type = if output.is_unit() {
-                    if parameters.is_empty() {
-                        format!("global::System.Action")
+            match self.func_impl_type_param(param) {
+                SpecialImplBounds::Func(output, parameters) => {
+                    let cs_type = if output.is_unit() {
+                        if parameters.is_empty() {
+                            delayed_format!("global::System.Action")
+                        } else {
+                            delayed_format!("global::System.Action<", join(parameters, ", "), ">")
+                        }
                     } else {
-                        format!("global::System.Action<{}>", parameters.join(", "))
-                    }
-                } else {
-                    let output = self.rust_type_to_cs(&output);
-                    let mut types = parameters;
-                    types.push(output);
-                    format!("global::System.Func<{}>", types.join(", "))
-                };
+                        //let output = self.rust_type_to_cs(&output);
+                        let mut types = parameters;
+                        types.push(output);
+                        //format!("global::System.Func<{}>", types.join(", "))
+                        delayed_format!("global::System.Func<", join(types, ", "), ">")
+                    };
 
-                eprintln!("{param:?}: {cs_type:?}");
-                self.special_types.borrow_mut().insert(param, cs_type);
+                    //eprintln!("{param:?}: {cs_type:?}");
+                    self.special_types.borrow_mut().insert(param, cs_type);
+                }
+                SpecialImplBounds::Future(output) => {
+                    let cs_type = delayed_format!("r2CsRuntime.RustTask<", output, ">");
 
-                continue;
+                    self.special_types.borrow_mut().insert(param, cs_type);
+                }
+                SpecialImplBounds::None => {}
             }
         }
     }
@@ -396,7 +397,7 @@ impl<'db> CodeGenerator<'db> {
                 continue;
             }
 
-            if self.func_impl_type_param(param).is_some() {
+            if self.func_impl_type_param(param).is_special_impl() {
                 continue;
             }
 
@@ -438,8 +439,8 @@ impl<'db> CodeGenerator<'db> {
                 //let Some(instance) = outer_instance.normalize_trait_assoc_type(db, &[], alias)
                 else {
                     panic!("unable to resolve {alias:?} of {type}",
-                                              alias = alias.name(db).as_str(),
-                                              type = outer_instance.display(db, self.display_target()),
+                           alias = alias.name(db).as_str(),
+                           type = outer_instance.display(db, self.display_target()),
                     );
                     continue;
                 };
@@ -556,35 +557,69 @@ impl<'db> CodeGenerator<'db> {
 
         constraints
     }
+}
 
-    fn func_impl_type_param(&self, param: hir::TypeParam) -> Option<(Type<'db>, Vec<Type<'db>>)> {
+enum SpecialImplBounds<'db> {
+    None,
+    Func(Type<'db>, Vec<Type<'db>>),
+    Future(Type<'db>),
+}
+
+impl<'db> SpecialImplBounds<'db> {
+    fn is_special_impl(&self) -> bool {
+        !matches!(self, SpecialImplBounds::None)
+    }
+}
+
+impl<'db> CodeGenerator<'db> {
+    fn func_impl_type_param(&self, param: hir::TypeParam) -> SpecialImplBounds<'db> {
         let db = self.db;
 
-        if param.is_implicit(db)
-            && let bounds = param
-                .trait_bounds_with_args(db)
-                .into_iter()
-                .filter(|&(t, _)| Some(t.into()) != self.lang_items.Sized)
-                .filter(|&(t, _)| Some(t.into()) != self.lang_items.Sync)
-                //.filter(|&(t, _)| Some(t.into()) != self.lang_items.Send)
-                .collect::<Vec<_>>()
+        if let bounds = param
+            .trait_bounds_with_args(db)
+            .into_iter()
+            .filter(|&(t, _)| Some(t.into()) != self.lang_items.Sized)
+            .filter(|&(t, _)| Some(t.into()) != self.lang_items.Sync)
+            //.filter(|&(t, _)| Some(t.into()) != self.lang_items.Send)
+            .collect::<Vec<_>>()
             && let &[(trait_, ref args)] = bounds.as_slice()
             && let trait_id = trait_.into()
-            && (Some(trait_id) == self.lang_items.Fn
-                || Some(trait_id) == self.lang_items.FnMut
-                || Some(trait_id) == self.lang_items.FnOnce)
         {
-            assert_eq!(args.len(), 2); // one for self, one for parameters
-            let self_ty = &args[0];
-            let parameters = args[1].tuple_fields(db);
-            let output = self_ty
-                .normalize_trait_assoc_type(db, &args, self.lang_items.FnOnceOutput.unwrap().into())
-                .expect("No output for fn");
-            let output = self.resolve_assoc_of_impl(&output);
+            if Some(trait_id) == self.lang_items.Fn
+                || Some(trait_id) == self.lang_items.FnMut
+                || Some(trait_id) == self.lang_items.FnOnce
+            {
+                assert_eq!(args.len(), 2); // one for self, one for parameters
+                let self_ty = &args[0];
+                let parameters = args[1].tuple_fields(db);
+                let output = self_ty
+                    .normalize_trait_assoc_type(
+                        db,
+                        args,
+                        self.lang_items.FnOnceOutput.unwrap().into(),
+                    )
+                    .expect("No output for fn");
+                let output = self.resolve_assoc_of_impl(&output);
 
-            Some((output, parameters))
+                SpecialImplBounds::Func(output, parameters)
+            } else if Some(trait_id) == self.lang_items.Future {
+                assert_eq!(args.len(), 1); // one for self
+                let self_ty = &args[0];
+                let output = self_ty
+                    .normalize_trait_assoc_type(
+                        db,
+                        args,
+                        self.lang_items.FutureOutput.unwrap().into(),
+                    )
+                    .expect("No output for fn");
+                let output = self.resolve_assoc_of_impl(&output);
+
+                SpecialImplBounds::Future(output)
+            } else {
+                SpecialImplBounds::None
+            }
         } else {
-            None
+            SpecialImplBounds::None
         }
     }
 
