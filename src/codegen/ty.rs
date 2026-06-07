@@ -223,13 +223,13 @@ impl<'db> CodeGenerator<'db> {
             "i16" => "short",
             "i32" => "int",
             "i64" => "long",
-            "i128" => "global::System.Int128",
+            "i128" => "global::VrcGetVpm.Int128",
             "isize" => "nint",
             "u8" => "byte",
             "u16" => "ushort",
             "u32" => "uint",
             "u64" => "ulong",
-            "u128" => "global::System.UInt128",
+            "u128" => "global::VrcGetVpm.UInt128",
             "usize" => "nuint",
             "f16" => "global::System.Half",
             "f32" => "float",
@@ -685,9 +685,11 @@ impl<'db> CodeGenerator<'db> {
             path
         } else {
             let mut path = String::new();
+            /*
             path.push_str("global::");
             path.push_str(&self.root_namespace);
             path.push_str(".");
+            // */
             path.push_str(self.mod_simple_name(module).as_str());
             path
         }
