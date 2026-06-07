@@ -44,7 +44,10 @@ impl<'db> CodeGenerator<'db> {
 
         // Slice
         if let Some(inner) = ty.as_slice() {
-            return format!("{}[]", self.rust_type_to_cs_inner(&inner, false));
+            return format!(
+                "System.Memory<{}>",
+                self.rust_type_to_cs_inner(&inner, false)
+            );
         }
 
         // Array
@@ -290,9 +293,7 @@ impl<'db> CodeGenerator<'db> {
                     self.rust_type_to_cs_inner(inner, false)
                 ))
             }
-            "PathBuf" | "Path" | "OsString" | "OsStr" | "CString" | "CStr" => {
-                Some("string".to_string())
-            }
+            "OsString" | "OsStr" | "CString" | "CStr" => Some("string".to_string()),
             "Duration" => Some("System.TimeSpan".to_string()),
             "Instant" => Some("long".to_string()), // ticks
             "Url" => Some("System.Uri".to_string()),

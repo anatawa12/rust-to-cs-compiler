@@ -924,9 +924,13 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 // TODO
                 "/* FormatArgsExpr */ default!".into()
             }
-            ast::Expr::MacroExpr(_) => {
+            ast::Expr::MacroExpr(m) => {
                 // TODO
-                "/* macro */ default!".into()
+                let macro_call = m.macro_call().unwrap();
+                fcode!(
+                    "/* macro name {} */ default!",
+                    macro_call.path().unwrap().syntax().text()
+                )
             }
 
             ast::Expr::YeetExpr(_) => {
