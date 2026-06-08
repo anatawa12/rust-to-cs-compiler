@@ -242,6 +242,8 @@ impl<'db> CodeGenerator<'db> {
             return;
         }
 
+        let cs_name = names::struct_name(adt.name(db).as_str());
+
         let gen_params = GenericDef::from(adt).params(db);
         let (tp_names, constraints) = self.generic_params_cs(&gen_params);
 
@@ -268,6 +270,9 @@ impl<'db> CodeGenerator<'db> {
                     }
                 };
                 trait_interfaces.push(cs_iface);
+                if self.lang_items.Ord == Some(trait_.into()) {
+                    trait_interfaces.push(format!("System.IComparable<{cs_name}>"));
+                }
             }
         }
 
@@ -278,7 +283,6 @@ impl<'db> CodeGenerator<'db> {
         };
 
         // Build class header
-        let cs_name = names::struct_name(adt.name(db).as_str());
 
         let interfaces_part = if trait_interfaces.is_empty() {
             String::new()
@@ -437,6 +441,15 @@ impl<'db> CodeGenerator<'db> {
             out.wln(fcode!("public static bool operator>({self_ty_cs} self, {self_ty_cs} right) => self.m_PartialCmp(right).m_IsSomeAnd(x => x.m_IsGt());"));
             out.wln(fcode!("public static bool operator<=({self_ty_cs} self, {self_ty_cs} right) => self.m_PartialCmp(right).m_IsSomeAnd(x => x.m_IsLe());"));
             out.wln(fcode!("public static bool operator>=({self_ty_cs} self, {self_ty_cs} right) => self.m_PartialCmp(right).m_IsSomeAnd(x => x.m_IsGe());"));
+        } else if impl_
+            .trait_(db)
+            .is_some_and(|x| self.lang_items.Ord == Some(x.into()))
+        {
+            let self_ty = impl_.self_ty(db);
+            let self_ty_cs = self.rust_type_to_cs(&self_ty);
+            out.wln(fcode!(
+                "public int CompareTo({self_ty_cs} other) => this.m_Cmp(other).CsOrder();"
+            ));
         } else if impl_
             .trait_(db)
             .is_some_and(|x| self.lang_items.PartialEq == Some(x.into()))
