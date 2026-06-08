@@ -278,7 +278,8 @@ impl<'db> CodeGenerator<'db> {
                 let inner = args.first()?.as_ref()?;
                 Some(self.rust_type_to_cs_inner(inner, false))
             }
-            "HashMap" | "BTreeMap" | "IndexMap" | "AHashMap" => {
+            // indexmap is orderedm but Dictionary is not
+            "HashMap" | "BTreeMap" | /*"IndexMap" | */"AHashMap" => {
                 let k = args.first()?.as_ref()?;
                 let v = args.get(1)?.as_ref()?;
                 Some(format!(
