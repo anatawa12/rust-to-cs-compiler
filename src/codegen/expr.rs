@@ -259,6 +259,11 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     .unwrap_or_default();
                 out.wln(&format!("continue{};", label_str));
             }
+
+            ast::Expr::AwaitExpr(await_expr) => {
+                let inner_str = self.emit_expr_str_ast(&await_expr.expr().unwrap());
+                out.wln(code!("await ", inner_str, ";"));
+            }
             _ => {
                 // Generic expression: emit as expression statement
                 let s = self.emit_expr_str_ast_inner(&expr, true);

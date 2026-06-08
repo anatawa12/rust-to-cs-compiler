@@ -426,6 +426,27 @@ impl<'db> CodeGenerator<'db> {
                 self.emit_function(out, f, Some(impl_));
             }
         }
+
+        if impl_
+            .trait_(db)
+            .is_some_and(|x| self.lang_items.PartialOrd == Some(x.into()))
+        {
+            let self_ty = impl_.self_ty(db);
+            let self_ty_cs = self.rust_type_to_cs(&self_ty);
+            out.wln(fcode!("public static bool operator<({self_ty_cs} self, {self_ty_cs} right) => self.m_PartialCmp(right).m_IsSomeAnd(x => x.m_IsLt());"));
+            out.wln(fcode!("public static bool operator>({self_ty_cs} self, {self_ty_cs} right) => self.m_PartialCmp(right).m_IsSomeAnd(x => x.m_IsGt());"));
+            out.wln(fcode!("public static bool operator<=({self_ty_cs} self, {self_ty_cs} right) => self.m_PartialCmp(right).m_IsSomeAnd(x => x.m_IsLe());"));
+            out.wln(fcode!("public static bool operator>=({self_ty_cs} self, {self_ty_cs} right) => self.m_PartialCmp(right).m_IsSomeAnd(x => x.m_IsGe());"));
+        } else if impl_
+            .trait_(db)
+            .is_some_and(|x| self.lang_items.PartialEq == Some(x.into()))
+        {
+            let self_ty = impl_.self_ty(db);
+            let self_ty_cs = self.rust_type_to_cs(&self_ty);
+            out.wln(fcode!("public static bool operator==({self_ty_cs} self, {self_ty_cs} right) => self.m_Eq(right);"));
+            out.wln(fcode!("public static bool operator!=({self_ty_cs} self, {self_ty_cs} right) => !self.m_Eq(right);"));
+            out.wln(fcode!("public override bool Equals(object? obj) => obj is {self_ty_cs} cast && this == cast;"));
+        }
     }
 
     fn adt_key(&self, adt: Adt) -> String {
