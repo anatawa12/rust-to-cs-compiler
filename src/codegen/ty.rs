@@ -7,10 +7,12 @@ use hir::{
     Module, Name, Symbol, Trait, Type, sym,
 };
 use hir_ty::display::HirDisplay;
+use hir_ty::dyn_compatibility::{DynCompatibilityViolation, MethodViolationCode};
 use ide_db::base_db;
 use itertools::{Either, Itertools};
 use rustc_type_ir::inherent::{IntoKind, SliceLike};
 use std::collections::HashMap;
+use std::ops::{ControlFlow, Not};
 
 impl<'db> CodeGenerator<'db> {
     pub fn rust_type_to_cs(&self, ty: &Type<'db>) -> String {
@@ -550,7 +552,7 @@ impl<'db> CodeGenerator<'db> {
                         for &(trait_, ref args) in &traits {
                             let generic_args = args
                                 .iter()
-                                .skip((!trait_.with_self_in_cs(db)) as usize)
+                                .skip((!self.with_self_in_cs(trait_, db)) as usize)
                                 .cloned();
                             let assoc_types = trait_.assoc_types(db).into_iter().map(|alias| {
                                 self.resolve_assoc_of_impl(
@@ -654,7 +656,7 @@ impl<'db> CodeGenerator<'db> {
             cs_type_params.push(self.rust_type_to_cs_inner(x, false));
         }
 
-        if !trait_.with_self_in_cs(db) && !cs_type_params.is_empty() {
+        if !self.with_self_in_cs(trait_, db) && !cs_type_params.is_empty() {
             cs_type_params.remove(0);
         }
 
@@ -1779,19 +1781,10 @@ mod ty_param_ext {
 }
 
 pub trait TraitExt {
-    fn with_self_in_cs(&self, db: &dyn HirDatabase) -> bool;
     fn assoc_types(&self, db: &dyn HirDatabase) -> Vec<hir::TypeAlias>;
 }
 
 impl TraitExt for Trait {
-    fn with_self_in_cs(&self, db: &dyn HirDatabase) -> bool {
-        if self.dyn_compatibility(db).is_some() {
-            return true;
-        }
-
-        false
-    }
-
     fn assoc_types(&self, db: &dyn HirDatabase) -> Vec<hir::TypeAlias> {
         self.items(db)
             .into_iter()
@@ -1800,5 +1793,208 @@ impl TraitExt for Trait {
                 _ => None,
             })
             .collect()
+    }
+}
+
+impl<'db> CodeGenerator<'db> {
+    pub fn with_self_in_cs(&self, trait_: Trait, db: &dyn HirDatabase) -> bool {
+        if let Some(violations) = self.dyn_compatibility_all_violations_alt(trait_)
+            && !violations.iter().all(|v| self.allowed_violation(v))
+        {
+            return true;
+        }
+
+        false
+    }
+
+    fn allowed_violation(&self, v: &DynCompatibilityViolation) -> bool {
+        match v {
+            DynCompatibilityViolation::SizedSelf => true, // interfaces are sized
+            DynCompatibilityViolation::SelfReferential => false,
+            DynCompatibilityViolation::Method(f, v) => match v {
+                MethodViolationCode::Generic => true, // Generic interface method is native in C#
+                MethodViolationCode::ReferencesImplTraitInTrait => true, // return place impl trait
+                MethodViolationCode::AsyncFn => true, // async fns are return place impl trait
+
+                MethodViolationCode::StaticMethod => false, // TODO: Static method helper system
+                MethodViolationCode::ReferencesSelfInput => false,
+                MethodViolationCode::ReferencesSelfOutput => false,
+                MethodViolationCode::WhereClauseReferencesSelf => false,
+                MethodViolationCode::UndispatchableReceiver => false,
+            },
+            DynCompatibilityViolation::AssocConst(_) => false,
+            DynCompatibilityViolation::GAT(_) => false,
+            DynCompatibilityViolation::HasNonCompatibleSuperTrait(_) => false,
+        }
+    }
+
+    fn dyn_compatibility_all_violations_alt(
+        &self,
+        trait_: Trait,
+    ) -> Option<Vec<DynCompatibilityViolation>> {
+        //eprintln!("dyn_compatibility_all_violations_alt {:?}", trait_);
+        let db = self.db;
+        let mut violations = vec![];
+        _ = hir_ty::dyn_compatibility::dyn_compatibility_with_callback(
+            db,
+            trait_.into(),
+            &mut |violation| {
+                violations.push(violation);
+                ControlFlow::Continue(())
+            },
+        );
+        trait_.items_with_supertraits(db)
+
+        if violations
+            .iter()
+            .any(|x| matches!(x, DynCompatibilityViolation::SizedSelf))
+        {
+            let mut cb = |violation: DynCompatibilityViolation| violations.push(violation);
+            for assoc_item in trait_.items(db) {
+                match assoc_item {
+                    AssocItem::Const(it) => cb(DynCompatibilityViolation::AssocConst(it.into())),
+                    AssocItem::Function(it) => {
+                        self.virtual_call_violations_for_method(it, &mut |mvc| {
+                            cb(DynCompatibilityViolation::Method(
+                                hir_def::FunctionId::try_from(it).unwrap(),
+                                mvc,
+                            ))
+                        })
+                    }
+                    AssocItem::TypeAlias(it) => {}
+                }
+            }
+        }
+
+        violations.is_empty().not().then_some(violations)
+    }
+
+    fn virtual_call_violations_for_method<F>(&self, func: hir::Function, cb: &mut F)
+    where
+        F: FnMut(MethodViolationCode) -> (),
+    {
+        let db = self.db;
+
+        if !func.has_self_param(db) {
+            cb(MethodViolationCode::StaticMethod);
+        }
+
+        if func.is_async(db) {
+            cb(MethodViolationCode::AsyncFn);
+        }
+
+        if func
+            .params_without_self(db)
+            .iter()
+            .any(|x| self.includes_self_in_type(x.ty()))
+        {
+            cb(MethodViolationCode::ReferencesSelfInput);
+        }
+
+        if self.includes_self_in_type(&func.ret_type(db)) {
+            cb(MethodViolationCode::ReferencesSelfOutput);
+        }
+
+        let params = GenericDef::from(func).params(db);
+        let sources = self.generic_params_cs_sources(&params);
+
+        if self.includes_self_in_generic_params_cs_constraints(&sources, &params) {
+            cb(MethodViolationCode::WhereClauseReferencesSelf);
+        }
+    }
+
+    fn includes_self_in_type(&self, ty: &Type<'db>) -> bool {
+        let db = self.db;
+        let ty = &self.resolve_assoc_of_impl(ty);
+
+        if let Some(param) = ty.as_type_param(db) {
+            // Generic parameter Self
+            *param.name(db).symbol() == sym::Self_
+        } else if let Some((inner, _mutability)) = ty.as_reference() {
+            self.includes_self_in_type(&inner)
+        } else if let Some((inner, _)) = ty.as_raw_ptr() {
+            self.includes_self_in_type(&inner)
+        } else if let Some(inner) = ty.as_slice() {
+            self.includes_self_in_type(&inner)
+        } else if let rustc_type_ir::TyKind::Array(inner, _size) = ty.ns_ty().kind() {
+            self.includes_self_in_type(&self.new_type(inner))
+        } else if ty.is_tuple() {
+            let fields = ty.tuple_fields(db);
+            fields.iter().any(|t| self.includes_self_in_type(t))
+        } else if let Some((_, args)) = ty.as_adt_with_args() {
+            args.iter().flatten().any(|t| self.includes_self_in_type(t))
+        } else if let Some(_) = ty.as_impl_traits(db) {
+            use hir_ty::next_solver::ClauseKind;
+            // Unfortunately hir crate does not provide us generic parameters of trait so we access
+            // new solver's ty
+            let traits = ty
+                .ns_ty()
+                .impl_trait_bounds(db)
+                .unwrap()
+                .into_iter()
+                .filter_map(|pred| match pred.kind().skip_binder() {
+                    ClauseKind::Trait(trait_ref) => {
+                        Some((Trait::from(trait_ref.def_id().0), trait_ref.trait_ref.args))
+                    }
+                    _ => None,
+                })
+                // remove marker traits including lang items like Send, Sized
+                .filter(|&(t, _)| !t.items_with_supertraits(db).is_empty())
+                .collect::<Vec<_>>();
+            if traits.len() > 1 {
+                eprintln!(
+                    "Multiple traits are used: {}",
+                    ty.display(db, self.display_target())
+                );
+            }
+            if traits.is_empty() {
+                false
+            } else {
+                let (_, args) = traits[0];
+                let rs_generic_args = self.generic_args_to_types(args).collect::<Vec<_>>();
+
+                rs_generic_args
+                    .iter()
+                    .any(|x| self.includes_self_in_type(x))
+            }
+        } else {
+            false
+        }
+    }
+
+    pub fn includes_self_in_generic_params_cs_constraints(
+        &self,
+        cs_sources: &[CsTypeParamSource],
+        params: &[hir::GenericParam],
+    ) -> bool {
+        let db = self.db;
+
+        let type_prams = generic_types(params).collect::<Vec<_>>();
+        let types = type_prams.iter().map(|x| x.ty(db)).collect::<Vec<_>>();
+
+        cs_sources.iter().any(|source| {
+            let param_type = self.resolve_cs_type_param_source(source, &types);
+            let param = type_prams[source.index()];
+
+            self.includes_self_in_type(&param_type)
+                || match param.trait_bounds_of_nested_type_with_args(&param_type, db) {
+                    Either::Right(_) => false,
+                    Either::Left(traits) => traits.iter().any(|&(trait_, ref args)| {
+                        let generic_args = args.iter().skip(1).cloned();
+
+                        let assoc_types = trait_.assoc_types(db).into_iter().map(|alias| {
+                            self.resolve_assoc_of_impl(
+                                &param_type
+                                    .normalize_trait_assoc_type(db, &[], alias)
+                                    .unwrap(),
+                            )
+                        });
+
+                        generic_args
+                            .chain(assoc_types)
+                            .any(|t| self.includes_self_in_type(&t))
+                    }),
+                }
+        })
     }
 }

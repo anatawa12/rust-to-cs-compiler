@@ -6,6 +6,7 @@ use hir::{
     Adt, AssocItem, DefWithBody, Enum, GenericDef, HasAttrs, HasContainer, HasCrate, HasSource,
     Impl, ItemContainer, Struct, Trait, db::HirDatabase,
 };
+use hir_ty::dyn_compatibility::{DynCompatibilityViolation, MethodViolationCode};
 use syntax::ast::HasAttrs as AstHasAttrs;
 
 /// Returns true if the item carries `#[r2cs_native]` or `#[r2cs::native]`.
@@ -166,13 +167,21 @@ impl<'db> CodeGenerator<'db> {
         let gen_params = GenericDef::from(t).params(db);
         let (mut all_params, mut constraints) = self.generic_params_cs(&gen_params);
 
+        if let Some(compatibility) = t.dyn_compatibility_all_violations(db) {
+            for x in compatibility {
+                out.wln(format!("// dyn incompatible with {x:?}"));
+            }
+        } else {
+            out.wln("// dyn compatible");
+        }
+
         for a in t.assoc_types(db) {
             let a_name = names::assoc_type_param(a.name(db).as_str());
             all_params.push(a_name);
         }
 
         // For non-dyn compatible trait, we insert 'Self' type parameter
-        if t.with_self_in_cs(db) {
+        if self.with_self_in_cs(t, db) {
             all_params.insert(0, "P_Self".into());
             constraints.push(format!("P_Self : {}<{}>", cs_iface, all_params.join(", ")));
         }
@@ -210,12 +219,6 @@ impl<'db> CodeGenerator<'db> {
         }
 
         out.close_brace();
-        out.blank_line();
-
-        // Dyn-compatible interface (marker for dyn Trait usage)
-        out.wln(&format!("public interface {} {{", cs_dyn_iface));
-        out.wln("    // dyn-compatible marker");
-        out.wln("}");
         out.blank_line();
     }
 

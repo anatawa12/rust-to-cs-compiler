@@ -857,8 +857,11 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 // TODO
                 let macro_call = m.macro_call().unwrap();
                 fcode!(
-                    "/* macro name {} */ default!",
-                    macro_call.path().unwrap().syntax().text()
+                    "/* macro name {macro_path} */ macro_{short_name}()",
+                    macro_path = macro_call.path().unwrap().syntax().text(),
+                    short_name = (macro_call.path().unwrap().segments().last().unwrap())
+                        .syntax()
+                        .text(),
                 )
             }
 
