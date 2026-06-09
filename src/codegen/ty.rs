@@ -1897,29 +1897,25 @@ impl<'db> CodeGenerator<'db> {
                 ControlFlow::Continue(())
             },
         );
-        let mut cb = |violation: DynCompatibilityViolation| violations.push(violation);
 
-        if trait_
-            .all_supertraits(db)
+        if violations
             .iter()
-            .any(|&x| Some(x.into()) == self.lang_items.Sized)
+            .any(|x| matches!(x, DynCompatibilityViolation::SizedSelf))
         {
-            cb(DynCompatibilityViolation::SizedSelf);
-        }
-        // TODO: SelfReferential
-
-        for assoc_item in trait_.items_with_supertraits(db) {
-            match assoc_item {
-                AssocItem::Const(it) => cb(DynCompatibilityViolation::AssocConst(it.into())),
-                AssocItem::Function(it) => {
-                    self.virtual_call_violations_for_method(it, &mut |mvc| {
-                        cb(DynCompatibilityViolation::Method(
-                            hir_def::FunctionId::try_from(it).unwrap(),
-                            mvc,
-                        ))
-                    })
+            let mut cb = |violation: DynCompatibilityViolation| violations.push(violation);
+            for assoc_item in trait_.items(db) {
+                match assoc_item {
+                    AssocItem::Const(it) => cb(DynCompatibilityViolation::AssocConst(it.into())),
+                    AssocItem::Function(it) => {
+                        self.virtual_call_violations_for_method(it, &mut |mvc| {
+                            cb(DynCompatibilityViolation::Method(
+                                hir_def::FunctionId::try_from(it).unwrap(),
+                                mvc,
+                            ))
+                        })
+                    }
+                    AssocItem::TypeAlias(it) => {}
                 }
-                AssocItem::TypeAlias(it) => {}
             }
         }
 
