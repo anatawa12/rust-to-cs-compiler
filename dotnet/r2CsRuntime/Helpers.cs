@@ -45,6 +45,15 @@ public static class Helpers
             _ => throw new NotImplementedException()
         };
     }
+    
+    public static T Try<T>(VrcGetVpm.crt_Core.mod_Option.s_Option<T> result)
+    {
+        return result switch
+        {
+            VrcGetVpm.crt_Core.mod_Option.s_Option<T>.v_Some ok => ok.f_0,
+            _ => throw new NotImplementedException()
+        };
+    }
 }
 
 internal class ReturnException<T> : Exception

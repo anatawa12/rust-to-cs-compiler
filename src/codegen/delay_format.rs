@@ -65,6 +65,13 @@ macro_rules! delayed_format {
         $ident.push_str($literal);
         delayed_format!(@push [$ident] [$($rest)*]);
     }};
+    (@push [$ident: ident] [str($expr: expr)]) => {{
+        $ident.push_str($expr);
+    }};
+    (@push [$ident: ident] [str($expr: expr), $($rest: tt)*]) => {{
+        $ident.push_str($expr);
+        delayed_format!(@push [$ident] [$($rest)*]);
+    }};
     (@push [$ident: ident] [join($expr: expr, $sep: expr)]) => {{
         $ident.push_join($expr, $sep);
     }};

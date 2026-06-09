@@ -2,24 +2,28 @@ use super::{CodeGenerator, generic_args, names};
 /// Converts Rust HIR types to C# type strings.
 use hir::db::HirDatabase;
 use hir::next_solver::GenericArgs;
+use hir::sym::panic;
 use hir::{
     Adt, AssocItem, BuiltinType, GenericDef, GenericParam, HasContainer, HasCrate, ItemContainer,
     Module, Name, Symbol, Trait, Type, sym,
 };
 use hir_ty::display::HirDisplay;
 use hir_ty::dyn_compatibility::{DynCompatibilityViolation, MethodViolationCode};
+use hir_ty::next_solver::Ty;
 use ide_db::base_db;
+use ide_db::base_db::salsa::Database;
 use itertools::{Either, Itertools};
+use rustc_type_ir::Upcast;
 use rustc_type_ir::inherent::{IntoKind, SliceLike};
 use std::collections::HashMap;
 use std::ops::{ControlFlow, Not};
 
 impl<'db> CodeGenerator<'db> {
     pub fn rust_type_to_cs(&self, ty: &Type<'db>) -> String {
-        self.rust_type_to_cs_inner(ty, false)
+        self.rust_type_to_cs_inner(ty, true)
     }
 
-    fn rust_type_to_cs_inner(&self, ty: &Type<'db>, in_slot: bool) -> String {
+    fn rust_type_to_cs_inner(&self, ty: &Type<'db>, apply_special: bool) -> String {
         let db = self.db;
         if ty.is_unit() {
             return "global::System.ValueTuple".to_string();
@@ -37,29 +41,23 @@ impl<'db> CodeGenerator<'db> {
 
         // Reference → just the inner type (C# is reference semantics; we use Slot<T> for mutability)
         if let Some((inner, _mutability)) = ty.as_reference() {
-            return self.rust_type_to_cs_inner(&inner, in_slot);
+            return self.rust_type_to_cs(&inner);
         }
 
         // Raw pointer → Ref<T>
         if let Some((inner, _)) = ty.as_raw_ptr() {
-            return format!("Ref<{}>", self.rust_type_to_cs_inner(&inner, false));
+            return format!("Ref<{}>", self.rust_type_to_cs(&inner));
         }
 
         // Slice
         if let Some(inner) = ty.as_slice() {
-            return format!(
-                "System.Memory<{}>",
-                self.rust_type_to_cs_inner(&inner, false)
-            );
+            return format!("System.Memory<{}>", self.rust_type_to_cs(&inner));
         }
 
         // Array
         //if let Some((inner, _size)) = ty.as_array(db) {
         if let rustc_type_ir::TyKind::Array(inner, _size) = ty.ns_ty().kind() {
-            return format!(
-                "{}[]",
-                self.rust_type_to_cs_inner(&self.new_type(inner), false)
-            );
+            return format!("{}[]", self.rust_type_to_cs(&self.new_type(inner)));
         }
 
         // Tuple
@@ -71,13 +69,10 @@ impl<'db> CodeGenerator<'db> {
             if fields.len() == 1 {
                 return format!(
                     "global::System.ValueTuple<{}>",
-                    self.rust_type_to_cs_inner(&fields[0], false)
+                    self.rust_type_to_cs(&fields[0])
                 );
             }
-            let parts: Vec<String> = fields
-                .iter()
-                .map(|t| self.rust_type_to_cs_inner(t, false))
-                .collect();
+            let parts: Vec<String> = fields.iter().map(|t| self.rust_type_to_cs(t)).collect();
             return format!("({})", parts.join(", "));
         }
 
@@ -105,7 +100,7 @@ impl<'db> CodeGenerator<'db> {
             // dyn Trait → T_TraitName (dyn interface)
             self.trait_itf_cs(trait_)
         } else if let Some(param) = ty.as_type_param(db) {
-            if let Some(cs) = self.special_types.borrow().get(&param) {
+            if apply_special && let Some(cs) = self.special_types.borrow().get(&param) {
                 return cs.format(|t| self.rust_type_to_cs(t));
             }
 
@@ -118,7 +113,7 @@ impl<'db> CodeGenerator<'db> {
             } else {
                 format!("/* implicit */ {}", self.impl_ty_param_id.id_name(&param))
             }
-        } else if let Some((param, aliases)) = rustc_ty::alias_of_type_params(ty) {
+        } else if let Some((param, aliases)) = rustc_ty::assoc_of_type_param(ty) {
             let mut type_name = if param.is_implicit(db) && param.name(db) == sym::Self_ {
                 "A".to_string()
             } else {
@@ -204,7 +199,7 @@ impl<'db> CodeGenerator<'db> {
                 ty.display(self.db, self.display_target()),
                 normalized.display(self.db, self.display_target())
             );
-            self.rust_type_to_cs_inner(&normalized, in_slot)
+            self.rust_type_to_cs(&normalized)
         } else {
             eprintln!(
                 "Unsupported type: {}: {ty:?}\n",
@@ -269,16 +264,16 @@ impl<'db> CodeGenerator<'db> {
                 let inner = args.first()?.as_ref()?;
                 Some(format!(
                     "System.Collections.Generic.List<{}>",
-                    self.rust_type_to_cs_inner(inner, false)
+                    self.rust_type_to_cs(inner)
                 ))
             }
             "Box" => {
                 let inner = args.first()?.as_ref()?;
-                Some(self.rust_type_to_cs_inner(inner, false))
+                Some(self.rust_type_to_cs(inner))
             }
             "Arc" | "Rc" | "Mutex" | "RwLock" => {
                 let inner = args.first()?.as_ref()?;
-                Some(self.rust_type_to_cs_inner(inner, false))
+                Some(self.rust_type_to_cs(inner))
             }
             // indexmap is orderedm but Dictionary is not
             "HashMap" | "BTreeMap" | /*"IndexMap" | */"AHashMap" => {
@@ -286,15 +281,15 @@ impl<'db> CodeGenerator<'db> {
                 let v = args.get(1)?.as_ref()?;
                 Some(format!(
                     "System.Collections.Generic.Dictionary<{}, {}>",
-                    self.rust_type_to_cs_inner(k, false),
-                    self.rust_type_to_cs_inner(v, false)
+                    self.rust_type_to_cs(k),
+                    self.rust_type_to_cs(v)
                 ))
             }
             "HashSet" | "BTreeSet" | "IndexSet" => {
                 let inner = args.first()?.as_ref()?;
                 Some(format!(
                     "System.Collections.Generic.HashSet<{}>",
-                    self.rust_type_to_cs_inner(inner, false)
+                    self.rust_type_to_cs(inner)
                 ))
             }
             "OsString" | "OsStr" | "CString" | "CStr" => Some("string".to_string()),
@@ -305,7 +300,7 @@ impl<'db> CodeGenerator<'db> {
             "RustTask" => {
                 // Already mapped
                 let inner = args.first()?.as_ref()?;
-                let t = self.rust_type_to_cs_inner(inner, false);
+                let t = self.rust_type_to_cs(inner);
                 if t == "void" {
                     Some("r2CsRuntime.RustTask<int>".to_string()) // unit tasks use int
                 } else {
@@ -360,7 +355,7 @@ impl<'db> CodeGenerator<'db> {
                 continue;
             }
 
-            match self.func_impl_type_param(param) {
+            match self.special_type_param(param) {
                 SpecialImplBounds::Func(output, parameters) => {
                     let cs_type = if output.is_unit() {
                         if parameters.is_empty() {
@@ -383,6 +378,33 @@ impl<'db> CodeGenerator<'db> {
                     let cs_type = delayed_format!("r2CsRuntime.RustTask<", output, ">");
 
                     self.special_types.borrow_mut().insert(param, cs_type);
+                }
+                SpecialImplBounds::ArgOnlyTrait(param_type) => {
+                    let traits = param
+                        .trait_bounds_of_nested_type_with_args(&param_type, db)
+                        .expect_left("Bounds of ArgOnlyTrait is projection");
+                    let (trait_, ref args) = traits[0];
+
+                    assert!(!self.with_self_in_cs(trait_));
+
+                    let args = self
+                        .trait_type_args(trait_, &args[0], &args[1..])
+                        //.map(|t| self.rust_type_to_cs(&t))
+                        .collect::<Vec<_>>();
+
+                    self.special_types.borrow_mut().insert(
+                        param,
+                        if args.is_empty() {
+                            delayed_format!(str(&self.trait_itf_cs(trait_)))
+                        } else {
+                            delayed_format!(
+                                str(&self.trait_itf_cs(trait_)),
+                                "<",
+                                join(args, ","),
+                                ">"
+                            )
+                        },
+                    );
                 }
                 SpecialImplBounds::None => {}
             }
@@ -417,86 +439,20 @@ impl<'db> CodeGenerator<'db> {
                 continue;
             }
 
-            if self.func_impl_type_param(param).is_special_impl() {
-                continue;
+            if !self.special_type_param(param).is_special_impl() {
+                type_params.push(CsTypeParamSource::TypeParam(index));
             }
 
-            type_params.push(CsTypeParamSource::TypeParam(index));
+            for instance in collect_assoc_type_params(param, param.ty(db), self.db) {
+                let (param_instance, aliases) = rustc_ty::assoc_of_type_param(&instance).unwrap();
 
-            let traits = param.trait_bounds_with_args(db);
+                assert_eq!(param_instance, param);
 
-            self.collect_assoc_type_params(
-                &mut type_params,
-                param,
-                index,
-                &traits,
-                &param.ty(db),
-                &[],
-            );
+                type_params.push(CsTypeParamSource::AliasOfParam(index, aliases.clone()));
+            }
         }
 
         type_params
-    }
-
-    fn collect_assoc_type_params(
-        &self,
-        type_params: &mut Vec<CsTypeParamSource>,
-        param: hir::TypeParam,
-        index: usize,
-        traits: &[(hir::Trait, Vec<hir::Type>)],
-        outer_instance: &hir::Type<'db>,
-        outer_aliases: &[hir::TypeAlias],
-    ) {
-        if traits.is_empty() {
-            return;
-        }
-        let db = self.db;
-
-        for &(trait_, ref args) in traits {
-            for alias in trait_.assoc_types(db) {
-                let aliases = (outer_aliases.iter().copied().chain([alias])).collect::<Vec<_>>();
-                let instance = self.new_alias_ty(outer_instance, &[alias])
-                //let Some(instance) = outer_instance.normalize_trait_assoc_type(db, &[], alias)
-                else {
-                    panic!("unable to resolve {alias:?} of {type}",
-                           alias = alias.name(db).as_str(),
-                           type = outer_instance.display(db, self.display_target()),
-                    );
-                    continue;
-                };
-                if let Some((param_instance, alias_instance)) =
-                    rustc_ty::alias_of_type_params(&instance)
-                    && param_instance == param
-                    && alias_instance == aliases
-                {
-                    let alias = self.new_alias_ty(&param.ty(db), &aliases);
-
-                    if self.rust_type_to_cs(&alias) == "P_S_SerializeSeq_Ok" {
-                        print!("");
-                    }
-
-                    match param.trait_bounds_of_nested_type_with_args(&alias, db) {
-                        Either::Right(projected) => {
-                            // projection. nothing to do
-                            // eprintln!("projection: {projected:?}");
-                        }
-                        Either::Left(traits) => {
-                            type_params
-                                .push(CsTypeParamSource::AliasOfParam(index, aliases.clone()));
-
-                            self.collect_assoc_type_params(
-                                type_params,
-                                param,
-                                index,
-                                &traits,
-                                &instance,
-                                &aliases,
-                            );
-                        }
-                    }
-                }
-            }
-        }
     }
 
     pub fn resolve_cs_type_param_source(
@@ -550,19 +506,12 @@ impl<'db> CodeGenerator<'db> {
                     if !traits.is_empty() {
                         let mut cs_constraints = vec![];
                         for &(trait_, ref args) in &traits {
-                            let generic_args = args
-                                .iter()
-                                .skip((!self.with_self_in_cs(trait_, db)) as usize)
-                                .cloned();
-                            let assoc_types = trait_.assoc_types(db).into_iter().map(|alias| {
-                                self.resolve_assoc_of_impl(
-                                    &param_type
-                                        .normalize_trait_assoc_type(db, &[], alias)
-                                        .unwrap(),
+                            let args = self
+                                .trait_type_args(
+                                    trait_,
+                                    &args[0],
+                                    &args[(!self.with_self_in_cs(trait_)) as usize..],
                                 )
-                            });
-
-                            let args = (generic_args.chain(assoc_types))
                                 .map(|t| self.rust_type_to_cs(&t))
                                 .collect::<Vec<_>>();
 
@@ -577,12 +526,89 @@ impl<'db> CodeGenerator<'db> {
 
         constraints
     }
+
+    fn trait_type_args(
+        &self,
+        trait_: Trait,
+        self_ty: &Type<'db>,
+        args: &[Type<'db>],
+    ) -> impl Iterator<Item = Type<'db>> {
+        let generic_args = args.iter().cloned();
+        let assoc_types = trait_.assoc_types(self.db).into_iter().map(|alias| {
+            self.resolve_assoc_of_impl(
+                &self_ty
+                    .normalize_trait_assoc_type(self.db, &[], alias)
+                    .unwrap(),
+            )
+        });
+
+        generic_args.chain(assoc_types)
+    }
+}
+
+fn collect_assoc_type_params<'db>(
+    param: hir::TypeParam,
+    type_: hir::Type<'db>,
+    db: &'db dyn HirDatabase,
+) -> impl Iterator<Item = Type<'db>> + 'db {
+    let traits = param.trait_bounds_with_args(db);
+    collect_assoc_type_params_impl(param, traits, type_, db)
+}
+
+fn collect_assoc_type_params_impl<'db>(
+    param: hir::TypeParam,
+    traits: Vec<(hir::Trait, Vec<hir::Type<'db>>)>,
+    outer_instance: hir::Type<'db>,
+    db: &'db dyn HirDatabase,
+) -> impl Iterator<Item = Type<'db>> + 'db {
+    traits
+        .into_iter()
+        .flat_map(move |(trait_, _)| trait_.assoc_types(db))
+        .flat_map(move |alias| {
+            let Some(instance) = outer_instance.normalize_trait_assoc_type(db, &[], alias) else {
+                let target = alias.module(db).krate(db).to_display_target(db);
+                panic!("unable to resolve {alias:?} of {type}",
+                       alias = alias.name(db).as_str(),
+                       type = outer_instance.display(db, target),
+                );
+            };
+            if let Some((param_instance, alias_instance)) =
+                rustc_ty::associated_type_of_some(&instance)
+                && param_instance == outer_instance
+                && alias_instance == alias
+            {
+                match param.trait_bounds_of_nested_type_with_args(&instance, db) {
+                    Either::Right(_projected) => {
+                        panic!("Projection should be resolved by normalize_trait_assoc_type")
+                    }
+                    Either::Left(traits) => Some(
+                        std::iter::once(instance.clone()).chain(
+                            traits
+                                .is_empty()
+                                .not()
+                                .then(|| {
+                                    Box::new(collect_assoc_type_params_impl(
+                                        param, traits, instance, db,
+                                    ))
+                                        as Box<dyn Iterator<Item = Type<'db>> + 'db>
+                                })
+                                .into_iter()
+                                .flatten(),
+                        ),
+                    ),
+                }
+            } else {
+                None
+            }
+        })
+        .flatten()
 }
 
 enum SpecialImplBounds<'db> {
     None,
     Func(Type<'db>, Vec<Type<'db>>),
     Future(Type<'db>),
+    ArgOnlyTrait(Type<'db>),
 }
 
 impl<'db> SpecialImplBounds<'db> {
@@ -592,7 +618,7 @@ impl<'db> SpecialImplBounds<'db> {
 }
 
 impl<'db> CodeGenerator<'db> {
-    fn func_impl_type_param(&self, param: hir::TypeParam) -> SpecialImplBounds<'db> {
+    fn special_type_param(&self, param: hir::TypeParam) -> SpecialImplBounds<'db> {
         let db = self.db;
 
         if let bounds = param
@@ -621,7 +647,7 @@ impl<'db> CodeGenerator<'db> {
                     .expect("No output for fn");
                 let output = self.resolve_assoc_of_impl(&output);
 
-                SpecialImplBounds::Func(output, parameters)
+                return SpecialImplBounds::Func(output, parameters);
             } else if Some(trait_id) == self.lang_items.Future {
                 assert_eq!(args.len(), 1); // one for self
                 let self_ty = &args[0];
@@ -634,13 +660,26 @@ impl<'db> CodeGenerator<'db> {
                     .expect("No output for fn");
                 let output = self.resolve_assoc_of_impl(&output);
 
-                SpecialImplBounds::Future(output)
-            } else {
-                SpecialImplBounds::None
+                return SpecialImplBounds::Future(output);
             }
-        } else {
-            SpecialImplBounds::None
+
+            //*
+            let param_ty = param.ty(db);
+            if !self.with_self_in_cs(trait_)
+                && let GenericDef::Function(f) = param.parent(db)
+                && !self.includes_type_in_type(&f.ret_type(db), &|ty| ty == &param_ty)
+                && f.params_without_self(db)
+                    .iter()
+                    .any(|p| self.includes_type_in_type(&p.ty(), &|ty| ty == &param_ty))
+            // TODO: consider generic params
+            {
+                //self.includes_type_in_generic_params_cs_constraints()
+                return SpecialImplBounds::ArgOnlyTrait(param_ty);
+            }
+            // */
         }
+
+        SpecialImplBounds::None
     }
 
     pub fn trait_itf_cs1(&self, trait_: Trait, args: GenericArgs<'db>) -> String {
@@ -656,7 +695,7 @@ impl<'db> CodeGenerator<'db> {
             cs_type_params.push(self.rust_type_to_cs_inner(x, false));
         }
 
-        if !self.with_self_in_cs(trait_, db) && !cs_type_params.is_empty() {
+        if !self.with_self_in_cs(trait_) && !cs_type_params.is_empty() {
             cs_type_params.remove(0);
         }
 
@@ -1280,8 +1319,23 @@ mod rustc_ty {
         }
     }
 
+    /// Returns Some if the type is `<SomeT as SomeTrait>::AssociatedType`
+    pub fn associated_type_of_some<'db>(ty: &Type<'db>) -> Option<(Type<'db>, hir::TypeAlias)> {
+        if let TyKind::Alias(alias) = ty.ns_ty().kind()
+            && let AliasTyKind::Projection { def_id } = alias.kind
+            && let SolverDefId::TypeAliasId(alias_id) = def_id
+        {
+            Some((
+                Type::from_ty_env(alias.self_ty(), ty.env()),
+                hir::TypeAlias::from(alias_id),
+            ))
+        } else {
+            None
+        }
+    }
+
     /// Returns Some if the type is `<Param as SomeTrait>::AssociatedType`
-    pub fn alias_of_type_params(ty: &Type) -> Option<(hir::TypeParam, Vec<hir::TypeAlias>)> {
+    pub fn assoc_of_type_param(ty: &Type) -> Option<(hir::TypeParam, Vec<hir::TypeAlias>)> {
         let mut cur = ty.ns_ty();
         let mut aliases = vec![];
 
@@ -1797,7 +1851,7 @@ impl TraitExt for Trait {
 }
 
 impl<'db> CodeGenerator<'db> {
-    pub fn with_self_in_cs(&self, trait_: Trait, db: &dyn HirDatabase) -> bool {
+    pub fn with_self_in_cs(&self, trait_: Trait) -> bool {
         if let Some(violations) = self.dyn_compatibility_all_violations_alt(trait_)
             && !violations.iter().all(|v| self.allowed_violation(v))
         {
@@ -1843,26 +1897,29 @@ impl<'db> CodeGenerator<'db> {
                 ControlFlow::Continue(())
             },
         );
-        trait_.items_with_supertraits(db)
+        let mut cb = |violation: DynCompatibilityViolation| violations.push(violation);
 
-        if violations
+        if trait_
+            .all_supertraits(db)
             .iter()
-            .any(|x| matches!(x, DynCompatibilityViolation::SizedSelf))
+            .any(|&x| Some(x.into()) == self.lang_items.Sized)
         {
-            let mut cb = |violation: DynCompatibilityViolation| violations.push(violation);
-            for assoc_item in trait_.items(db) {
-                match assoc_item {
-                    AssocItem::Const(it) => cb(DynCompatibilityViolation::AssocConst(it.into())),
-                    AssocItem::Function(it) => {
-                        self.virtual_call_violations_for_method(it, &mut |mvc| {
-                            cb(DynCompatibilityViolation::Method(
-                                hir_def::FunctionId::try_from(it).unwrap(),
-                                mvc,
-                            ))
-                        })
-                    }
-                    AssocItem::TypeAlias(it) => {}
+            cb(DynCompatibilityViolation::SizedSelf);
+        }
+        // TODO: SelfReferential
+
+        for assoc_item in trait_.items_with_supertraits(db) {
+            match assoc_item {
+                AssocItem::Const(it) => cb(DynCompatibilityViolation::AssocConst(it.into())),
+                AssocItem::Function(it) => {
+                    self.virtual_call_violations_for_method(it, &mut |mvc| {
+                        cb(DynCompatibilityViolation::Method(
+                            hir_def::FunctionId::try_from(it).unwrap(),
+                            mvc,
+                        ))
+                    })
                 }
+                AssocItem::TypeAlias(it) => {}
             }
         }
 
@@ -1883,46 +1940,57 @@ impl<'db> CodeGenerator<'db> {
             cb(MethodViolationCode::AsyncFn);
         }
 
+        let is_self_ty = |ty: &Type<'db>| {
+            if let Some(param) = ty.as_type_param(self.db) {
+                // Generic parameter Self
+                *param.name(self.db).symbol() == sym::Self_
+            } else {
+                false
+            }
+        };
+
         if func
             .params_without_self(db)
             .iter()
-            .any(|x| self.includes_self_in_type(x.ty()))
+            .any(|x| self.includes_type_in_type(x.ty(), &is_self_ty))
         {
             cb(MethodViolationCode::ReferencesSelfInput);
         }
 
-        if self.includes_self_in_type(&func.ret_type(db)) {
+        if self.includes_type_in_type(&func.ret_type(db), &is_self_ty) {
             cb(MethodViolationCode::ReferencesSelfOutput);
         }
 
         let params = GenericDef::from(func).params(db);
-        let sources = self.generic_params_cs_sources(&params);
 
-        if self.includes_self_in_generic_params_cs_constraints(&sources, &params) {
+        if self.includes_type_in_generic_params_cs_constraints(&params, &is_self_ty) {
             cb(MethodViolationCode::WhereClauseReferencesSelf);
         }
     }
 
-    fn includes_self_in_type(&self, ty: &Type<'db>) -> bool {
+    fn includes_type_in_type(&self, ty: &Type<'db>, cond: &impl Fn(&Type<'db>) -> bool) -> bool {
         let db = self.db;
         let ty = &self.resolve_assoc_of_impl(ty);
 
-        if let Some(param) = ty.as_type_param(db) {
-            // Generic parameter Self
-            *param.name(db).symbol() == sym::Self_
-        } else if let Some((inner, _mutability)) = ty.as_reference() {
-            self.includes_self_in_type(&inner)
+        if cond(ty) {
+            return true;
+        }
+
+        if let Some((inner, _mutability)) = ty.as_reference() {
+            self.includes_type_in_type(&inner, cond)
         } else if let Some((inner, _)) = ty.as_raw_ptr() {
-            self.includes_self_in_type(&inner)
+            self.includes_type_in_type(&inner, cond)
         } else if let Some(inner) = ty.as_slice() {
-            self.includes_self_in_type(&inner)
+            self.includes_type_in_type(&inner, cond)
         } else if let rustc_type_ir::TyKind::Array(inner, _size) = ty.ns_ty().kind() {
-            self.includes_self_in_type(&self.new_type(inner))
+            self.includes_type_in_type(&self.new_type(inner), cond)
         } else if ty.is_tuple() {
             let fields = ty.tuple_fields(db);
-            fields.iter().any(|t| self.includes_self_in_type(t))
+            fields.iter().any(|t| self.includes_type_in_type(t, cond))
         } else if let Some((_, args)) = ty.as_adt_with_args() {
-            args.iter().flatten().any(|t| self.includes_self_in_type(t))
+            args.iter()
+                .flatten()
+                .any(|t| self.includes_type_in_type(t, cond))
         } else if let Some(_) = ty.as_impl_traits(db) {
             use hir_ty::next_solver::ClauseKind;
             // Unfortunately hir crate does not provide us generic parameters of trait so we access
@@ -1955,44 +2023,38 @@ impl<'db> CodeGenerator<'db> {
 
                 rs_generic_args
                     .iter()
-                    .any(|x| self.includes_self_in_type(x))
+                    .skip(1)
+                    .any(|x| self.includes_type_in_type(x, cond))
             }
         } else {
             false
         }
     }
 
-    pub fn includes_self_in_generic_params_cs_constraints(
+    pub fn includes_type_in_generic_params_cs_constraints(
         &self,
-        cs_sources: &[CsTypeParamSource],
         params: &[hir::GenericParam],
+        cond: &impl Fn(&hir::Type<'db>) -> bool,
+    ) -> bool {
+        generic_types(&params)
+            .any(|param| self.includes_type_in_generic_param_cs_constraints(param, cond))
+    }
+
+    pub fn includes_type_in_generic_param_cs_constraints(
+        &self,
+        param: hir::TypeParam,
+        cond: &impl Fn(&hir::Type<'db>) -> bool,
     ) -> bool {
         let db = self.db;
 
-        let type_prams = generic_types(params).collect::<Vec<_>>();
-        let types = type_prams.iter().map(|x| x.ty(db)).collect::<Vec<_>>();
-
-        cs_sources.iter().any(|source| {
-            let param_type = self.resolve_cs_type_param_source(source, &types);
-            let param = type_prams[source.index()];
-
-            self.includes_self_in_type(&param_type)
+        let param_type = param.ty(db);
+        collect_assoc_type_params(param, param_type.clone(), db).any(|assoc_ty| {
+            self.includes_type_in_type(&param_type, &cond)
                 || match param.trait_bounds_of_nested_type_with_args(&param_type, db) {
-                    Either::Right(_) => false,
+                    Either::Right(projection) => self.includes_type_in_type(&projection, &cond),
                     Either::Left(traits) => traits.iter().any(|&(trait_, ref args)| {
-                        let generic_args = args.iter().skip(1).cloned();
-
-                        let assoc_types = trait_.assoc_types(db).into_iter().map(|alias| {
-                            self.resolve_assoc_of_impl(
-                                &param_type
-                                    .normalize_trait_assoc_type(db, &[], alias)
-                                    .unwrap(),
-                            )
-                        });
-
-                        generic_args
-                            .chain(assoc_types)
-                            .any(|t| self.includes_self_in_type(&t))
+                        self.trait_type_args(trait_, &args[0], &args[1..])
+                            .any(|t| self.includes_type_in_type(&t, &cond))
                     }),
                 }
         })
