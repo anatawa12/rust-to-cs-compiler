@@ -1,3 +1,5 @@
+use tracing_subscriber::prelude::*;
+
 mod codegen;
 
 use cfg::{CfgAtom, CfgDiff};
@@ -41,6 +43,20 @@ fn load_workspace_from_cargo(
 }
 
 fn main() {
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(std::io::stderr)
+                .pretty(),
+        )
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                tracing_subscriber::EnvFilter::new("rust_to_cs_compiler=debug,warn")
+            }),
+        )
+        .init();
+    std::panic::set_hook(Box::new(tracing_panic::panic_hook));
+
     let manifest_path = std::path::Path::new("./vrc-get/vrc-get-vpm/Cargo.toml")
         .canonicalize()
         .unwrap();

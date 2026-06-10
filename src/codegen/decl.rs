@@ -6,6 +6,7 @@ use hir::{
     Adt, AssocItem, DefWithBody, Enum, GenericDef, HasAttrs, HasContainer, HasCrate, HasSource,
     Impl, ItemContainer, Struct, Trait, db::HirDatabase,
 };
+use hir_ty::display::HirDisplay;
 use hir_ty::dyn_compatibility::{DynCompatibilityViolation, MethodViolationCode};
 use syntax::ast::HasAttrs as AstHasAttrs;
 
@@ -272,6 +273,11 @@ impl<'db> CodeGenerator<'db> {
     /// Emit a function/method with a stub body (TODO: real body generation).
     pub fn emit_function(&self, out: &mut Code, f: hir::Function, impl_ctx: Option<Impl>) {
         let db = self.db;
+        let _scope = tracing::info_span!(
+            "emit_function",
+            f = %f.display(db, self.display_target()),
+        )
+        .entered();
 
         if is_fn_cfg_disabled(f, db) {
             return;

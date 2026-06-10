@@ -16,7 +16,9 @@ use itertools::{Either, Itertools};
 use rustc_type_ir::Upcast;
 use rustc_type_ir::inherent::{IntoKind, SliceLike};
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::ops::{ControlFlow, Not};
+use tracing::warn;
 
 impl<'db> CodeGenerator<'db> {
     pub fn rust_type_to_cs(&self, ty: &Type<'db>) -> String {
@@ -561,10 +563,20 @@ fn collect_assoc_type_params_impl<'db>(
     outer_instance: hir::Type<'db>,
     db: &'db dyn HirDatabase,
 ) -> impl Iterator<Item = Type<'db>> + 'db {
+    let span = tracing::info_span!(
+        "collect_assoc_type_params_impl",
+        assoc_ty = %outer_instance.debug_display(db),
+    );
     traits
         .into_iter()
         .flat_map(move |(trait_, _)| trait_.assoc_types(db))
         .flat_map(move |alias| {
+            let _scope = tracing::info_span!(
+                parent: &span,
+                "alias",
+                alias = alias.name(db).as_str(),
+            )
+            .entered();
             let Some(instance) = outer_instance.normalize_trait_assoc_type(db, &[], alias) else {
                 let target = alias.module(db).krate(db).to_display_target(db);
                 panic!("unable to resolve {alias:?} of {type}",
@@ -619,6 +631,11 @@ impl<'db> SpecialImplBounds<'db> {
 
 impl<'db> CodeGenerator<'db> {
     fn special_type_param(&self, param: hir::TypeParam) -> SpecialImplBounds<'db> {
+        let _scope = tracing::info_span!(
+            "special_type_param",
+            param = %param.display(self.db, self.display_target()),
+        )
+        .entered();
         let db = self.db;
 
         if let bounds = param
@@ -911,7 +928,7 @@ mod rustc_ty {
     use rustc_type_ir::solve::{Goal, GoalSource, NoSolution};
     use rustc_type_ir::{AliasTy, AliasTyKind, Interner, PredicatePolarity, TyKind};
     use std::fmt::Debug;
-    use tracing::debug;
+    use tracing::{debug, trace};
 
     pub(super) trait TypeLike<'db>: Debug + Clone {
         fn ty(&self) -> Ty<'db>;
@@ -941,7 +958,7 @@ mod rustc_ty {
     impl<'db> CodeGenerator<'db> {
         // This tries to resolve `<impl SomeTrait<Assoc = SomeType> as SomeTrait>::Assoc`
         pub(super) fn resolve_assoc_of_impl(&self, assoc_ty: &Type<'db>) -> Type<'db> {
-            debug!(
+            trace!(
                 "resolve_assoc_of_impl: {}",
                 assoc_ty.display(self.db, self.display_target())
             );
@@ -1109,7 +1126,7 @@ mod rustc_ty {
                             resolved_impl_assoc = Some(ty.skip_binder());
                         });
 
-                    debug!(
+                    trace!(
                         "resolved?: {assoc_ty} => {resolved}\n{resolved1:?}",
                         assoc_ty = self.new_type(assoc_ty).display(db, self.display_target()),
                         resolved = self
@@ -1163,7 +1180,7 @@ mod rustc_ty {
                 }
                 TyKind::Adt(impl_adt_def, impl_adt_args) => {
                     assert_eq!(impl_adt_def.def_id(), self_adt);
-                    debug!("translate_args: adt: {impl_adt_def:?} {impl_adt_args:?} {self_args:?}");
+                    trace!("translate_args: adt: {impl_adt_def:?} {impl_adt_args:?} {self_args:?}");
 
                     let mut type_map = std::collections::HashMap::new();
 
@@ -1625,6 +1642,7 @@ pub fn variant_from_module_def(resolution: hir::ModuleDef) -> Option<hir::Varian
 pub trait TypeExt<'db> {
     fn expect_adt_with_args(&self) -> (Adt, Vec<Option<Type<'db>>>);
     fn expect_adt_of(&self, adt: Adt) -> Vec<Type<'db>>;
+    fn debug_display<'a>(&'a self, db: &'a dyn HirDatabase) -> impl Display + 'a;
 }
 
 impl<'db> TypeExt<'db> for Type<'db> {
@@ -1640,6 +1658,10 @@ impl<'db> TypeExt<'db> for Type<'db> {
         assert_eq!(adt_of_ty, adt, "expected adt of {adt:?} but was {self:?}");
 
         types.into_iter().flatten().collect()
+    }
+
+    fn debug_display<'a>(&'a self, db: &'a dyn HirDatabase) -> impl Display + 'a {
+        self.display_test(db, hir::Crate::from(self.env().krate).to_display_target(db))
     }
 }
 
@@ -1886,7 +1908,11 @@ impl<'db> CodeGenerator<'db> {
         &self,
         trait_: Trait,
     ) -> Option<Vec<DynCompatibilityViolation>> {
-        //eprintln!("dyn_compatibility_all_violations_alt {:?}", trait_);
+        let _scope = tracing::info_span!(
+            "dyn_compatibility_all_violations_alt",
+            trait = %trait_.display_test(self.db, self.display_target()),
+        )
+        .entered();
         let db = self.db;
         let mut violations = vec![];
         _ = hir_ty::dyn_compatibility::dyn_compatibility_with_callback(
