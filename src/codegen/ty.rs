@@ -18,7 +18,7 @@ use rustc_type_ir::inherent::{IntoKind, SliceLike};
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::ops::{ControlFlow, Not};
-use tracing::warn;
+use tracing::*;
 
 impl<'db> CodeGenerator<'db> {
     pub fn rust_type_to_cs(&self, ty: &Type<'db>) -> String {
@@ -643,6 +643,7 @@ impl<'db> CodeGenerator<'db> {
             .into_iter()
             .filter(|&(t, _)| Some(t.into()) != self.lang_items.Sized)
             .filter(|&(t, _)| Some(t.into()) != self.lang_items.Sync)
+            .filter(|&(t, _)| Some(t.into()) != self.lang_items.Unpin)
             //.filter(|&(t, _)| Some(t.into()) != self.lang_items.Send)
             .collect::<Vec<_>>()
             && let &[(trait_, ref args)] = bounds.as_slice()
@@ -1639,10 +1640,22 @@ pub fn variant_from_module_def(resolution: hir::ModuleDef) -> Option<hir::Varian
     }
 }
 
+pub trait DebugDisplay<'db> {
+    fn debug_display(&'db self, db: &'db dyn HirDatabase) -> impl Display + 'db;
+}
+
+impl<'db, T> DebugDisplay<'db> for T
+where
+    T: HasCrate + HirDisplay<'db>,
+{
+    fn debug_display(&'db self, db: &'db dyn HirDatabase) -> impl Display + 'db {
+        self.display_test(db, self.krate(db).to_display_target(db))
+    }
+}
+
 pub trait TypeExt<'db> {
     fn expect_adt_with_args(&self) -> (Adt, Vec<Option<Type<'db>>>);
     fn expect_adt_of(&self, adt: Adt) -> Vec<Type<'db>>;
-    fn debug_display<'a>(&'a self, db: &'a dyn HirDatabase) -> impl Display + 'a;
 }
 
 impl<'db> TypeExt<'db> for Type<'db> {
@@ -1658,10 +1671,6 @@ impl<'db> TypeExt<'db> for Type<'db> {
         assert_eq!(adt_of_ty, adt, "expected adt of {adt:?} but was {self:?}");
 
         types.into_iter().flatten().collect()
-    }
-
-    fn debug_display<'a>(&'a self, db: &'a dyn HirDatabase) -> impl Display + 'a {
-        self.display_test(db, hir::Crate::from(self.env().krate).to_display_target(db))
     }
 }
 
@@ -1914,35 +1923,148 @@ impl<'db> CodeGenerator<'db> {
         )
         .entered();
         let db = self.db;
-        let mut violations = vec![];
-        _ = hir_ty::dyn_compatibility::dyn_compatibility_with_callback(
-            db,
-            trait_.into(),
-            &mut |violation| {
-                violations.push(violation);
-                ControlFlow::Continue(())
-            },
-        );
+        let mut violations: Vec<DynCompatibilityViolation> = vec![];
+        let mut cb = |violation: DynCompatibilityViolation| violations.push(violation);
 
-        if violations
+        if trait_
+            .all_supertraits(db)
             .iter()
-            .any(|x| matches!(x, DynCompatibilityViolation::SizedSelf))
+            .any(|&x| Some(x.into()) == self.lang_items.Sized)
         {
-            let mut cb = |violation: DynCompatibilityViolation| violations.push(violation);
-            for assoc_item in trait_.items(db) {
-                match assoc_item {
-                    AssocItem::Const(it) => cb(DynCompatibilityViolation::AssocConst(it.into())),
-                    AssocItem::Function(it) => {
-                        self.virtual_call_violations_for_method(it, &mut |mvc| {
-                            cb(DynCompatibilityViolation::Method(
-                                hir_def::FunctionId::try_from(it).unwrap(),
-                                mvc,
-                            ))
-                        })
-                    }
-                    AssocItem::TypeAlias(it) => {}
-                }
+            cb(DynCompatibilityViolation::SizedSelf);
+        }
+
+        if predicates_reference_self(self, self.db, trait_) {
+            cb(DynCompatibilityViolation::SelfReferential);
+        }
+
+        // TODO: check for SelfReferential
+
+        for assoc_item in trait_.items_with_supertraits(db) {
+            // remove associated items with Self: Sized, but does not exclude Trait : Sized
+            if generics_require_sized_self(trait_, assoc_item, db) {
+                trace!(
+                    "ignored item {assoc_item} of {trait} since guarded by Sized",
+                    assoc_item = assoc_item.name(db).unwrap().as_str(),
+                    trait = trait_.debug_display(self.db),
+                );
+                continue;
             }
+
+            match assoc_item {
+                AssocItem::Const(it) => cb(DynCompatibilityViolation::AssocConst(it.into())),
+                AssocItem::Function(it) => {
+                    let _scope = tracing::info_span!(
+                        "dyn_compatibility_all_violations_alt for fn",
+                        trait = %trait_.debug_display(self.db),
+                        f = %it.debug_display(self.db),
+                    )
+                    .entered();
+                    self.virtual_call_violations_for_method(it, &mut |mvc| {
+                        cb(DynCompatibilityViolation::Method(
+                            hir_def::FunctionId::try_from(it).unwrap(),
+                            mvc,
+                        ))
+                    })
+                }
+                AssocItem::TypeAlias(it) => {}
+            }
+        }
+
+        fn predicates_reference_self<'db>(
+            this: &CodeGenerator<'db>,
+            db: &'db dyn HirDatabase,
+            trait_: Trait,
+        ) -> bool {
+            hir_ty::GenericPredicates::query_explicit(
+                db,
+                GenericDef::from(trait_).try_into().unwrap(),
+            )
+            .iter_identity()
+            .any(|predicate| match predicate.kind().skip_binder() {
+                rustc_type_ir::ClauseKind::Trait(trait_pred) => {
+                    trait_pred.trait_ref.args.iter().skip(1).any(|arg| {
+                        match arg.kind() {
+                            hir_ty::next_solver::GenericArgKind::Type(type_) => {
+                                this.includes_type_in_type(&this.new_type(type_), &|ty| {
+                                    if let Some(param) = ty.as_type_param(this.db) {
+                                        // Generic parameter Self
+                                        *param.name(this.db).symbol() == sym::Self_
+                                    } else {
+                                        false
+                                    }
+                                })
+                            }
+                            _ => false,
+                        }
+                    })
+                }
+                rustc_type_ir::ClauseKind::Projection(proj_pred) => {
+                    proj_pred.projection_term.args.iter().skip(1).any(|arg| {
+                        match arg.kind() {
+                            hir_ty::next_solver::GenericArgKind::Type(type_) => {
+                                this.includes_type_in_type(&this.new_type(type_), &|ty| {
+                                    if let Some(param) = ty.as_type_param(this.db) {
+                                        // Generic parameter Self
+                                        *param.name(this.db).symbol() == sym::Self_
+                                    } else {
+                                        false
+                                    }
+                                })
+                            }
+                            _ => false,
+                        }
+                    })
+                }
+                _ => false,
+            })
+        }
+
+        fn generics_require_sized_self(
+            trait_: Trait,
+            assoc_item: AssocItem,
+            db: &dyn HirDatabase,
+        ) -> bool {
+            let krate = assoc_item.module(db).krate(db);
+            let interner = hir_ty::next_solver::DbInterner::new_with(db, krate.into());
+            let Some(sized) = interner.lang_items().Sized else {
+                return false;
+            };
+
+            let predicates = hir_ty::GenericPredicates::query_own_explicit(
+                db,
+                match assoc_item {
+                    AssocItem::Function(f) => GenericDef::from(f).try_into().unwrap(),
+                    AssocItem::Const(c) => GenericDef::from(c).try_into().unwrap(),
+                    AssocItem::TypeAlias(t) => GenericDef::from(t).try_into().unwrap(),
+                },
+            );
+
+            let includes_sized =
+                rustc_type_ir::elaborate::elaborate(interner, predicates.iter_identity()).any(
+                    |pred| match pred.kind().skip_binder() {
+                        rustc_type_ir::ClauseKind::Trait(trait_pred) => {
+                            if sized == trait_pred.def_id().0
+                                && let rustc_type_ir::TyKind::Param(param_ty) =
+                                    trait_pred.trait_ref.self_ty().kind()
+                                && param_ty.index == 0
+                            {
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                        _ => false,
+                    },
+                );
+            if includes_sized {
+                trace!(
+                "ignored item {assoc_item} of {trait} since guarded by Sized",
+                    assoc_item = assoc_item.name(db).unwrap().as_str(),
+                    trait = trait_.debug_display(db),
+                );
+            }
+            includes_sized
         }
 
         violations.is_empty().not().then_some(violations)
@@ -1950,7 +2072,7 @@ impl<'db> CodeGenerator<'db> {
 
     fn virtual_call_violations_for_method<F>(&self, func: hir::Function, cb: &mut F)
     where
-        F: FnMut(MethodViolationCode) -> (),
+        F: FnMut(MethodViolationCode),
     {
         let db = self.db;
 
