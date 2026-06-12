@@ -302,7 +302,12 @@ impl<'db> CodeGenerator<'db> {
                 out.dedent();
                 out.open_brace();
 
-                self.emit_constructable_def(out, &cs_name, s.into());
+                self.emit_constructable_def(
+                    out,
+                    &format!("{cs_name}{generics}"),
+                    &cs_name,
+                    s.into(),
+                );
                 out.blank_line();
 
                 // Methods from all impl blocks
@@ -342,7 +347,12 @@ impl<'db> CodeGenerator<'db> {
                     out.wln(format!("public sealed partial class {v_name}",));
                     out.open_brace();
 
-                    self.emit_constructable_def(out, &v_name, variant.into());
+                    self.emit_constructable_def(
+                        out,
+                        &format!("{cs_name}{generics}"),
+                        &v_name,
+                        variant.into(),
+                    );
                     out.close_brace();
                     out.blank_line();
                 }
@@ -361,7 +371,13 @@ impl<'db> CodeGenerator<'db> {
         }
     }
 
-    fn emit_constructable_def(&self, out: &mut Code, cs_name: &str, s: ConstructableDef) {
+    fn emit_constructable_def(
+        &self,
+        out: &mut Code,
+        cs_type: &str,
+        cs_name: &str,
+        s: ConstructableDef,
+    ) {
         let db = self.db;
 
         // Fields
@@ -382,7 +398,7 @@ impl<'db> CodeGenerator<'db> {
                 // create tuple constructor
                 out.w(code!(
                     "public static ",
-                    cs_name,
+                    cs_type,
                     " ctor(",
                     join(
                         s.fields(db).iter().map(|field| {
@@ -412,7 +428,7 @@ impl<'db> CodeGenerator<'db> {
             StructKind::Unit => {
                 out.w("private ").w(cs_name).wln("(){}");
                 out.w("public static ")
-                    .w(cs_name)
+                    .w(cs_type)
                     .w(" instance = new ")
                     .w(cs_name)
                     .wln("();");

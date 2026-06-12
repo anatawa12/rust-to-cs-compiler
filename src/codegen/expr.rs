@@ -735,8 +735,24 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     code!("new object[", len, "] /* fill ", val, "*/")
                 }
                 ast::ArrayExprKind::ElementList(elements) => {
+                    let Some((element, _len)) = self
+                        .sem
+                        .type_of_expr(expr)
+                        .unwrap()
+                        .original
+                        .as_array(self.db)
+                    else {
+                        panic!("");
+                    };
+                    let cg = self.cg;
                     let parts = elements.map(|e| self.emit_expr_str_ast(&e));
-                    code!("new object[] { ", join(parts, ", "), " }")
+                    code!(
+                        "new ",
+                        cg.rust_type_to_cs(&element),
+                        "[] { ",
+                        join(parts, ", "),
+                        " }"
+                    )
                 }
             },
             ast::Expr::ClosureExpr(closure) => {
