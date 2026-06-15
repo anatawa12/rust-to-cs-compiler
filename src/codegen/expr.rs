@@ -387,18 +387,17 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 Some((hir::PathResolution::Def(module_def), _))
                     if let Some(def) = ConstructableDef::from_module_def(module_def) =>
                 {
+                    let expr_type = self.sem.type_of_expr(expr).unwrap().original;
                     match def.kind(self.db) {
                         StructKind::Unit => {
-                            let ty_args = (self.sem.type_of_expr(expr).unwrap().original)
-                                .expect_adt_of(def.adt(self.db));
+                            let ty_args = expr_type.expect_adt_of(def.adt(self.db));
                             fcode!(
                                 "{}.instance",
                                 self.constructable_name_cs(&Constructable::new(def, ty_args))
                             )
                         }
                         StructKind::Tuple => {
-                            let fn_type = self.sem.type_of_expr(expr).unwrap().original;
-                            let ret_ty = fn_type.as_callable(self.db).unwrap().return_type();
+                            let ret_ty = expr_type.as_callable(self.db).unwrap().return_type();
                             let ty_args = ret_ty.expect_adt_of(def.adt(self.db));
                             fcode!(
                                 "{}.ctor",
@@ -516,6 +515,10 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         Some(PathResolution::Def(def))
                             if let Some(def) = ConstructableDef::from_module_def(def) =>
                         {
+                            if def.adt(self.db).name(self.db).as_str() == "Cow" {
+                                // The Cow::Borrow() or Cow::Owned() would become raw value so omit
+                                return self.emit_expr_str_ast(&{ args }.nth(0).unwrap());
+                            }
                             let expr_type = self.sem.type_of_expr(expr).unwrap().original;
                             let generic_args = expr_type.expect_adt_of(def.adt(self.db));
                             let callee_type =

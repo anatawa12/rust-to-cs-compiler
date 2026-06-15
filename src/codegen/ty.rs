@@ -80,9 +80,8 @@ impl<'db> CodeGenerator<'db> {
 
         // ADT (struct/enum/union)
         if let Some((adt, args)) = ty.as_adt_with_args() {
-            let rust_adt_name = self.adt_rust_name(&adt, db);
             // Check std library mappings first
-            if let Some(mapped) = self.map_std_type(&rust_adt_name, &args, db) {
+            if let Some(mapped) = self.map_std_type(adt.name(db).as_str(), &args, db) {
                 return mapped;
             }
 
@@ -261,6 +260,8 @@ impl<'db> CodeGenerator<'db> {
         db: &'db dyn HirDatabase,
     ) -> Option<String> {
         match rust_name {
+            // There is no CoW in this world
+            "Cow" => Some(self.rust_type_to_cs(args.iter().flatten().nth(0).unwrap())),
             "String" | "str" => Some("string".to_string()),
             "Vec" => {
                 let inner = args.first()?.as_ref()?;
