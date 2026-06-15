@@ -2,7 +2,7 @@
 use std::collections::HashMap;
 
 use super::{CodeGenerator, names, output::Code};
-use crate::codegen::ty::{Constructable, ConstructableDef, TypeExt};
+use crate::codegen::ty::{Constructable, ConstructableDef, DebugDisplay, TypeExt};
 use hir::next_solver::GenericArgs;
 use hir::{Adt, InFile, Local, ModuleDef, PathResolution, StructKind, Variant};
 use itertools::Either;
@@ -450,17 +450,34 @@ impl<'g, 'db> BodyGen<'g, 'db> {
             ast::Expr::FieldExpr(field_expr) => {
                 let name = field_expr.name_ref().unwrap();
                 let receiver_part = field_expr.expr().unwrap();
+                let receiver_type = self.sem.type_of_expr(&receiver_part).unwrap();
                 let receiver = self.emit_expr_str_ast(&receiver_part);
-                match self.sem.resolve_field(&field_expr) {
+                let adjuster = if let Some(adjusted) = receiver_type.adjusted
+                    && std::iter::successors(receiver_type.original.remove_ref(), |c| {
+                        c.remove_ref()
+                    })
+                    .all(|remove_ref| adjusted != remove_ref)
+                {
+                    tracing::trace!(
+                        "adjusted type {original} to {adjusted} to access {name}",
+                        original = receiver_type.original.debug_display(self.db),
+                        adjusted = adjusted.debug_display(self.db),
+                        name = field_expr.name_ref().unwrap().text().as_str(),
+                    );
+                    ".m_Deref()"
+                } else {
+                    ""
+                };
+                match self.sem.resolve_field(field_expr) {
                     None => {
                         eprintln!("Unresolved field at {}", self.expr_location_ast(field_expr));
-                        code!(receiver, "./* unresolved field */")
+                        code!(receiver, adjuster, "./* unresolved field */")
                     }
                     Some(Either::Left(field)) => {
-                        code!(receiver, ".", self.field_name(&field))
+                        code!(receiver, adjuster, ".", self.field_name(&field))
                     }
                     Some(Either::Right(field)) => {
-                        code!(receiver, ".", field.index + 1)
+                        code!(receiver, adjuster, ".", field.index + 1)
                     }
                 }
             }
