@@ -756,29 +756,71 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 }
             },
             ast::Expr::ClosureExpr(closure) => {
-                let params: Vec<String> = closure
-                    .param_list()
-                    .unwrap()
-                    .params()
-                    .enumerate()
+                let param_names = closure.param_list().unwrap().params().enumerate();
+                let params: Vec<String> = (param_names.clone())
                     .map(|(i, p)| {
-                        let bindings = self.collect_bindings_in_pat_ast(&p.pat().unwrap());
-                        if bindings.len() == 1 {
-                            let binding = self.alloc_binding_ast(&bindings[0]);
+                        if let ast::Pat::IdentPat(ident_pat) = p.pat().unwrap()
+                            && let Some(local) = self.sem.to_def(&ident_pat)
+                        {
+                            let binding = self.alloc_binding_ast(&local);
                             binding
                         } else {
                             format!("__cp{}", i)
                         }
                     })
                     .collect();
-                for p in closure.param_list().unwrap().params() {
-                    let bindings = self.collect_bindings_in_pat_ast(&p.pat().unwrap());
-                    for b in bindings {
-                        //self.alloc_binding_ast(&b); // TODO
+
+                let mut body_block = Code::new();
+                for (i, p) in param_names.clone() {
+                    if let ast::Pat::IdentPat(ident_pat) = p.pat().unwrap()
+                        && let Some(_) = self.sem.to_def(&ident_pat)
+                    {
+                    } else {
+                        self.emit_let_stmt(
+                            &mut body_block,
+                            &p.pat().unwrap(),
+                            code!(&format!("__cp{}", i)),
+                            Self::emit_unreachable,
+                        );
                     }
                 }
-                let body_str = self.emit_expr_str_ast(&closure.body().unwrap());
-                code!("(", join(params, ", "), ") => ", body_str)
+
+                if let ast::Expr::BlockExpr(block) = closure.body().unwrap() {
+                    self.emit_block_contents(
+                        &mut body_block,
+                        block.statements(),
+                        block.tail_expr(),
+                        true,
+                        true,
+                    );
+                    code!(
+                        "(",
+                        join(params, ", "),
+                        ") => {\n",
+                        indent,
+                        body_block,
+                        dedent,
+                        "}"
+                    )
+                } else {
+                    let body_str = self.emit_expr_str_ast(&closure.body().unwrap());
+                    if body_block.is_empty() {
+                        code!("(", join(params, ", "), ") => ", body_str)
+                    } else {
+                        code!(
+                            "(",
+                            join(params, ", "),
+                            ") => {\n",
+                            indent,
+                            body_block,
+                            "return ",
+                            body_str,
+                            ";\n",
+                            dedent,
+                            "}"
+                        )
+                    }
+                }
             }
             ast::Expr::ReturnExpr(return_expr) => {
                 let val = return_expr
