@@ -287,7 +287,7 @@ impl<'db> CodeGenerator<'db> {
                     self.rust_type_to_cs(v)
                 ))
             }
-            "HashSet" | "BTreeSet" | "IndexSet" => {
+            "HashSet" => {
                 let inner = args.first()?.as_ref()?;
                 Some(format!(
                     "System.Collections.Generic.HashSet<{}>",
