@@ -1072,7 +1072,10 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                             "Unable to resolve path in pattern {resolved:?}: {}",
                             self.expr_location_ast(pat)
                         );
-                        return code!("Unknown");
+                        fcode!(
+                            "Unknown /* bad path resolution: {} */",
+                            path.syntax().text()
+                        )
                     }
                 }
             }
@@ -1094,7 +1097,10 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                             "Unable to resolve path in pattern {resolved:?}: {}",
                             self.expr_location_ast(pat)
                         );
-                        return code!("Unknown");
+                        return fcode!(
+                            "Unknown /* Bad record path resolution: {} */",
+                            path.syntax().text()
+                        );
                     }
                 };
 
@@ -1177,12 +1183,13 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     }
                 }
             }
+            ast::Pat::RefPat(ref_pat) => self.emit_pattern_ast(&ref_pat.pat().unwrap()),
             pat => {
                 eprintln!(
                     "Unsupported pattern {pat:?} at {}",
                     self.expr_location_ast(pat)
                 );
-                code!("Unknown")
+                code!("Unknown /* unsupported pattern */")
             }
         }
     }
