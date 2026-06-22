@@ -791,8 +791,25 @@ impl<'db> CodeGenerator<'db> {
     pub fn fn_path_cs1(&self, f: hir::Function, args: &[(Symbol, Type<'db>)]) -> String {
         let args_by_symbol = args.iter().map(|(x, y)| (x, y)).collect::<HashMap<_, _>>();
 
+        fn resolve_param<'a, 'db>(
+            db: &'db dyn HirDatabase,
+            ty: &'a Type<'db>,
+            args_by_symbol: &HashMap<&Symbol, &'a Type<'db>>,
+        ) -> &'a Type<'db> {
+            if let Some(param) = ty.as_type_param(db)
+                && let Some(adt) = args_by_symbol.get(param.name(db).symbol())
+            {
+                adt
+            } else {
+                ty
+            }
+        }
+
         match f.container(self.db) {
-            ItemContainer::Impl(impl_) if let Some(adt) = impl_.self_ty(self.db).as_adt() => {
+            ItemContainer::Impl(impl_)
+                if let Some(adt) =
+                    resolve_param(self.db, &impl_.self_ty(self.db), &args_by_symbol).as_adt() =>
+            {
                 let mut path = self.adt_name_cs(adt);
                 path = generic_args(path, self.params(&args_by_symbol, adt.into()));
                 path.push('.');
@@ -801,7 +818,9 @@ impl<'db> CodeGenerator<'db> {
                 path
             }
             ItemContainer::Impl(impl_)
-                if let Some(primitive) = impl_.self_ty(self.db).as_builtin() =>
+                if let Some(primitive) =
+                    resolve_param(self.db, &impl_.self_ty(self.db), &args_by_symbol)
+                        .as_builtin() =>
             {
                 let mut path = String::from(primitive.name().as_str());
                 path.push('.');
@@ -828,6 +847,10 @@ impl<'db> CodeGenerator<'db> {
                     impl_.self_ty(self.db)
                 );
                 let mut path = self.module_class_cs(f.module(self.db));
+                path.push_str(&format!(
+                    "/*Unsupported impl with {}*/",
+                    impl_.self_ty(self.db).debug_display(self.db)
+                ));
                 path.push('.');
                 path.push_str(&self.function_name(f));
                 path
