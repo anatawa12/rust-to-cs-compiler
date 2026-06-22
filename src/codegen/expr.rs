@@ -513,18 +513,32 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 if let ast::Expr::PathExpr(path) = &callee {
                     match self.sem.resolve_path(&path.path().unwrap()) {
                         Some(PathResolution::Def(def))
+                            if let Some(def) = ConstructableDef::from_module_def(def)
+                                && def.adt(self.db).name(self.db).as_str() == "Cow" =>
+                        {
+                            // The Cow::Borrow() or Cow::Owned() would become raw value so omit
+                            return self.emit_expr_str_ast(&{ args }.nth(0).unwrap());
+                        }
+                        Some(PathResolution::Def(def))
                             if let Some(def) = ConstructableDef::from_module_def(def) =>
                         {
-                            if def.adt(self.db).name(self.db).as_str() == "Cow" {
-                                // The Cow::Borrow() or Cow::Owned() would become raw value so omit
-                                return self.emit_expr_str_ast(&{ args }.nth(0).unwrap());
-                            }
                             let expr_type = self.sem.type_of_expr(expr).unwrap().original;
                             let generic_args = expr_type.expect_adt_of(def.adt(self.db));
                             let callee_type =
                                 self.constructable_name_cs(&Constructable::new(def, generic_args));
                             let args_str = args.map(|a| self.emit_expr_str_ast(&a));
                             return code!(callee_type, ".ctor(", join(args_str, ", "), ")");
+                        }
+                        Some(PathResolution::Def(ModuleDef::Function(f)))
+                            if let Some(_self_param) = f.self_param(self.db) =>
+                        {
+                            let mut args = args;
+                            let receiver = args.nth(0).unwrap();
+
+                            let receiver = self.emit_expr_str_ast(&receiver);
+                            let method_cs = self.function_name(f);
+                            let args = args.map(|a| self.emit_expr_str_ast(&a));
+                            return code!(receiver, ".", method_cs, "(", join(args, ", "), ")");
                         }
                         _ => {}
                     }
