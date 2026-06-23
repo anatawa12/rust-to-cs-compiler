@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use super::{CodeGenerator, names, output::Code};
 use crate::codegen::ty::{Constructable, ConstructableDef, DebugDisplay, TypeExt};
 use hir::next_solver::GenericArgs;
-use hir::{Adt, InFile, Local, ModuleDef, PathResolution, StructKind, Variant};
+use hir::{Adt, HasContainer, InFile, Local, ModuleDef, PathResolution, StructKind, Variant};
 use itertools::Either;
 use rustc_type_ir::Upcast;
 use syntax::ast::{
@@ -380,6 +380,34 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         loc = self.expr_location_ast(expr),
                     );
                     fcode!("/* {} */", path.syntax().text().to_string())
+                }
+                Some((hir::PathResolution::Def(hir::ModuleDef::Function(f)), ref args))
+                    if f.name(self.db).symbol() == &hir::sym::into
+                        && let hir::ItemContainer::Impl(impl_) = f.container(self.db)
+                        && let Some(trait_ref) = impl_.trait_ref(self.db)
+                        && trait_ref.trait_().name(self.db).symbol() == &hir::sym::Into
+                        && let Some(args) = args =>
+                {
+                    let type_arg: hir::Type = trait_ref
+                        .get_type_argument(1)
+                        .expect("get_type_argument of Into")
+                        .to_type(self.db);
+                    let param = type_arg
+                        .as_type_param(self.db)
+                        .expect("T of Into<T> impl is not type param");
+                    let args: &hir::GenericSubstitution = args;
+                    if let Some((_, type_)) = args
+                        .types(self.db)
+                        .iter()
+                        .find(|(sym, _)| param.name(self.db).symbol() == sym)
+                    {
+                        code!(
+                            self.rust_type_to_cs(type_),
+                            ".m_From/*convert from Into::into*/"
+                        )
+                    } else {
+                        code!("Unknown::from/*Into::into*/")
+                    }
                 }
                 Some((hir::PathResolution::Def(hir::ModuleDef::Function(f)), args)) => self
                     .fn_path_cs1(f, &args.map(|x| x.types(self.db)).unwrap_or_default())

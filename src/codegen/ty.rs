@@ -17,6 +17,7 @@ use rustc_type_ir::Upcast;
 use rustc_type_ir::inherent::{IntoKind, SliceLike};
 use std::collections::HashMap;
 use std::fmt::Display;
+use std::fmt::Write;
 use std::ops::{ControlFlow, Not};
 use tracing::*;
 
@@ -810,12 +811,44 @@ impl<'db> CodeGenerator<'db> {
                 if let Some(adt) =
                     resolve_param(self.db, &impl_.self_ty(self.db), &args_by_symbol).as_adt() =>
             {
-                let mut path = self.adt_name_cs(adt);
-                path = generic_args(path, self.params(&args_by_symbol, adt.into()));
-                path.push('.');
-                path.push_str(&self.function_name(f));
-                path = generic_args(path, self.params(&args_by_symbol, f.into()));
-                path
+                if f.self_param(self.db).is_some() {
+                    // TODO: explicit types
+                    let num_params = f.num_params(self.db);
+                    let mut path = String::new();
+                    path.push_str("((");
+                    {
+                        let mut peekable = (0..num_params).peekable();
+                        while let Some(index) = peekable.next() {
+                            write!(path, "_p_{}", index).unwrap();
+                            if peekable.peek().is_some() {
+                                path.push_str(", ");
+                            }
+                        }
+                    }
+                    path.push_str(") => _p_0.");
+                    path.push_str(&self.function_name(f));
+                    path = generic_args(path, self.params(&args_by_symbol, f.into()));
+                    path.push('(');
+                    {
+                        let mut peekable = (1..num_params).peekable();
+                        while let Some(index) = peekable.next() {
+                            write!(path, "_p_{}", index).unwrap();
+                            if peekable.peek().is_some() {
+                                path.push_str(", ");
+                            }
+                        }
+                    }
+                    path.push_str("))");
+
+                    path
+                } else {
+                    let mut path = self.adt_name_cs(adt);
+                    path = generic_args(path, self.params(&args_by_symbol, adt.into()));
+                    path.push('.');
+                    path.push_str(&self.function_name(f));
+                    path = generic_args(path, self.params(&args_by_symbol, f.into()));
+                    path
+                }
             }
             ItemContainer::Impl(impl_)
                 if let Some(primitive) =
