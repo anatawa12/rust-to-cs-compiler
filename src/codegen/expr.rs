@@ -503,14 +503,11 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                             || self.rust_type_to_cs(&resolved_info.target_ty)
                                 == self.rust_type_to_cs(resolved_info.self_ty.as_ref().unwrap())
                         {
-                            receiver
+                            code!("/*omit Into::into method*/(", receiver, ")")
                         } else {
                             code!(
                                 self.rust_type_to_cs(&resolved_info.target_ty),
-                                format!(
-                                    ".m_From/*convert from Into::into method from:{:?} to: {:?}*/(",
-                                    resolved_info.target_ty, resolved_info.self_ty,
-                                ),
+                                ".m_From/*convert from Into::into method*/(",
                                 receiver,
                                 ")"
                             )
@@ -565,15 +562,15 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 let callee = call_expr.expr().unwrap();
                 let args = call_expr.arg_list().unwrap().args();
                 if let ast::Expr::PathExpr(path) = &callee {
-                    match self.sem.resolve_path(&path.path().unwrap()) {
-                        Some(PathResolution::Def(def))
+                    match self.sem.resolve_path_with_subst(&path.path().unwrap()) {
+                        Some((PathResolution::Def(def), _))
                             if let Some(def) = ConstructableDef::from_module_def(def)
                                 && def.adt(self.db).name(self.db).as_str() == "Cow" =>
                         {
                             // The Cow::Borrow() or Cow::Owned() would become raw value so omit
                             return self.emit_expr_str_ast(&{ args }.nth(0).unwrap());
                         }
-                        Some(PathResolution::Def(def))
+                        Some((PathResolution::Def(def), _))
                             if let Some(def) = ConstructableDef::from_module_def(def) =>
                         {
                             let expr_type = self.sem.type_of_expr(expr).unwrap().original;
@@ -583,7 +580,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                             let args_str = args.map(|a| self.emit_expr_str_ast(&a));
                             return code!(callee_type, ".ctor(", join(args_str, ", "), ")");
                         }
-                        Some(PathResolution::Def(ModuleDef::Function(f)))
+                        Some((PathResolution::Def(ModuleDef::Function(f)), _))
                             if let Some(_self_param) = f.self_param(self.db) =>
                         {
                             let mut args = args;
@@ -593,6 +590,26 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                             let method_cs = self.function_name(f);
                             let args = args.map(|a| self.emit_expr_str_ast(&a));
                             return code!(receiver, ".", method_cs, "(", join(args, ", "), ")");
+                        }
+                        Some((PathResolution::Def(ModuleDef::Function(f)), Some(subst)))
+                            if call_expr.arg_list().unwrap().args().count() == 0
+                                && let Some(resolved_info) = resolve_into(f, &subst, self.db) =>
+                        {
+                            let receiver = self.emit_expr_str_ast(&{ args }.nth(0).unwrap());
+                            return if Some(&resolved_info.target_ty)
+                                == resolved_info.self_ty.as_ref()
+                                || self.rust_type_to_cs(&resolved_info.target_ty)
+                                    == self.rust_type_to_cs(resolved_info.self_ty.as_ref().unwrap())
+                            {
+                                code!("/*omit Into::into call*/(", receiver, ")")
+                            } else {
+                                code!(
+                                    self.rust_type_to_cs(&resolved_info.target_ty),
+                                    ".m_From/*convert from Into::into call*/(",
+                                    receiver,
+                                    ")"
+                                )
+                            };
                         }
                         _ => {}
                     }
