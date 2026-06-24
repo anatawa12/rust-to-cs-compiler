@@ -1,10 +1,13 @@
 /// Generates C# expressions and statements from Rust HIR bodies.
 use std::collections::HashMap;
 
-use super::{CodeGenerator, names, output::Code};
+use super::{CodeGenerator, generic_args, names, output::Code};
 use crate::codegen::ty::{Constructable, ConstructableDef, DebugDisplay, TypeExt};
-use hir::next_solver::GenericArgs;
-use hir::{Adt, HasContainer, InFile, Local, ModuleDef, PathResolution, StructKind, Variant};
+use hir::{
+    Adt, HasContainer, InFile, ItemContainer, Local, ModuleDef, PathResolution, StructKind, Variant,
+};
+use hir_ty::db::HirDatabase;
+use hir_ty::display::HirDisplay;
 use itertools::Either;
 use rustc_type_ir::Upcast;
 use syntax::ast::{
@@ -381,33 +384,13 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     );
                     fcode!("/* {} */", path.syntax().text().to_string())
                 }
-                Some((hir::PathResolution::Def(hir::ModuleDef::Function(f)), ref args))
-                    if f.name(self.db).symbol() == &hir::sym::into
-                        && let hir::ItemContainer::Impl(impl_) = f.container(self.db)
-                        && let Some(trait_ref) = impl_.trait_ref(self.db)
-                        && trait_ref.trait_().name(self.db).symbol() == &hir::sym::Into
-                        && let Some(args) = args =>
+                Some((hir::PathResolution::Def(hir::ModuleDef::Function(f)), Some(ref args)))
+                    if let Some(resolved_info) = resolve_into(f, args, self.db) =>
                 {
-                    let type_arg: hir::Type = trait_ref
-                        .get_type_argument(1)
-                        .expect("get_type_argument of Into")
-                        .to_type(self.db);
-                    let param = type_arg
-                        .as_type_param(self.db)
-                        .expect("T of Into<T> impl is not type param");
-                    let args: &hir::GenericSubstitution = args;
-                    if let Some((_, type_)) = args
-                        .types(self.db)
-                        .iter()
-                        .find(|(sym, _)| param.name(self.db).symbol() == sym)
-                    {
-                        code!(
-                            self.rust_type_to_cs(type_),
-                            ".m_From/*convert from Into::into*/"
-                        )
-                    } else {
-                        code!("Unknown::from/*Into::into*/")
-                    }
+                    code!(
+                        self.rust_type_to_cs(&resolved_info.target_ty),
+                        ".m_From/*convert from Into::into*/"
+                    )
                 }
                 Some((hir::PathResolution::Def(hir::ModuleDef::Function(f)), args)) => self
                     .fn_path_cs1(f, &args.map(|x| x.types(self.db)).unwrap_or_default())
@@ -510,9 +493,52 @@ impl<'g, 'db> BodyGen<'g, 'db> {
             }
             ast::Expr::MethodCallExpr(method_call) => {
                 let receiver = self.emit_expr_str_ast(&method_call.receiver().unwrap());
-                match self.sem.resolve_method_call(method_call) {
-                    Some(resolved) => {
+
+                match self.sem.resolve_method_call_fallback(method_call) {
+                    Some((Either::Left(f), Some(args)))
+                        if method_call.arg_list().unwrap().args().count() == 0
+                            && let Some(resolved_info) = resolve_into(f, &args, self.db) =>
+                    {
+                        if Some(&resolved_info.target_ty) == resolved_info.self_ty.as_ref()
+                            || self.rust_type_to_cs(&resolved_info.target_ty)
+                                == self.rust_type_to_cs(resolved_info.self_ty.as_ref().unwrap())
+                        {
+                            receiver
+                        } else {
+                            code!(
+                                self.rust_type_to_cs(&resolved_info.target_ty),
+                                format!(
+                                    ".m_From/*convert from Into::into method from:{:?} to: {:?}*/(",
+                                    resolved_info.target_ty, resolved_info.self_ty,
+                                ),
+                                receiver,
+                                ")"
+                            )
+                        }
+                    }
+                    Some((Either::Left(resolved), generics)) => {
+                        let generics = generics.map(|generics| {
+                            self.params1(
+                                &self.extract_generic_args(resolved, generics),
+                                resolved.into(),
+                            )
+                        });
+                        //generic_args(String::new(), generics.into_iter().flatten().collect()),
                         let method_cs = self.function_name(resolved);
+
+                        let args = method_call
+                            .arg_list()
+                            .unwrap()
+                            .args()
+                            .map(|a| self.emit_expr_str_ast(&a));
+                        code!(receiver, ".", method_cs, "(", join(args, ", "), ")")
+                    }
+                    Some((Either::Right(_), _)) => {
+                        eprintln!(
+                            "method call resolved to field at {}",
+                            self.expr_location_ast(method_call)
+                        );
+                        let method_cs = method_call.name_ref().unwrap().text().as_str().to_string();
                         let args = method_call
                             .arg_list()
                             .unwrap()
@@ -1312,6 +1338,68 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 return Some(cs_name.to_string());
             }
         }
+        None
+    }
+}
+
+struct ResolvedInto<'db> {
+    pub self_ty: Option<hir::Type<'db>>,
+    pub target_ty: hir::Type<'db>,
+}
+
+fn resolve_into<'db>(
+    f: hir::Function,
+    args: &hir::GenericSubstitution<'db>,
+    db: &'db dyn HirDatabase,
+) -> Option<ResolvedInto<'db>> {
+    if f.name(db).symbol() == &hir::sym::into
+        && let ItemContainer::Trait(trait_) = f.container(db)
+        && trait_.name(db).symbol() == &hir::sym::Into
+    {
+        let params = hir::GenericDef::Trait(trait_).params(db);
+        let (symbol0, type0) = &args.types(db)[0];
+        let (symbol1, type1) = &args.types(db)[1];
+        assert_eq!(params[0].name(db).symbol(), symbol0);
+        assert_eq!(params[1].name(db).symbol(), symbol1);
+        Some(ResolvedInto::<'db> {
+            self_ty: Some(type0.clone()),
+            target_ty: type1.clone(),
+        })
+    } else if f.name(db).symbol() == &hir::sym::into
+        && let ItemContainer::Impl(impl_) = f.container(db)
+        && let Some(trait_ref) = impl_.trait_ref(db)
+        && trait_ref.trait_().name(db).symbol() == &hir::sym::Into
+    {
+        let impl_params = hir::GenericDef::Impl(impl_).type_or_const_params(db);
+
+        let self_type = impl_.self_ty(db);
+        let type_arg: hir::Type = trait_ref
+            .get_type_argument(1)
+            .expect("get_type_argument of Into")
+            .to_type(db);
+
+        let self_as_param = self_type
+            .as_type_param(db)
+            .expect("Self type of impl Into<T> for U is not type param");
+        let target_as_param = type_arg
+            .as_type_param(db)
+            .expect("T of Into<T> impl is not type param");
+
+        let self_index = (impl_params.iter())
+            .position(|x| x.as_type_param(db).is_some_and(|x| x == self_as_param))
+            .unwrap_or_else(|| panic!("{self_as_param:?}\n{impl_params:?}"));
+        let target_index = (impl_params.iter())
+            .position(|x| x.as_type_param(db).is_some_and(|x| x == target_as_param))
+            .unwrap();
+
+        let self_type = args.types(db)[self_index].1.clone();
+        let target_type = args.types(db)[target_index].1.clone();
+
+        Some(ResolvedInto::<'db> {
+            self_ty: Some(self_type),
+            target_ty: target_type,
+        })
+    } else {
         None
     }
 }

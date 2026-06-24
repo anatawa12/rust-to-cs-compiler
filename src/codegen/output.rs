@@ -121,7 +121,15 @@ pub trait WriteToCode {
     fn append(&self, out: &mut Code);
 }
 
-impl<T: WriteToCode> WriteToCode for &T {
+impl<T: WriteToCode> WriteToCode for Option<T> {
+    fn append(&self, out: &mut Code) {
+        if let Some(value) = self {
+            value.append(out);
+        }
+    }
+}
+
+impl<T: WriteToCode + ?Sized> WriteToCode for &T {
     fn append(&self, out: &mut Code) {
         (*self).append(out);
     }
@@ -133,7 +141,7 @@ impl WriteToCode for String {
     }
 }
 
-impl WriteToCode for &str {
+impl WriteToCode for str {
     fn append(&self, out: &mut Code) {
         out.write_str(self);
     }

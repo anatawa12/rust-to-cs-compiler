@@ -4,8 +4,8 @@ use hir::db::HirDatabase;
 use hir::next_solver::GenericArgs;
 use hir::sym::panic;
 use hir::{
-    Adt, AssocItem, BuiltinType, GenericDef, GenericParam, HasContainer, HasCrate, ItemContainer,
-    Module, Name, Symbol, Trait, Type, sym,
+    Adt, AssocItem, BuiltinType, GenericDef, GenericParam, GenericSubstitution, HasContainer,
+    HasCrate, ItemContainer, Module, Name, Symbol, Trait, Type, sym,
 };
 use hir_ty::display::HirDisplay;
 use hir_ty::dyn_compatibility::{DynCompatibilityViolation, MethodViolationCode};
@@ -774,6 +774,17 @@ impl<'db> CodeGenerator<'db> {
         }
     }
 
+    pub fn params1(&self, types: &[Type<'db>], def: GenericDef) -> Vec<String> {
+        let type_params = generic_types(&def.params(self.db))
+            .enumerate()
+            .map(|(i, _)| {
+                (types.get(i).cloned()).unwrap_or_else(|| Type::error(self.db, self.krate.into()))
+            })
+            .collect::<Vec<_>>();
+        let param_sources = self.generic_params_cs_sources(&def.params(self.db));
+        self.map_type_param_source(&param_sources, &type_params)
+    }
+
     fn params(&self, types: &HashMap<&Symbol, &Type<'db>>, def: GenericDef) -> Vec<String> {
         let type_params = generic_types(&def.params(self.db))
             .map(|x| {
@@ -898,6 +909,60 @@ impl<'db> CodeGenerator<'db> {
         }
     }
 
+    pub fn extract_generic_args(
+        &self,
+        generic_def: impl Copy + HasContainer + DebugDisplay<'db> + Into<GenericDef>,
+        substitution: GenericSubstitution<'db>,
+    ) -> Vec<Type<'db>> {
+        let container = generic_def.container(self.db);
+        let resolved_as_generic_def = generic_def.into();
+
+        let parent_def = match container {
+            ItemContainer::Trait(trait_) => Some(GenericDef::Trait(trait_)),
+            ItemContainer::Impl(impl_) => Some(GenericDef::Impl(impl_)),
+            ItemContainer::Module(_) => None,
+            ItemContainer::ExternBlock(_) => None,
+            ItemContainer::Crate(_) => None,
+        };
+        let args = substitution.types(self.db);
+        let parent_params = parent_def
+            .map(|def| def.params(self.db))
+            .as_deref()
+            .into_iter()
+            .flat_map(generic_types)
+            .collect::<Vec<_>>();
+        let self_params = generic_types(&resolved_as_generic_def.params(self.db))
+            .filter(|x| {
+                // implicit && missing => replacement parameter for impl trait
+                !x.is_implicit(self.db) || !x.name(self.db).is_missing()
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            args.len(),
+            parent_params.len() + self_params.len(),
+            "container: {container:?}, args: {args}, params: {self_params}, parent_params: {parent_params}, sum: {sum}, f: {f}",
+            args = args.len(),
+            parent_params = parent_params.len(),
+            self_params = self_params.len(),
+            sum = parent_params.len() + self_params.len(),
+            f = generic_def.debug_display(self.db),
+        );
+
+        //let self_args = &args[parent_params.len()..];
+        let self_args = {
+            let mut tmp = { args };
+            tmp.drain(0..parent_params.len());
+            tmp
+        };
+
+        assert!(self_params.iter().zip(self_args.iter()).all(
+            |(param, (arg_symbol, _arg_type))| { param.name(self.db).symbol() == arg_symbol }
+        ));
+
+        self_args.into_iter().map(|(_, ty)| ty).collect()
+    }
+
     pub fn const_path_cs(&self, adt: hir::Const) -> String {
         let mut path = self.module_class_cs(adt.module(self.db));
         path.push('.');
@@ -967,7 +1032,7 @@ mod rustc_ty {
 
     use crate::codegen::CodeGenerator;
     use crate::codegen::ty::ty_param_ext::{ParsedProjection, parse_bounds_for};
-    use crate::codegen::ty::{TyFromType, TypeParamExt};
+    use crate::codegen::ty::{DebugDisplay, TyFromType, TypeParamExt};
     use hir::{Adt, Trait, Type};
     use hir_def::resolver::{HasResolver, Resolver};
     use hir_def::signatures::TypeAliasSignature;
@@ -1102,11 +1167,16 @@ mod rustc_ty {
                     match parse_bounds_for(bounds, assoc_ty, &resolver, self.db) {
                         ParsedProjection::NoBounds => assoc_type.clone(),
                         ParsedProjection::Projection(ty) => T::from_type(ty),
-                        ParsedProjection::Traits(_) => {
-                            unimplemented!(
-                                "{assoc_ty_rs}",
+                        ParsedProjection::Traits(traits) => {
+                            eprintln!(
+                                "type: {assoc_ty_rs}, traits: {traits:?}",
                                 assoc_ty_rs = assoc_ty.display(self.db, self.display_target()),
-                            )
+                                traits = traits
+                                    .iter()
+                                    .map(|x| x.0.debug_display(self.db).to_string())
+                                    .collect::<Vec<_>>()
+                            );
+                            return assoc_type.clone();
                         }
                     }
                 }
@@ -1698,14 +1768,19 @@ pub fn variant_from_module_def(resolution: hir::ModuleDef) -> Option<hir::Varian
 }
 
 pub trait DebugDisplay<'db> {
-    fn debug_display(&'db self, db: &'db dyn HirDatabase) -> impl Display + 'db;
+    fn debug_display<'a>(&'a self, db: &'db dyn HirDatabase) -> impl Display + 'a
+    where
+        'db: 'a;
 }
 
 impl<'db, T> DebugDisplay<'db> for T
 where
     T: HasCrate + HirDisplay<'db>,
 {
-    fn debug_display(&'db self, db: &'db dyn HirDatabase) -> impl Display + 'db {
+    fn debug_display<'a>(&'a self, db: &'db dyn HirDatabase) -> impl Display + 'a
+    where
+        'db: 'a,
+    {
         self.display_test(db, self.krate(db).to_display_target(db))
     }
 }
@@ -1858,6 +1933,8 @@ mod ty_param_ext {
             Some((self_ty, SolverDefId::TypeAliasId(alias_id)))
         };
 
+        let lang_items = lang_items(db, resolver.krate());
+
         #[derive(Debug)]
         enum Pred<'db> {
             Ty(Ty<'db>),
@@ -1884,6 +1961,7 @@ mod ty_param_ext {
                 }
                 _ => None,
             })
+            .filter(|x| !matches!(x, Pred::Trait(trait_ref) if Some(trait_ref.def_id.into()) == lang_items.Sized))
             .collect::<Vec<_>>();
 
         if preds.is_empty() {
@@ -1897,7 +1975,6 @@ mod ty_param_ext {
         }) {
             return ParsedProjection::Projection(Type::from_ty_resolver(*pred, db, resolver));
         }
-        let lang_items = lang_items(db, resolver.krate());
 
         ParsedProjection::Traits(
             preds
@@ -1915,7 +1992,7 @@ mod ty_param_ext {
                     }
                     _ => unreachable!(),
                 })
-                .filter(|(t, _)| Some((*t).into()) != lang_items.Sized)
+                //.filter(|(t, _)| Some((*t).into()) != lang_items.Sized)
                 .unique()
                 .collect(),
         )
