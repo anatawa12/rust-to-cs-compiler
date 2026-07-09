@@ -1,7 +1,9 @@
 use crate::codegen::CodeGenerator;
 use hir::{HasContainer, HasName, ItemContainer, ModuleDef};
+use hir_def::nameres::ModuleSource;
 /// Naming convention helpers for Rust → C# name mangling.
 use std::collections::HashMap;
+use syntax::{AstNode, ast};
 
 /// Converts a Rust identifier to a C# identifier per the naming conventions.
 /// All names are converted from snake_case to PascalCase within the naming prefix.
@@ -181,10 +183,13 @@ impl CodeGenerator<'_> {
                     }
                     base_name
                 }
+            } else if let ModuleSource::BlockExpr(block) = module.definition_source(self.db).value {
+                format!("block_{}", block.syntax().index())
             } else {
                 eprintln!(
-                    "Unsupported: module (crate) does not have a name at {:?} ({module:?})",
-                    self.location_with_file(module.definition_source(self.db))
+                    "Unsupported: module (crate) does not have a name at {:?} ({module:?}, source = {source:?})",
+                    self.location_with_file(module.definition_source(self.db)),
+                    source = module.definition_source(self.db).value,
                 );
                 "unnamed_mod".to_owned()
             }

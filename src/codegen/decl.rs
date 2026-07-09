@@ -1,4 +1,5 @@
 use super::{CodeGenerator, expr::BodyGen, names, output::Code};
+use crate::codegen::expr::ItemInBody;
 use crate::codegen::ty::TraitExt;
 use cfg::CfgExpr;
 /// Generates C# type declarations from Rust HIR types.
@@ -6,6 +7,8 @@ use hir::{
     Adt, AssocItem, DefWithBody, Enum, GenericDef, HasAttrs, HasContainer, HasCrate, HasSource,
     Impl, ItemContainer, Struct, Trait, db::HirDatabase,
 };
+use hir_def::hir::Expr::Block;
+use hir_def::hir::Pat::Path;
 use hir_ty::display::HirDisplay;
 use hir_ty::dyn_compatibility::{DynCompatibilityViolation, MethodViolationCode};
 use syntax::ast::HasAttrs as AstHasAttrs;
@@ -352,7 +355,95 @@ impl<'db> CodeGenerator<'db> {
 
         out.dedent();
         out.wln("}");
+
+        self.deferred(out, &body_gen.deferred, f.module(self.db));
         out.blank_line();
+    }
+
+    fn deferred(&self, out: &mut Code, deferred: &[ItemInBody], parent: hir::Module) {
+        struct BlockModule {
+            module: hir::Module,
+            children: Vec<BlockModule>,
+            items: Vec<ItemInBody>,
+        }
+
+        let mut root = BlockModule {
+            module: parent,
+            children: vec![],
+            items: vec![],
+        };
+
+        let mut module_path = vec![];
+        for &item in deferred {
+            module_path.clear();
+            let hir::ItemContainer::Module(mut mod_) = item.container(self.db) else {
+                panic!("deferred item is not a module");
+            };
+            while {
+                module_path.push(mod_);
+                mod_ = mod_.parent(self.db).unwrap();
+                mod_ != parent
+            } {}
+            module_path.reverse();
+
+            let mut path = &mut root;
+
+            assert_eq!(path.module, parent);
+
+            for &module in &module_path {
+                let index = path
+                    .children
+                    .iter()
+                    .position(|x| x.module == module)
+                    .unwrap_or_else(|| {
+                        path.children.push(BlockModule {
+                            module,
+                            children: vec![],
+                            items: vec![],
+                        });
+                        path.children.len() - 1
+                    });
+                path = &mut path.children[index];
+            }
+
+            path.items.push(item);
+        }
+
+        assert!(root.items.is_empty());
+
+        if root.children.is_empty() {
+            return;
+        }
+
+        out.wln("// function local items");
+        for module in root.children {
+            emit_module(self, out, &module, true);
+        }
+
+        fn emit_module(this: &CodeGenerator, out: &mut Code, module: &BlockModule, root: bool) {
+            let module_name = this.mod_simple_name(module.module);
+            out.wln(format!(
+                "{access} static partial class {} {{",
+                module_name,
+                access = if root { "private" } else { "public" }
+            ));
+            out.indent();
+            for item in &module.items {
+                match *item {
+                    ItemInBody::Function(f) => {
+                        this.emit_function(out, f, None);
+                    }
+                    ItemInBody::Adt(adt) => {
+                        this.emit_adt_with_impls(out, adt, &[]);
+                    }
+                }
+            }
+            for child in &module.children {
+                emit_module(this, out, child, false);
+            }
+            out.dedent();
+            out.wln("}");
+        }
     }
 
     fn cs_ret_type(&self, is_async: bool, ret_ty: &hir::Type<'db>) -> String {

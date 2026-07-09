@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use super::{CodeGenerator, generic_args, names, output::Code};
 use crate::codegen::ty::{Constructable, ConstructableDef, DebugDisplay, TypeExt};
 use hir::{
-    Adt, HasContainer, InFile, ItemContainer, Local, ModuleDef, PathResolution, StructKind, Variant,
+    HasContainer, InFile, ItemContainer, Local, ModuleDef, PathResolution, StructKind, Variant,
 };
 use hir_ty::db::HirDatabase;
 use hir_ty::display::HirDisplay;
@@ -28,6 +28,29 @@ pub struct BodyGen<'g, 'db> {
 
     // internals
     match_index: usize,
+
+    pub deferred: Vec<ItemInBody>,
+}
+
+/// Items emitting are deferred.
+/// Caller must generate those items.
+#[derive(Debug, Copy, Clone)]
+pub enum ItemInBody {
+    Function(hir::Function),
+    Adt(hir::Adt),
+}
+
+impl_from!(hir::Function, hir::Adt(hir::Enum, hir::Struct) for ItemInBody);
+
+impl hir::HasContainer for ItemInBody {
+    fn container(&self, db: &dyn HirDatabase) -> hir::ItemContainer {
+        match self {
+            ItemInBody::Function(i) => hir::HasContainer::container(i, db),
+            ItemInBody::Adt(hir::Adt::Struct(i)) => hir::HasContainer::container(i, db),
+            ItemInBody::Adt(hir::Adt::Enum(i)) => hir::HasContainer::container(i, db),
+            ItemInBody::Adt(hir::Adt::Union(i)) => hir::HasContainer::container(i, db),
+        }
+    }
 }
 
 impl<'g, 'db> std::ops::Deref for BodyGen<'g, 'db> {
@@ -46,6 +69,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
             name_counts: HashMap::new(),
             is_async,
             match_index: 0,
+            deferred: Vec::new(),
         }
     }
 
@@ -345,7 +369,26 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 ast::Stmt::ExprStmt(expr_stmt) => {
                     self.emit_expr_as_stmt_ast(out, expr_stmt.expr().unwrap(), false, returning);
                 }
-                ast::Stmt::Item(_) => {}
+                ast::Stmt::Item(ast::Item::Fn(fn_)) => {
+                    let f = self.sem.to_def(&fn_).unwrap();
+                    out.wln(format!("// inner fn: {}", f.name(self.db).as_str()));
+                    self.deferred.push(f.into());
+                }
+                ast::Stmt::Item(ast::Item::Enum(adt)) => {
+                    let f = self.sem.to_def(&adt).unwrap();
+                    out.wln(format!("// inner enum: {}", f.name(self.db).as_str()));
+                    self.deferred.push(f.into());
+                }
+                ast::Stmt::Item(ast::Item::Struct(adt)) => {
+                    let f = self.sem.to_def(&adt).unwrap();
+                    out.wln(format!("// inner enum: {}", f.name(self.db).as_str()));
+                    self.deferred.push(f.into());
+                }
+                // TODO: impl
+                // TODO: use, type alias: remove with comment?
+                ast::Stmt::Item(item) => {
+                    out.wln(format!("/* unsupported inner item: {:?} */", item));
+                }
             }
         }
 

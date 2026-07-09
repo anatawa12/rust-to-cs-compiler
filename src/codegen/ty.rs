@@ -656,6 +656,7 @@ impl<'db> CodeGenerator<'db> {
             .filter(|&(t, _)| Some(t.into()) != self.lang_items.Sized)
             .filter(|&(t, _)| Some(t.into()) != self.lang_items.Sync)
             .filter(|&(t, _)| Some(t.into()) != self.lang_items.Unpin)
+            .filter(|&(t, _)| Some(t.into()) != self.lang_items.Copy)
             //.filter(|&(t, _)| Some(t.into()) != self.lang_items.Send)
             .collect::<Vec<_>>()
             && let &[(trait_, ref args)] = bounds.as_slice()
@@ -771,6 +772,16 @@ impl<'db> CodeGenerator<'db> {
 
     pub fn module_class_cs(&self, module: Module) -> String {
         if let Some(parent) = module.parent(self.db) {
+            if matches!(
+                module.definition_source(self.db).value,
+                hir::ModuleSource::BlockExpr(_)
+            ) && !matches!(
+                parent.definition_source(self.db).value,
+                hir::ModuleSource::BlockExpr(_)
+            ) {
+                // end of block module. return block_N
+                return self.mod_simple_name(module);
+            }
             let mut path = self.module_class_cs(parent);
             path.push('.');
             path.push_str(&self.mod_simple_name(module));

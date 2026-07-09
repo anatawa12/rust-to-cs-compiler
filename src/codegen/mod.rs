@@ -2,6 +2,8 @@
 pub mod output;
 #[macro_use]
 pub mod delay_format;
+#[macro_use]
+mod impl_from;
 pub mod decl;
 pub mod expr;
 mod id_map;
