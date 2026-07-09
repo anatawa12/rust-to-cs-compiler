@@ -166,6 +166,9 @@ impl<'db> CodeGenerator<'db> {
                 let mut cs_generic_args =
                     self.map_type_param_source(&param_sources, &rs_generic_args);
                 for alias in trait_.assoc_types(db) {
+                    if is_omit_trait_assoc_type(db, alias) {
+                        continue;
+                    }
                     match ty
                         .normalize_trait_assoc_type(db, &rs_generic_args, alias)
                         .map(|x| self.resolve_assoc_of_impl(&x))
@@ -538,13 +541,17 @@ impl<'db> CodeGenerator<'db> {
         args: &[Type<'db>],
     ) -> impl Iterator<Item = Type<'db>> {
         let generic_args = args.iter().cloned();
-        let assoc_types = trait_.assoc_types(self.db).into_iter().map(|alias| {
-            self.resolve_assoc_of_impl(
-                &self_ty
-                    .normalize_trait_assoc_type(self.db, &[], alias)
-                    .unwrap(),
-            )
-        });
+        let assoc_types = trait_
+            .assoc_types(self.db)
+            .into_iter()
+            .filter(|&alias| !is_omit_trait_assoc_type(self.db, alias))
+            .map(|alias| {
+                self.resolve_assoc_of_impl(
+                    &self_ty
+                        .normalize_trait_assoc_type(self.db, &[], alias)
+                        .unwrap(),
+                )
+            });
 
         generic_args.chain(assoc_types)
     }
@@ -579,6 +586,9 @@ fn collect_assoc_type_params_impl<'db>(
                 alias = alias.name(db).as_str(),
             )
             .entered();
+            if is_omit_trait_assoc_type(db, alias) {
+                return None;
+            }
             let Some(instance) = outer_instance.normalize_trait_assoc_type(db, &[], alias) else {
                 let target = alias.module(db).krate(db).to_display_target(db);
                 panic!("unable to resolve {alias:?} of {type}",
@@ -721,6 +731,9 @@ impl<'db> CodeGenerator<'db> {
 
         let self_ty = &args[0];
         for alias in trait_.assoc_types(db) {
+            if is_omit_trait_assoc_type(db, alias) {
+                continue;
+            }
             match self_ty
                 .normalize_trait_assoc_type(db, &args, alias)
                 .map(|x| self.resolve_assoc_of_impl(&x))
@@ -1022,6 +1035,17 @@ impl<'db> CodeGenerator<'db> {
             //}
         }
     }
+}
+
+fn is_omit_trait_assoc_type(db: &dyn HirDatabase, alias: hir::TypeAlias) -> bool {
+    let trait_ = match alias.container(db) {
+        ItemContainer::Trait(t) => t,
+        _ => panic!(),
+    };
+    if trait_.name(db).symbol() == &sym::IntoIterator && alias.name(db).symbol() == &sym::IntoIter {
+        return true;
+    }
+    false
 }
 
 mod rustc_ty {
