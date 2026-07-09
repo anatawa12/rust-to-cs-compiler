@@ -51,7 +51,7 @@ fn method_name(rust_name: &str) -> String {
 
 /// Const
 pub fn const_name(rust_name: &str) -> String {
-    format!("m_{}", pascal(rust_name))
+    format!("c_{}", rust_name)
 }
 
 /// Local variable name with uniqueness index.
