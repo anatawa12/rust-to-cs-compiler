@@ -38,9 +38,10 @@ pub struct BodyGen<'g, 'db> {
 pub enum ItemInBody {
     Function(hir::Function),
     Adt(hir::Adt),
+    Impl(hir::Impl),
 }
 
-impl_from!(hir::Function, hir::Adt(hir::Enum, hir::Struct) for ItemInBody);
+impl_from!(hir::Function, hir::Adt(hir::Enum, hir::Struct), hir::Impl for ItemInBody);
 
 impl hir::HasContainer for ItemInBody {
     fn container(&self, db: &dyn HirDatabase) -> hir::ItemContainer {
@@ -49,6 +50,7 @@ impl hir::HasContainer for ItemInBody {
             ItemInBody::Adt(hir::Adt::Struct(i)) => hir::HasContainer::container(i, db),
             ItemInBody::Adt(hir::Adt::Enum(i)) => hir::HasContainer::container(i, db),
             ItemInBody::Adt(hir::Adt::Union(i)) => hir::HasContainer::container(i, db),
+            ItemInBody::Impl(i) => hir::ItemContainer::Module(i.module(db)),
         }
     }
 }
@@ -382,6 +384,11 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 ast::Stmt::Item(ast::Item::Struct(adt)) => {
                     let f = self.sem.to_def(&adt).unwrap();
                     out.wln(format!("// inner enum: {}", f.name(self.db).as_str()));
+                    self.deferred.push(f.into());
+                }
+                ast::Stmt::Item(ast::Item::Impl(impl_)) => {
+                    let f = self.sem.to_def(&impl_).unwrap();
+                    out.wln("// impl");
                     self.deferred.push(f.into());
                 }
                 // TODO: impl

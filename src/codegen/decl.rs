@@ -11,6 +11,7 @@ use hir_def::hir::Expr::Block;
 use hir_def::hir::Pat::Path;
 use hir_ty::display::HirDisplay;
 use hir_ty::dyn_compatibility::{DynCompatibilityViolation, MethodViolationCode};
+use std::collections::HashMap;
 use syntax::ast::HasAttrs as AstHasAttrs;
 
 /// Returns true if the item carries `#[r2cs_native]` or `#[r2cs::native]`.
@@ -415,12 +416,30 @@ impl<'db> CodeGenerator<'db> {
             return;
         }
 
-        out.wln("// function local items");
-        for module in root.children {
-            emit_module(self, out, &module, true);
+        let mut adt_impls = HashMap::<_, Vec<_>>::default();
+        for &item in deferred {
+            if let ItemInBody::Impl(impl_) = item {
+                let self_ty = impl_.self_ty(self.db);
+                eprintln!("impl: {:?}", self_ty);
+                if let Some(adt) = self_ty.as_adt() {
+                    eprintln!("impl for {:?}", adt);
+                    adt_impls.entry(adt).or_default().push(impl_);
+                }
+            }
         }
 
-        fn emit_module(this: &CodeGenerator, out: &mut Code, module: &BlockModule, root: bool) {
+        out.wln("// function local items");
+        for module in root.children {
+            emit_module(self, out, &module, &adt_impls, true);
+        }
+
+        fn emit_module(
+            this: &CodeGenerator,
+            out: &mut Code,
+            module: &BlockModule,
+            adt_impls: &HashMap<hir::Adt, Vec<hir::Impl>>,
+            root: bool,
+        ) {
             let module_name = this.mod_simple_name(module.module);
             out.wln(format!(
                 "{access} static partial class {} {{",
@@ -434,12 +453,17 @@ impl<'db> CodeGenerator<'db> {
                         this.emit_function(out, f, None);
                     }
                     ItemInBody::Adt(adt) => {
-                        this.emit_adt_with_impls(out, adt, &[]);
+                        this.emit_adt_with_impls(
+                            out,
+                            adt,
+                            adt_impls.get(&adt).map(Vec::as_slice).unwrap_or(&[]),
+                        );
                     }
+                    ItemInBody::Impl(_) => {}
                 }
             }
             for child in &module.children {
-                emit_module(this, out, child, false);
+                emit_module(this, out, child, adt_impls, false);
             }
             out.dedent();
             out.wln("}");
