@@ -563,6 +563,16 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                             )
                         }
                     }
+                    Some((Either::Left(f), Some(args)))
+                        if method_call.arg_list().unwrap().args().count() == 1
+                            && let ItemContainer::Impl(impl_) = f.container(self.db)
+                            && let self_ty = impl_.self_ty(self.db)
+                            && let Some(type_) = self_ty.as_builtin()
+                            && type_.is_char()
+                            && f.name(self.db).as_str() == "encode_utf8" =>
+                    {
+                        code!(receiver, ".ToString/*converted from encode_utf8*/()")
+                    }
                     Some((Either::Left(resolved), generics)) => {
                         let generics = generics.map(|generics| {
                             self.params1(
