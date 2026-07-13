@@ -16,7 +16,7 @@ use crate::codegen::decl::{
 };
 use crate::codegen::delay_format::DelayedFormatString;
 use crate::codegen::id_map::IdMap;
-use crate::codegen::ty::ConstructableDef;
+use crate::codegen::ty::{ConstructableDef, TypeMap};
 use hir::{
     Adt, AssocItem, Crate, GenericDef, Impl, InFile, Module, ModuleDef, Semantics, StructKind,
     Type, TypeParam, db::HirDatabase,
@@ -43,7 +43,7 @@ pub struct CodeGenerator<'db> {
     // This map holds specially handled types like type arguments mirroring impl Fn()
     special_types: RefCell<HashMap<TypeParam, DelayedFormatString<Type<'db>>>>,
     // This map holds 'replaced' types to map `Self` type in trait default impls.
-    type_map: RefCell<HashMap<hir_ty::next_solver::Ty<'db>, hir_ty::next_solver::Ty<'db>>>,
+    type_map: TypeMap<'db>,
 }
 
 impl<'db> CodeGenerator<'db> {
@@ -64,7 +64,7 @@ impl<'db> CodeGenerator<'db> {
 
             impl_ty_param_id: IdMap::new("impl_"),
             special_types: RefCell::new(HashMap::new()),
-            type_map: RefCell::new(HashMap::new()),
+            type_map: TypeMap::new(),
         }
     }
 
@@ -453,34 +453,7 @@ impl<'db> CodeGenerator<'db> {
             // implement 'default' methods
             let _trait_super_impl_scope = tracing::debug_span!("emit_impl_methods of super methods", trait = trait_.name(db).as_str()).entered();
 
-            struct NewTypeMapScope<'db, 'a> {
-                code_gen: &'a CodeGenerator<'db>,
-                original_map: HashMap<hir_ty::next_solver::Ty<'db>, hir_ty::next_solver::Ty<'db>>,
-            }
-
-            impl<'db, 'a> NewTypeMapScope<'db, 'a> {
-                fn new(code_gen: &'a CodeGenerator<'db>) -> Self {
-                    Self {
-                        code_gen,
-                        original_map: code_gen.type_map.borrow().clone(),
-                    }
-                }
-
-                fn insert(&mut self, old: Type<'db>, new: Type<'db>) {
-                    use ty::TyFromType;
-                    self.code_gen
-                        .type_map
-                        .borrow_mut()
-                        .insert(old.ns_ty(), new.ns_ty());
-                }
-            }
-            impl<'db, 'a> Drop for NewTypeMapScope<'db, 'a> {
-                fn drop(&mut self) {
-                    *self.code_gen.type_map.borrow_mut() = std::mem::take(&mut self.original_map);
-                }
-            }
-
-            let mut new_type_map = NewTypeMapScope::new(self);
+            let mut new_type_map = self.type_map.modify();
 
             let self_type_param = GenericDef::from(trait_).type_or_const_params(db)[0].ty(db);
             new_type_map.insert(self_type_param, impl_.self_ty(db));

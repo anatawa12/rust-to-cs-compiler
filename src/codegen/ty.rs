@@ -1,3 +1,5 @@
+mod type_map;
+
 use super::{CodeGenerator, generic_args, names};
 /// Converts Rust HIR types to C# type strings.
 use hir::db::HirDatabase;
@@ -17,6 +19,8 @@ use std::fmt::Write;
 use std::ops::Not;
 use tracing::*;
 
+pub(crate) use type_map::TypeMap;
+
 impl<'db> CodeGenerator<'db> {
     pub fn rust_type_to_cs(&self, ty: &Type<'db>) -> String {
         self.rust_type_to_cs_inner(ty, true)
@@ -32,15 +36,14 @@ impl<'db> CodeGenerator<'db> {
         }
 
         let ty = {
-            let map = self.type_map.borrow();
-            if map.is_empty() {
+            if self.type_map.is_empty() {
                 ty
             } else {
                 let (ty, env) = (ty.ns_ty(), ty.env());
                 let ty = hir_ty::next_solver::fold::fold_tys(
                     hir_ty::next_solver::DbInterner::new_with(db, env.krate),
                     ty,
-                    |ty| map.get(&ty).copied().unwrap_or(ty),
+                    |ty| self.type_map.get(ty).unwrap_or(ty),
                 );
                 &Type::from_ty_env(ty, env)
             }
