@@ -1,7 +1,7 @@
 use super::{CodeGenerator, expr::BodyGen, names, output::Code};
 use crate::codegen::debug_display::DebugDisplay;
 use crate::codegen::expr::ItemInBody;
-use crate::codegen::ty::TraitExt;
+use crate::codegen::simple_extensions::TraitExt;
 use cfg::CfgExpr;
 /// Generates C# type declarations from Rust HIR types.
 use hir::{

@@ -9,6 +9,7 @@ pub mod decl;
 pub mod expr;
 mod id_map;
 pub mod names;
+mod simple_extensions;
 pub mod ty;
 
 use self::output::Code;
