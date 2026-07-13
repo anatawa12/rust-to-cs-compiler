@@ -16,21 +16,19 @@ use crate::codegen::decl::{
 };
 use crate::codegen::delay_format::DelayedFormatString;
 use crate::codegen::id_map::IdMap;
-use crate::codegen::ty::{ConstructableDef, TyFromType};
+use crate::codegen::ty::ConstructableDef;
 use hir::{
-    Adt, AssocItem, Crate, GenericDef, HasSource, HirFileId, Impl, InFile, Module, ModuleDef, Name,
-    Semantics, StructKind, Type, TypeParam, db::HirDatabase,
+    Adt, AssocItem, Crate, GenericDef, Impl, InFile, Module, ModuleDef, Semantics, StructKind,
+    Type, TypeParam, db::HirDatabase,
 };
 use hir_def::lang_item::{LangItems, lang_items};
 use hir_ty::display::DisplayTarget;
-use hir_ty::next_solver::{AnyImplId, DbInterner, GenericArgs};
+use hir_ty::next_solver::{AnyImplId, DbInterner};
 use ide_db::line_index;
 use itertools::Itertools;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::env::var;
-use syntax::{SyntaxNode, SyntaxNodePtr};
-use vfs::{FileId, Vfs};
+use vfs::Vfs;
 
 pub struct CodeGenerator<'db> {
     db: &'db dyn HirDatabase,
@@ -89,7 +87,7 @@ impl<'db> CodeGenerator<'db> {
 }
 
 pub mod as_syntax_node_ptr {
-    use hir_def::expr_store::ExprOrPatPtr;
+
     use hir_def::nameres::ModuleSource;
     use syntax::ast::Impl;
     use syntax::{AstNode, AstPtr, SyntaxNode, SyntaxNodePtr};
@@ -145,7 +143,7 @@ impl<'db> CodeGenerator<'db> {
         out.wln("using static r2CsRuntime.Helpers;");
         out.blank_line();
 
-        let crate_name = krate
+        let _crate_name = krate
             .display_name(db)
             .map(|n| n.as_str().to_string())
             .unwrap_or_else(|| "r2cs_generated".to_string());
@@ -180,7 +178,7 @@ impl<'db> CodeGenerator<'db> {
         }
 
         let module_name = self.mod_simple_name(module);
-        out.w(&format!("public static partial class {} ", module_name));
+        out.w(format!("public static partial class {} ", module_name));
         out.open_brace();
 
         // Emit traits first (no impl needed)
@@ -214,11 +212,8 @@ impl<'db> CodeGenerator<'db> {
 
         // Emit submodules
         for def in module.declarations(db) {
-            match def {
-                ModuleDef::Module(module) => {
-                    self.emit_module(out, module, adt_impls);
-                }
-                _ => {}
+            if let ModuleDef::Module(module) = def {
+                self.emit_module(out, module, adt_impls);
             }
         }
 
@@ -265,9 +260,9 @@ impl<'db> CodeGenerator<'db> {
                         let self_ty = impl_.self_ty(db);
                         let mut args = vec![self_ty.clone()];
 
-                        if self.lang_items.PartialEq == Some(trait_.into()) {
-                            args.push(self_ty.clone());
-                        } else if self.lang_items.PartialOrd == Some(trait_.into()) {
+                        if self.lang_items.PartialEq == Some(trait_.into())
+                            || self.lang_items.PartialOrd == Some(trait_.into())
+                        {
                             args.push(self_ty.clone());
                         }
 
@@ -456,7 +451,7 @@ impl<'db> CodeGenerator<'db> {
             && matches!(trait_.name(db).as_str(), "Visitor")
         {
             // implement 'default' methods
-            let trait_super_impl_scope = tracing::debug_span!("emit_impl_methods of super methods", trait = trait_.name(db).as_str()).entered();
+            let _trait_super_impl_scope = tracing::debug_span!("emit_impl_methods of super methods", trait = trait_.name(db).as_str()).entered();
 
             struct NewTypeMapScope<'db, 'a> {
                 code_gen: &'a CodeGenerator<'db>,

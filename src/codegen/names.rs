@@ -1,9 +1,7 @@
 use crate::codegen::CodeGenerator;
-use hir::{HasContainer, HasName, ItemContainer, ModuleDef};
+use hir::{HasContainer, ItemContainer};
 use hir_def::nameres::ModuleSource;
-/// Naming convention helpers for Rust → C# name mangling.
-use std::collections::HashMap;
-use syntax::{AstNode, ast};
+use syntax::AstNode;
 
 /// Converts a Rust identifier to a C# identifier per the naming conventions.
 /// All names are converted from snake_case to PascalCase within the naming prefix.
@@ -156,21 +154,21 @@ impl CodeGenerator<'_> {
     pub fn mod_simple_name(&self, module: hir::Module) -> String {
         self.mod_simple_name_impl(module, None)
     }
-    fn mod_simple_name_impl(&self, module: hir::Module, child: Option<hir::Module>) -> String {
+    fn mod_simple_name_impl(&self, module: hir::Module, _child: Option<hir::Module>) -> String {
         if module.is_crate_root(self.db) {
             let crate_name = module.krate(self.db).display_name(self.db);
             let crate_name = crate_name.as_ref().map(|x| x.as_str()).unwrap_or_else(|| {
                 eprintln!("Unsupported: module (crate) does not have a name");
-                return "unnamed_crate";
+                "unnamed_crate"
             });
-            self::crate_name(&crate_name)
+            self::crate_name(crate_name)
         } else {
             let Some(parent) = module.parent(self.db) else {
                 panic!(
                     "Non-crate root module: at {}",
                     self.location_with_file(module.definition_source(self.db))
                 );
-                return "unexpected_root_module".to_owned();
+                // return "unexpected_root_module".to_owned();
             };
             if let Some(name) = module.name(self.db) {
                 let mut base_name = mod_name(name.as_str());
@@ -194,26 +192,6 @@ impl CodeGenerator<'_> {
                 "unnamed_mod".to_owned()
             }
         }
-    }
-}
-
-/// Tracks local variable name → counter for uniqueness.
-#[derive(Default)]
-pub struct LocalNameMap {
-    counts: HashMap<String, usize>,
-}
-
-impl LocalNameMap {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Allocate a unique C# name for the given Rust binding name.
-    pub fn alloc(&mut self, rust_name: &str) -> String {
-        let count = self.counts.entry(rust_name.to_string()).or_insert(0);
-        let result = local_name(rust_name, *count);
-        *count += 1;
-        result
     }
 }
 

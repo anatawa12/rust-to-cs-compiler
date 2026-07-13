@@ -17,11 +17,13 @@ fn load_workspace_from_cargo(
 ) -> (RootDatabase, Vfs, Vec<Crate>) {
     let manifest = ProjectManifest::discover_single(&AbsPathBuf::assert(path.into())).unwrap();
 
-    let mut cargo_config = CargoConfig::default();
-    cargo_config.sysroot = Some(RustLibSource::Discover);
-    cargo_config.features = CargoFeatures::Selected {
-        features: vec![],
-        no_default_features: true,
+    let mut cargo_config = CargoConfig {
+        sysroot: Some(RustLibSource::Discover),
+        features: CargoFeatures::Selected {
+            features: vec![],
+            no_default_features: true,
+        },
+        ..CargoConfig::default()
     };
     cargo_config.cfg_overrides.global =
         CfgDiff::new(vec![CfgAtom::Flag(Symbol::intern("r2cs"))], vec![]);

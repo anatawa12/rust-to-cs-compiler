@@ -149,13 +149,13 @@ impl WriteToCode for str {
 
 impl WriteToCode for char {
     fn append(&self, out: &mut Code) {
-        (&*(*self).encode_utf8(&mut [0; 4])).append(out)
+        (*(*self).encode_utf8(&mut [0; 4])).append(out)
     }
 }
 
 impl WriteToCode for Code {
     fn append(&self, out: &mut Code) {
-        out.write_inner(&self);
+        out.write_inner(self);
     }
 }
 

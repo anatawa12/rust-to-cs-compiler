@@ -3,16 +3,11 @@ use std::collections::HashMap;
 
 use super::{CodeGenerator, generic_args, names, output::Code};
 use crate::codegen::ty::{Constructable, ConstructableDef, DebugDisplay, TypeExt};
-use hir::{
-    HasContainer, InFile, ItemContainer, Local, ModuleDef, PathResolution, StructKind, Variant,
-};
+use hir::{HasContainer, InFile, ItemContainer, Local, ModuleDef, PathResolution, StructKind};
 use hir_ty::db::HirDatabase;
-use hir_ty::display::HirDisplay;
 use itertools::Either;
-use rustc_type_ir::Upcast;
 use syntax::ast::{
-    self, ArithOp, AstNode as _, HasArgList as _, HasLoopBody as _, HasName, LogicOp,
-    RangeItem as _,
+    self, ArithOp, AstNode as _, HasArgList as _, HasLoopBody as _, LogicOp, RangeItem as _,
 };
 use syntax::ast::{BinaryOp, RangeOp, UnaryOp};
 
@@ -24,6 +19,7 @@ pub struct BodyGen<'g, 'db> {
     /// Counter per original Rust name for uniqueness.
     name_counts: HashMap<String, usize>,
     /// Whether we're inside an async fn (controls .GetAwaiter()/.GetResult() vs await).
+    #[allow(dead_code)]
     is_async: bool,
 
     // internals
@@ -85,7 +81,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
         let count = self.name_counts.entry(rust_name.clone()).or_insert(0);
         let cs_name = names::local_name(&rust_name, *count);
         *count += 1;
-        self.locals.insert(local.clone(), cs_name.clone());
+        self.locals.insert(*local, cs_name.clone());
         cs_name
     }
 
@@ -277,7 +273,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     let val = self.emit_expr_str_ast(&e);
                     out.w("/* break ").w(val).wln(" */"); // TODO: break-with-value
                 } else {
-                    out.wln(&format!("break{};", label_str));
+                    out.wln(format!("break{};", label_str));
                 }
             }
             ast::Expr::ContinueExpr(continue_expr) => {
@@ -286,7 +282,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 let label_str = label
                     .map(|l| format!(" /*{}*/", self.label_name(l)))
                     .unwrap_or_default();
-                out.wln(&format!("continue{};", label_str));
+                out.wln(format!("continue{};", label_str));
             }
 
             ast::Expr::AwaitExpr(await_expr) => {
@@ -363,7 +359,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         let bindings = self.collect_bindings_in_pat_ast(&pat);
                         for b in &bindings {
                             let cs_type = self.rust_type_to_cs(&b.ty(self.db));
-                            let cs_name = self.alloc_binding_ast(&b);
+                            let cs_name = self.alloc_binding_ast(b);
                             out.wln(format!("{} {} = (default!);", cs_type, cs_name));
                         }
                     }
@@ -422,7 +418,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
     pub fn emit_expr_str_ast_inner(&mut self, expr: &ast::Expr, statement: bool) -> Code {
         match expr {
             //Expr::Missing => "/* missing */default!".into(),
-            ast::Expr::Literal(lit) => self.emit_literal_ast(&lit),
+            ast::Expr::Literal(lit) => self.emit_literal_ast(lit),
             ast::Expr::PathExpr(path) => match self
                 .sem
                 .resolve_path_with_subst(&path.path().unwrap())
@@ -480,7 +476,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         }
                     }
                 }
-                Some((hir::PathResolution::SelfType(impl_), _)) => {
+                Some((hir::PathResolution::SelfType(_impl_), _)) => {
                     eprintln!("ImplSelf at {}", self.expr_location_ast(expr));
                     "(ImplSelf)".into()
                 }
@@ -494,7 +490,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     path.push_str(static_.name(self.db).as_str());
                     path.into()
                 }
-                Some((hir::PathResolution::TypeParam(param), _)) => {
+                Some((hir::PathResolution::TypeParam(_param), _)) => {
                     eprintln!("GenericParam at {}", self.expr_location_ast(expr));
                     "(GenericParam)".into()
                 }
@@ -508,7 +504,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 }
             },
             ast::Expr::FieldExpr(field_expr) => {
-                let name = field_expr.name_ref().unwrap();
+                let _name = field_expr.name_ref().unwrap();
                 let receiver_part = field_expr.expr().unwrap();
                 let receiver_type = self.sem.type_of_expr(&receiver_part).unwrap();
                 let receiver = self.emit_expr_str_ast(&receiver_part);
@@ -563,7 +559,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                             )
                         }
                     }
-                    Some((Either::Left(f), Some(args)))
+                    Some((Either::Left(f), Some(_args)))
                         if method_call.arg_list().unwrap().args().count() == 1
                             && let ItemContainer::Impl(impl_) = f.container(self.db)
                             && let self_ty = impl_.self_ty(self.db)
@@ -854,7 +850,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         let field = c.fields(self.db).into_iter().find(|x| {
                             x.name(self.db).as_str() == f.field_name().unwrap().text().as_str()
                         });
-                        let cs_ty = field
+                        let _cs_ty = field
                             .map(|f| self.rust_type_to_cs(&f.ty(self.db).to_type(self.db)))
                             .unwrap_or_else(|| "object /*unknown field type*/".into());
                         let val = self.emit_expr_str_ast(&f.expr().unwrap());
@@ -938,8 +934,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         if let ast::Pat::IdentPat(ident_pat) = p.pat().unwrap()
                             && let Some(local) = self.sem.to_def(&ident_pat)
                         {
-                            let binding = self.alloc_binding_ast(&local);
-                            binding
+                            self.alloc_binding_ast(&local)
                         } else {
                             format!("__cp{}", i)
                         }
@@ -1112,22 +1107,6 @@ impl<'g, 'db> BodyGen<'g, 'db> {
         }
     }
 
-    fn build_positional_field_inits(
-        &mut self,
-        fields: &[hir::Field],
-        args: &[ast::Expr],
-    ) -> Vec<Code> {
-        fields
-            .iter()
-            .zip(args.iter())
-            .map(|(field, arg)| {
-                let f_name = names::field_name(field.name(self.db).as_str());
-                let val = self.emit_expr_str_ast(arg);
-                code!(f_name, " = (", val, ")")
-            })
-            .collect()
-    }
-
     fn emit_literal_ast(&self, lit: &ast::Literal) -> Code {
         match lit.kind() {
             ast::LiteralKind::Bool(b) => b.to_string().into(),
@@ -1144,7 +1123,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
     /// Emit a pattern as a condition check against a scrutinee expression.
     fn emit_pattern_ast(&mut self, pat: &ast::Pat) -> Code {
         match pat {
-            ast::Pat::WildcardPat(w) => "var _".into(),
+            ast::Pat::WildcardPat(_w) => "var _".into(),
             ast::Pat::IdentPat(ident_pat)
                 if let Some(const_ref) = self.sem.resolve_bind_pat_to_const(ident_pat) =>
             {
@@ -1237,7 +1216,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
             }
             ast::Pat::RecordPat(record_pat) => {
                 let path = record_pat.path().unwrap();
-                let (cs_type_name, field_count) = match self.sem.resolve_path(&path) {
+                let (cs_type_name, _field_count) = match self.sem.resolve_path(&path) {
                     Some(PathResolution::Def(module_def))
                         if let Some(def) = ConstructableDef::from_module_def(module_def) =>
                     {
@@ -1265,7 +1244,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 if matches!(fields.as_slice(), []) {
                     code!(cs_type_name, "{", "}")
                 } else {
-                    let pattern_codes = fields.iter().enumerate().map(|(indeex, field)| {
+                    let pattern_codes = fields.iter().map(|field| {
                         let field_name = field.field_name().unwrap().text().as_str().to_string();
                         let field_name_cs = names::field_name(&field_name);
                         if let Some(field_pat) = field.pat() {
@@ -1292,7 +1271,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 code!("(", join(parts, " or "), ")")
             }
             ast::Pat::TuplePat(tuple_pat) => {
-                let type_ = self.sem.type_of_pat(&pat).unwrap();
+                let type_ = self.sem.type_of_pat(pat).unwrap();
                 let field_count = type_.original.tuple_fields(self.db).len();
                 let pattern_codes = self.resolve_tuple_like_struct(
                     field_count,
@@ -1373,27 +1352,8 @@ impl<'g, 'db> BodyGen<'g, 'db> {
 
             pattern_codes
         } else {
-            let pattern_codes = patterns
-                .iter()
-                .enumerate()
-                .map(|(indeex, pat)| self.emit_pattern_ast(pat));
+            let pattern_codes = patterns.iter().map(|pat| self.emit_pattern_ast(pat));
             pattern_codes.collect::<Vec<_>>()
-        }
-    }
-
-    /// Emit a pattern as an lvalue (for assignment).
-    fn emit_pat_as_lvalue_ast(&self, pat: &ast::Pat) -> String {
-        match pat {
-            ast::Pat::IdentPat(ident_pat) if let Some(local) = self.sem.to_def(ident_pat) => {
-                let cs_name = self
-                    .locals
-                    .get(&local)
-                    .cloned()
-                    .unwrap_or_else(|| "/* unbound */unknown".to_string());
-                format!("{}.value", cs_name)
-            }
-            ast::Pat::WildcardPat(_) => "_".to_string(),
-            _ => "/* complex lvalue */unknown".to_string(),
         }
     }
 
@@ -1418,15 +1378,6 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 }
             }
         }
-    }
-
-    fn find_local_by_rust_name(&self, rust_name: &str) -> Option<String> {
-        for (local, cs_name) in &self.locals {
-            if local.name(self.db).as_str() == rust_name {
-                return Some(cs_name.to_string());
-            }
-        }
-        None
     }
 }
 

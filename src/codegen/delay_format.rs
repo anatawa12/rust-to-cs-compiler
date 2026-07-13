@@ -1,5 +1,3 @@
-use rustc_type_ir::inherent::SliceLike;
-
 enum Part<T> {
     String(String),
     Data(T),
@@ -38,7 +36,7 @@ impl<T> DelayedFormatString<T> {
                     let mut iterator = collection.iter();
                     if let Some(value) = iterator.next() {
                         result.push_str(&f(value));
-                        while let Some(value) = iterator.next() {
+                        for value in iterator {
                             result.push_str(sep);
                             result.push_str(&f(value));
                         }

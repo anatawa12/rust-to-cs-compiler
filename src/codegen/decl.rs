@@ -4,13 +4,10 @@ use crate::codegen::ty::TraitExt;
 use cfg::CfgExpr;
 /// Generates C# type declarations from Rust HIR types.
 use hir::{
-    Adt, AssocItem, DefWithBody, Enum, GenericDef, HasAttrs, HasContainer, HasCrate, HasSource,
-    Impl, ItemContainer, Struct, Trait, db::HirDatabase,
+    Adt, AssocItem, GenericDef, HasAttrs, HasContainer, HasCrate, HasSource, Impl, ItemContainer,
+    Trait, db::HirDatabase,
 };
-use hir_def::hir::Expr::Block;
-use hir_def::hir::Pat::Path;
 use hir_ty::display::HirDisplay;
-use hir_ty::dyn_compatibility::{DynCompatibilityViolation, MethodViolationCode};
 use std::collections::HashMap;
 use syntax::ast::HasAttrs as AstHasAttrs;
 
@@ -100,74 +97,13 @@ fn ast_has_r2cs_native(node: &impl AstHasAttrs, krate: hir::Crate, db: &dyn HirD
 }
 
 impl<'db> CodeGenerator<'db> {
-    /// Emit a struct → C# class.
-    pub fn emit_struct(&self, out: &mut Code, s: Struct) {
-        let db = self.db;
-
-        let name = s.name(db);
-        let cs_name = names::struct_name(name.as_str());
-        let gen_params = GenericDef::from(s).params(db);
-        let (tp_names, _) = self.generic_params_cs(&gen_params);
-        let generics = self.format_generics(&tp_names);
-
-        out.wln(&format!("public class {}{}", cs_name, generics));
-        out.open_brace();
-
-        for field in s.fields(db) {
-            let f_name = names::field_name(field.name(db).as_str());
-            let f_ty_ns = field.ty(db);
-            let f_ty = f_ty_ns.to_type(db);
-            let cs_ty = self.rust_type_to_cs(&f_ty);
-            out.wln(&format!("public {} {};", cs_ty, f_name));
-        }
-
-        out.close_brace();
-        out.blank_line();
-    }
-
-    /// Emit an enum → C# sealed class hierarchy.
-    pub fn emit_enum(&self, out: &mut Code, e: Enum) {
-        let db = self.db;
-
-        let name = e.name(db);
-        let cs_name = names::struct_name(name.as_str());
-        let gen_params = GenericDef::from(e).params(db);
-        let (tp_names, _) = self.generic_params_cs(&gen_params);
-        let generics = self.format_generics(&tp_names);
-
-        out.wln(format!("public class {}{}", cs_name, generics));
-        out.open_brace();
-        out.wln(format!("private {}() {{}}", cs_name));
-        out.blank_line();
-
-        for variant in e.variants(db) {
-            let v_name = names::variant_name(variant.name(db).as_str());
-            let fields = variant.fields(db);
-
-            out.wln(format!("public class {} : {}{}", v_name, cs_name, generics));
-            out.open_brace();
-            for field in &fields {
-                let f_ty_ns = field.ty(db);
-                let f_ty = f_ty_ns.to_type(db);
-                let cs_ty = self.rust_type_to_cs(&f_ty);
-                let f_name = names::field_name(field.name(db).as_str());
-                out.wln(format!("public {} {};", cs_ty, f_name));
-            }
-            out.close_brace();
-            out.blank_line();
-        }
-
-        out.close_brace();
-        out.blank_line();
-    }
-
     /// Emit a trait → C# interface (non-dyn form, with Self F-bound).
     pub fn emit_trait(&self, out: &mut Code, t: Trait) {
         let db = self.db;
 
         let name = t.name(db);
         let cs_iface = names::trait_name(name.as_str());
-        let cs_dyn_iface = names::dyn_trait_name(name.as_str());
+        let _cs_dyn_iface = names::dyn_trait_name(name.as_str());
 
         let gen_params = GenericDef::from(t).params(db);
         let (mut all_params, mut constraints) = self.generic_params_cs(&gen_params);
@@ -213,12 +149,12 @@ impl<'db> CodeGenerator<'db> {
                     if let Some(cn) = c.name(db) {
                         let c_name = names::const_name(cn.as_str());
                         let c_ty = self.rust_type_to_cs(&c.ty(db));
-                        out.wln(&format!("{} {}(); // const", c_ty, c_name));
+                        out.wln(format!("{} {}(); // const", c_ty, c_name));
                     }
                 }
                 AssocItem::TypeAlias(a) => {
                     let a_name = names::assoc_type_param(a.name(db).as_str());
-                    out.wln(&format!("// type {};", a_name));
+                    out.wln(format!("// type {};", a_name));
                 }
             }
         }
@@ -231,7 +167,7 @@ impl<'db> CodeGenerator<'db> {
         let db = self.db;
 
         let gen_params = GenericDef::from(f).params(db);
-        let (mut all_params, mut constraints) = self.generic_params_cs(&gen_params);
+        let (all_params, _constraints) = self.generic_params_cs(&gen_params);
 
         let is_async = f.is_async(db);
         let ret_ty = f.ret_type(db);
@@ -250,28 +186,6 @@ impl<'db> CodeGenerator<'db> {
         out.wln(format!(
             "{static_comment}{is_static_kw}{cs_ret} {m_name}{generics}({params});"
         ));
-    }
-
-    /// Emit methods from an impl block onto the appropriate class.
-    pub fn emit_impl(&self, out: &mut Code, impl_: Impl) {
-        let db = self.db;
-
-        // Determine self type name for the class
-        let self_ty = impl_.self_ty(db);
-        let cs_self_ty = self.rust_type_to_cs(&self_ty);
-
-        // Comment header
-        out.wln(&format!("// impl for {}", cs_self_ty));
-        out.blank_line();
-
-        for item in impl_.items(db) {
-            match item {
-                AssocItem::Function(f) => {
-                    self.emit_function(out, f, Some(impl_));
-                }
-                AssocItem::Const(_) | AssocItem::TypeAlias(_) => {}
-            }
-        }
     }
 
     /// Emit a function/method with a stub body (TODO: real body generation).

@@ -2,23 +2,19 @@ use super::{CodeGenerator, generic_args, names};
 /// Converts Rust HIR types to C# type strings.
 use hir::db::HirDatabase;
 use hir::next_solver::GenericArgs;
-use hir::sym::panic;
 use hir::{
-    Adt, AssocItem, BuiltinType, GenericDef, GenericParam, GenericSubstitution, HasContainer,
-    HasCrate, ItemContainer, Module, Name, Symbol, Trait, Type, sym,
+    Adt, AssocItem, BuiltinType, GenericDef, GenericSubstitution, HasContainer, HasCrate,
+    ItemContainer, Module, Name, Symbol, Trait, Type, sym,
 };
 use hir_ty::display::HirDisplay;
 use hir_ty::dyn_compatibility::{DynCompatibilityViolation, MethodViolationCode};
-use hir_ty::next_solver::Ty;
 use ide_db::base_db;
-use ide_db::base_db::salsa::Database;
-use itertools::{Either, Itertools};
-use rustc_type_ir::Upcast;
-use rustc_type_ir::inherent::{IntoKind, SliceLike};
+use itertools::Either;
+use rustc_type_ir::inherent::IntoKind;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::fmt::Write;
-use std::ops::{ControlFlow, Not};
+use std::ops::Not;
 use tracing::*;
 
 impl<'db> CodeGenerator<'db> {
@@ -145,7 +141,7 @@ impl<'db> CodeGenerator<'db> {
             //type_name.push_str(&format!(" /* {} */", ty.display(db, self.display_target())));
 
             type_name
-        } else if let Some(_) = ty.as_impl_traits(db) {
+        } else if ty.as_impl_traits(db).is_some() {
             use hir_ty::next_solver::ClauseKind;
             // Unfortunately hir crate does not provide us generic parameters of trait so we access
             // new solver's ty
@@ -205,10 +201,7 @@ impl<'db> CodeGenerator<'db> {
             }
         } else if let rustc_type_ir::TyKind::Error(_) = ty.ns_ty().kind() {
             "object /* error type */".to_string()
-        } else if ty.is_fn() {
-            // Closure types, fn pointers, etc. — use Action/Func
-            "Action".to_string()
-        } else if ty.is_closure() {
+        } else if ty.is_fn() || ty.is_closure() {
             // Closure types, fn pointers, etc. — use Action/Func
             "Action".to_string()
         } else if let normalized = self.resolve_assoc_of_impl(ty)
@@ -263,20 +256,12 @@ impl<'db> CodeGenerator<'db> {
         .to_string()
     }
 
-    fn adt_rust_name(&self, adt: &Adt, db: &dyn HirDatabase) -> String {
-        match adt {
-            Adt::Struct(s) => s.name(db).as_str().to_string(),
-            Adt::Enum(e) => e.name(db).as_str().to_string(),
-            Adt::Union(u) => u.name(db).as_str().to_string(),
-        }
-    }
-
     /// Maps well-known std types to C# equivalents.
     fn map_std_type(
         &self,
         rust_name: &str,
         args: &[Option<Type<'db>>],
-        db: &'db dyn HirDatabase,
+        _db: &'db dyn HirDatabase,
     ) -> Option<String> {
         match rust_name {
             // There is no CoW in this world
@@ -716,7 +701,7 @@ impl<'db> CodeGenerator<'db> {
                 && !self.includes_type_in_type(&f.ret_type(db), &|ty| ty == &param_ty)
                 && f.params_without_self(db)
                     .iter()
-                    .any(|p| self.includes_type_in_type(&p.ty(), &|ty| ty == &param_ty))
+                    .any(|p| self.includes_type_in_type(p.ty(), &|ty| ty == &param_ty))
             // TODO: consider generic params
             {
                 //self.includes_type_in_generic_params_cs_constraints()
@@ -1032,14 +1017,6 @@ impl<'db> CodeGenerator<'db> {
         path
     }
 
-    pub fn enum_variant_cs1(&self, v: hir::EnumVariant, generic: GenericArgs<'db>) -> String {
-        let mut path =
-            self.rust_type_to_cs(&self.adt_with_generic(v.parent_enum(self.db).into(), generic));
-        path.push('.');
-        path.push_str(&names::variant_name(v.name(self.db).as_str()));
-        path
-    }
-
     pub fn generic_args_to_types(
         &self,
         generic: GenericArgs<'db>,
@@ -1082,24 +1059,23 @@ mod rustc_ty {
 
     use crate::codegen::CodeGenerator;
     use crate::codegen::ty::ty_param_ext::{ParsedProjection, parse_bounds_for};
-    use crate::codegen::ty::{DebugDisplay, TyFromType, TypeParamExt};
-    use hir::{Adt, Trait, Type};
-    use hir_def::resolver::{HasResolver, Resolver};
+    use crate::codegen::ty::{DebugDisplay, TyFromType};
+    use hir::{Adt, Type};
+    use hir_def::resolver::HasResolver;
     use hir_def::signatures::TypeAliasSignature;
     use hir_def::{
-        AdtId, AssocItemId, GenericDefId, GenericParamId, HasModule, ImplId, ItemContainerId,
-        Lookup, TypeAliasId, TypeParamId,
+        AdtId, AssocItemId, GenericDefId, GenericParamId, ImplId, ItemContainerId, Lookup,
+        TypeAliasId,
     };
     use hir_ty::display::HirDisplay;
     use hir_ty::next_solver::{
-        AnyImplId, Binder, Clause, ClauseKind, Const, ConstKind, DbInterner, ErrorGuaranteed,
-        GenericArg, GenericArgKind, GenericArgs, ParamEnv, PredicateKind, SolverDefId, Term,
-        TermKind, TraitRef, Ty,
+        AnyImplId, DbInterner, ErrorGuaranteed, GenericArg, GenericArgKind, GenericArgs,
+        SolverDefId, Term, Ty,
     };
-    use hir_ty::{GenericPredicates, ImplTraitId, TyDefId};
-    use rustc_type_ir::inherent::{GenericsOf as _, IntoKind, SliceLike, Term as _};
-    use rustc_type_ir::solve::{Goal, GoalSource, NoSolution};
-    use rustc_type_ir::{AliasTy, AliasTyKind, Interner, PredicatePolarity, TyKind};
+    use hir_ty::{GenericPredicates, ImplTraitId};
+    use rustc_type_ir::inherent::IntoKind;
+
+    use rustc_type_ir::{AliasTy, AliasTyKind, Interner, TyKind};
     use std::fmt::Debug;
     use tracing::{debug, trace};
 
@@ -1203,7 +1179,7 @@ mod rustc_ty {
                             assoc_ty = assoc_ty.display(self.db, self.display_target()),
                             kind = self_ty_alias.kind,
                         );
-                        return assoc_type.clone();
+                        // return assoc_type.clone();
                     };
                     let bounds = def_id
                         .expect_opaque_ty()
@@ -1226,7 +1202,7 @@ mod rustc_ty {
                                     .map(|x| x.0.debug_display(self.db).to_string())
                                     .collect::<Vec<_>>()
                             );
-                            return assoc_type.clone();
+                            assoc_type.clone()
                         }
                     }
                 }
@@ -1248,7 +1224,7 @@ mod rustc_ty {
                         }
                     }
                 }
-                TyKind::Adt(adt, args) => {
+                TyKind::Adt(_adt, _args) => {
                     let alias_id = TypeAliasId::from(alias_list[0]);
                     let rest_alias = &alias_list[1..];
 
@@ -1349,7 +1325,7 @@ mod rustc_ty {
                 TyKind::Param(param_ty) => {
                     debug!("translate_args: param: {param_ty:?}");
 
-                    GenericArgs::for_item(self.interner, target.into(), |i, arg, _| match arg {
+                    GenericArgs::for_item(self.interner, target.into(), |_i, arg, _| match arg {
                         GenericParamId::TypeParamId(ty_arg) if ty_arg == param_ty.id => {
                             Term::from(self_ty).into()
                         }
@@ -1382,7 +1358,7 @@ mod rustc_ty {
                         }
                     }
 
-                    GenericArgs::for_item(self.interner, target.into(), |i, arg, _| {
+                    GenericArgs::for_item(self.interner, target.into(), |_i, arg, _| {
                         if let Some(ty) = type_map.get(&arg) {
                             Term::from(*ty).into()
                         } else {
@@ -1398,6 +1374,7 @@ mod rustc_ty {
             Type::from_ty(ty, self.db, self.krate.base())
         }
 
+        #[allow(dead_code)] // may be used in the future
         pub fn adt_with_generic(&self, adt: Adt, args: GenericArgs<'db>) -> Type<'db> {
             let id = AdtId::from(adt);
             let interner = DbInterner::new_no_crate(self.db);
@@ -1696,7 +1673,6 @@ mod ty_and_type {
                     CrateOrigin::Lang(LangCrateOrigin::Core)
                 )
             })
-            .map(base_db::Crate::from)
             .unwrap_or_else(|| all_crates(db)[0])
     }
 
@@ -1764,6 +1740,7 @@ impl ConstructableDef {
         }
     }
 
+    #[allow(dead_code)]
     pub fn module(self, db: &dyn HirDatabase) -> Module {
         match self {
             Self::Struct(it) => it.module(db),
@@ -1771,6 +1748,7 @@ impl ConstructableDef {
         }
     }
 
+    #[allow(dead_code)]
     pub fn name(&self, db: &dyn HirDatabase) -> Name {
         match self {
             Self::Struct(s) => (*s).name(db),
@@ -1808,15 +1786,6 @@ impl<'db> Constructable<'db> {
     }
 }
 
-pub fn variant_from_module_def(resolution: hir::ModuleDef) -> Option<hir::Variant> {
-    match resolution {
-        hir::ModuleDef::EnumVariant(variant) => Some(variant.into()),
-        hir::ModuleDef::Adt(hir::Adt::Struct(variant)) => Some(variant.into()),
-        hir::ModuleDef::Adt(hir::Adt::Union(variant)) => Some(variant.into()),
-        _ => None,
-    }
-}
-
 pub trait DebugDisplay<'db> {
     fn debug_display<'a>(&'a self, db: &'db dyn HirDatabase) -> impl Display + 'a
     where
@@ -1836,6 +1805,7 @@ where
 }
 
 pub trait TypeExt<'db> {
+    #[allow(dead_code)]
     fn expect_adt_with_args(&self) -> (Adt, Vec<Option<Type<'db>>>);
     fn expect_adt_of(&self, adt: Adt) -> Vec<Type<'db>>;
 }
@@ -1857,7 +1827,7 @@ impl<'db> TypeExt<'db> for Type<'db> {
 }
 
 pub trait TypeParamExt {
-    fn trait_bounds_with_args(self, db: &'_ dyn HirDatabase) -> Vec<(Trait, Vec<Type>)>;
+    fn trait_bounds_with_args(self, db: &'_ dyn HirDatabase) -> Vec<(Trait, Vec<Type<'_>>)>;
     fn trait_bounds_of_nested_type_with_args<'db>(
         self,
         t: &Type<'db>,
@@ -1867,23 +1837,20 @@ pub trait TypeParamExt {
 
 mod ty_param_ext {
     use crate::codegen::ty::{TyFromType, TypeParamExt};
-    use hir::sym::unreachable;
-    use hir::{HasContainer, ItemContainer, Trait, Type, TypeParam};
+
+    use hir::{Trait, Type, TypeParam};
+    use hir_def::TypeParamId;
     use hir_def::lang_item::lang_items;
     use hir_def::resolver::{HasResolver, Resolver};
-    use hir_def::{TypeAliasId, TypeParamId};
     use hir_ty::GenericPredicates;
     use hir_ty::db::HirDatabase;
-    use hir_ty::next_solver::{
-        AliasTy, Clause, ClauseKind, ErrorGuaranteed, GenericArgKind, SolverDefId, TermKind,
-        TraitRef, Ty,
-    };
+    use hir_ty::next_solver::{AliasTy, Clause, ClauseKind, SolverDefId, TermKind, TraitRef, Ty};
     use itertools::{Either, Itertools};
     use rustc_type_ir::inherent::{GenericArg, IntoKind};
-    use rustc_type_ir::{AliasTyKind, Interner, PredicatePolarity, TyKind};
+    use rustc_type_ir::{AliasTyKind, PredicatePolarity, TyKind};
 
     impl TypeParamExt for TypeParam {
-        fn trait_bounds_with_args(self, db: &'_ dyn HirDatabase) -> Vec<(Trait, Vec<Type>)> {
+        fn trait_bounds_with_args(self, db: &'_ dyn HirDatabase) -> Vec<(Trait, Vec<Type<'_>>)> {
             match self.trait_bounds_of_nested_type_with_args(&self.ty(db), db) {
                 Either::Left(traits) => traits,
                 Either::Right(_) => unreachable!(),
@@ -1916,7 +1883,7 @@ mod ty_param_ext {
     pub enum ParsedProjection<'db> {
         NoBounds,
         Projection(Type<'db>),
-        Traits((Vec<(Trait, Vec<Type<'db>>)>)),
+        Traits(Vec<(Trait, Vec<Type<'db>>)>),
     }
 
     pub fn parse_bounds_for<'db>(
@@ -2080,7 +2047,7 @@ impl<'db> CodeGenerator<'db> {
         match v {
             DynCompatibilityViolation::SizedSelf => true, // interfaces are sized
             DynCompatibilityViolation::SelfReferential => false,
-            DynCompatibilityViolation::Method(f, v) => match v {
+            DynCompatibilityViolation::Method(_f, v) => match v {
                 MethodViolationCode::Generic => true, // Generic interface method is native in C#
                 MethodViolationCode::ReferencesImplTraitInTrait => true, // return place impl trait
                 MethodViolationCode::AsyncFn => true, // async fns are return place impl trait
@@ -2151,7 +2118,7 @@ impl<'db> CodeGenerator<'db> {
                         ))
                     })
                 }
-                AssocItem::TypeAlias(it) => {}
+                AssocItem::TypeAlias(_it) => {}
             }
         }
 
@@ -2319,7 +2286,7 @@ impl<'db> CodeGenerator<'db> {
             args.iter()
                 .flatten()
                 .any(|t| self.includes_type_in_type(t, cond))
-        } else if let Some(_) = ty.as_impl_traits(db) {
+        } else if ty.as_impl_traits(db).is_some() {
             use hir_ty::next_solver::ClauseKind;
             // Unfortunately hir crate does not provide us generic parameters of trait so we access
             // new solver's ty
@@ -2364,7 +2331,7 @@ impl<'db> CodeGenerator<'db> {
         params: &[hir::GenericParam],
         cond: &impl Fn(&hir::Type<'db>) -> bool,
     ) -> bool {
-        generic_types(&params)
+        generic_types(params)
             .any(|param| self.includes_type_in_generic_param_cs_constraints(param, cond))
     }
 
@@ -2376,7 +2343,7 @@ impl<'db> CodeGenerator<'db> {
         let db = self.db;
 
         let param_type = param.ty(db);
-        collect_assoc_type_params(param, param_type.clone(), db).any(|assoc_ty| {
+        collect_assoc_type_params(param, param_type.clone(), db).any(|_assoc_ty| {
             self.includes_type_in_type(&param_type, &cond)
                 || match param.trait_bounds_of_nested_type_with_args(&param_type, db) {
                     Either::Right(projection) => self.includes_type_in_type(&projection, &cond),
