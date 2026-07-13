@@ -588,7 +588,18 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                             .unwrap()
                             .args()
                             .map(|a| self.emit_expr_str_ast(&a));
-                        code!(receiver, ".", method_cs, "(", join(args, ", "), ")")
+                        if matches!(method_cs.as_str(), "m_VisitStr") {
+                            code!(
+                                receiver,
+                                ".",
+                                generic_args(method_cs, generics.unwrap_or_default()),
+                                "(",
+                                join(args, ", "),
+                                ")"
+                            )
+                        } else {
+                            code!(receiver, ".", method_cs, "(", join(args, ", "), ")")
+                        }
                     }
                     Some((Either::Right(_), _)) => {
                         eprintln!(
