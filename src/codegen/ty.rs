@@ -35,6 +35,21 @@ impl<'db> CodeGenerator<'db> {
             return "void".to_string();
         }
 
+        let ty = {
+            let map = self.type_map.borrow();
+            if map.is_empty() {
+                ty
+            } else {
+                let (ty, env) = (ty.ns_ty(), ty.env());
+                let ty = hir_ty::next_solver::fold::fold_tys(
+                    hir_ty::next_solver::DbInterner::new_with(db, env.krate),
+                    ty,
+                    |ty| map.get(&ty).copied().unwrap_or(ty),
+                );
+                &Type::from_ty_env(ty, env)
+            }
+        };
+
         let ty = &self.resolve_assoc_of_impl(ty);
 
         // Primitives

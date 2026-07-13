@@ -16,7 +16,7 @@ use crate::codegen::decl::{
 };
 use crate::codegen::delay_format::DelayedFormatString;
 use crate::codegen::id_map::IdMap;
-use crate::codegen::ty::ConstructableDef;
+use crate::codegen::ty::{ConstructableDef, TyFromType};
 use hir::{
     Adt, AssocItem, Crate, GenericDef, HasSource, HirFileId, Impl, InFile, Module, ModuleDef, Name,
     Semantics, StructKind, Type, TypeParam, db::HirDatabase,
@@ -27,7 +27,7 @@ use hir_ty::next_solver::{AnyImplId, DbInterner, GenericArgs};
 use ide_db::line_index;
 use itertools::Itertools;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env::var;
 use syntax::{SyntaxNode, SyntaxNodePtr};
 use vfs::{FileId, Vfs};
@@ -44,6 +44,8 @@ pub struct CodeGenerator<'db> {
     impl_ty_param_id: IdMap<TypeParam>,
     // This map holds specially handled types like type arguments mirroring impl Fn()
     special_types: RefCell<HashMap<TypeParam, DelayedFormatString<Type<'db>>>>,
+    // This map holds 'replaced' types to map `Self` type in trait default impls.
+    type_map: RefCell<HashMap<hir_ty::next_solver::Ty<'db>, hir_ty::next_solver::Ty<'db>>>,
 }
 
 impl<'db> CodeGenerator<'db> {
@@ -64,6 +66,7 @@ impl<'db> CodeGenerator<'db> {
 
             impl_ty_param_id: IdMap::new("impl_"),
             special_types: RefCell::new(HashMap::new()),
+            type_map: RefCell::new(HashMap::new()),
         }
     }
 
@@ -446,6 +449,76 @@ impl<'db> CodeGenerator<'db> {
         for item in impl_.items(db) {
             if let AssocItem::Function(f) = item {
                 self.emit_function(out, f, Some(impl_));
+            }
+        }
+
+        if let Some(trait_) = impl_.trait_(db)
+            && matches!(trait_.name(db).as_str(), "Visitor")
+        {
+            // implement 'default' methods
+            let trait_super_impl_scope = tracing::debug_span!("emit_impl_methods of super methods", trait = trait_.name(db).as_str()).entered();
+
+            struct NewTypeMapScope<'db, 'a> {
+                code_gen: &'a CodeGenerator<'db>,
+                original_map: HashMap<hir_ty::next_solver::Ty<'db>, hir_ty::next_solver::Ty<'db>>,
+            }
+
+            impl<'db, 'a> NewTypeMapScope<'db, 'a> {
+                fn new(code_gen: &'a CodeGenerator<'db>) -> Self {
+                    Self {
+                        code_gen,
+                        original_map: code_gen.type_map.borrow().clone(),
+                    }
+                }
+
+                fn insert(&mut self, old: Type<'db>, new: Type<'db>) {
+                    use ty::TyFromType;
+                    self.code_gen
+                        .type_map
+                        .borrow_mut()
+                        .insert(old.ns_ty(), new.ns_ty());
+                }
+            }
+            impl<'db, 'a> Drop for NewTypeMapScope<'db, 'a> {
+                fn drop(&mut self) {
+                    *self.code_gen.type_map.borrow_mut() = std::mem::take(&mut self.original_map);
+                }
+            }
+
+            let mut new_type_map = NewTypeMapScope::new(self);
+
+            let self_type_param = GenericDef::from(trait_).type_or_const_params(db)[0].ty(db);
+            new_type_map.insert(self_type_param, impl_.self_ty(db));
+            let mut assoc_by_name = HashMap::new();
+            for item in impl_.items(db) {
+                if let AssocItem::TypeAlias(type_) = item {
+                    assoc_by_name.insert(type_.name(db).symbol().clone(), type_.ty(db));
+                }
+            }
+            for item in trait_.items(db) {
+                if let AssocItem::TypeAlias(type_) = item {
+                    let ty = assoc_by_name.get(type_.name(db).symbol()).unwrap();
+                    new_type_map.insert(type_.ty(db), ty.clone());
+                }
+            }
+
+            let mut method_names = HashSet::new();
+            for item in impl_.items(db) {
+                if let AssocItem::Function(f) = item {
+                    method_names.insert(f.name(db).symbol().clone());
+                }
+            }
+
+            for &f in trait_.items(db).iter().filter_map(|x| {
+                if let AssocItem::Function(f) = x {
+                    Some(f)
+                } else {
+                    None
+                }
+            }) {
+                if !method_names.contains(f.name(db).symbol()) {
+                    self.emit_function(out, f, Some(impl_));
+                }
             }
         }
 
