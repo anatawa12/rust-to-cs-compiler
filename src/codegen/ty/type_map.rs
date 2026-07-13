@@ -1,4 +1,3 @@
-use crate::codegen::ty::TyFromType;
 use hir::Type;
 use hir_ty::next_solver::Ty;
 use std::cell::RefCell;

@@ -5,8 +5,8 @@ use super::{CodeGenerator, generic_args, names};
 use hir::db::HirDatabase;
 use hir::next_solver::GenericArgs;
 use hir::{
-    Adt, AssocItem, BuiltinType, GenericDef, GenericSubstitution, HasContainer, HasCrate,
-    ItemContainer, Module, Name, Symbol, Trait, Type, sym,
+    Adt, AssocItem, BuiltinType, GenericDef, GenericSubstitution, HasContainer, ItemContainer,
+    Module, Name, Symbol, Trait, Type, sym,
 };
 use hir_ty::display::HirDisplay;
 use hir_ty::dyn_compatibility::{DynCompatibilityViolation, MethodViolationCode};
@@ -14,11 +14,11 @@ use ide_db::base_db;
 use itertools::Either;
 use rustc_type_ir::inherent::IntoKind;
 use std::collections::HashMap;
-use std::fmt::Display;
 use std::fmt::Write;
 use std::ops::Not;
 use tracing::*;
 
+use crate::codegen::debug_display::DebugDisplay;
 pub(crate) use type_map::TypeMap;
 
 impl<'db> CodeGenerator<'db> {
@@ -163,10 +163,7 @@ impl<'db> CodeGenerator<'db> {
                 .filter(|&(t, _)| !t.items_with_supertraits(db).is_empty())
                 .collect::<Vec<_>>();
             if traits.len() > 1 {
-                eprintln!(
-                    "Multiple traits are used: {}",
-                    ty.display(db, self.display_target())
-                );
+                eprintln!("Multiple traits are used: {}", ty.debug_display(self.db));
             }
             if traits.is_empty() {
                 eprintln!("empty impl traits: {:?}", ty);
@@ -190,8 +187,8 @@ impl<'db> CodeGenerator<'db> {
                         None => {
                             eprintln!(
                                 "Failed to resolve type {alias} of {ty}",
-                                alias = alias.display(db, self.display_target()),
-                                ty = ty.display(db, self.display_target())
+                                alias = alias.debug_display(self.db),
+                                ty = ty.debug_display(self.db)
                             );
                             cs_generic_args.push("void/* Type */".into());
                         }
@@ -212,19 +209,19 @@ impl<'db> CodeGenerator<'db> {
         {
             tracing::debug!(
                 "Normalized! {} => {} ({normalized:?})\n",
-                ty.display(self.db, self.display_target()),
-                normalized.display(self.db, self.display_target())
+                ty.debug_display(self.db),
+                normalized.debug_display(self.db)
             );
             self.rust_type_to_cs(&normalized)
         } else {
             eprintln!(
                 "Unsupported type: {}: {ty:?}\n",
-                ty.display(self.db, self.display_target()),
+                ty.debug_display(self.db),
                 ty = self.ty_to_str(ty.ns_ty()),
             );
             format!(
                 "object /*Unsupported type: {} */",
-                ty.display(self.db, self.display_target())
+                ty.debug_display(self.db)
             )
             .to_string()
         }
@@ -648,7 +645,7 @@ impl<'db> CodeGenerator<'db> {
     fn special_type_param(&self, param: hir::TypeParam) -> SpecialImplBounds<'db> {
         let _scope = tracing::info_span!(
             "special_type_param",
-            param = %param.display(self.db, self.display_target()),
+            param = %param.debug_display(self.db),
         )
         .entered();
         let db = self.db;
@@ -745,13 +742,13 @@ impl<'db> CodeGenerator<'db> {
                 None => {
                     eprintln!(
                         "Failed to resolve type {alias} of {ty}",
-                        alias = alias.display(db, self.display_target()),
-                        ty = self_ty.display(db, self.display_target())
+                        alias = alias.debug_display(self.db),
+                        ty = self_ty.debug_display(self.db)
                     );
                     cs_type_params.push(format!(
                         "void /* {alias} of {ty} */",
-                        alias = alias.display(db, self.display_target()),
-                        ty = self_ty.display(db, self.display_target()),
+                        alias = alias.debug_display(self.db),
+                        ty = self_ty.debug_display(self.db),
                     ));
                 }
                 Some(ty) => {
@@ -1110,10 +1107,7 @@ mod rustc_ty {
     impl<'db> CodeGenerator<'db> {
         // This tries to resolve `<impl SomeTrait<Assoc = SomeType> as SomeTrait>::Assoc`
         pub(super) fn resolve_assoc_of_impl(&self, assoc_ty: &Type<'db>) -> Type<'db> {
-            trace!(
-                "resolve_assoc_of_impl: {}",
-                assoc_ty.display(self.db, self.display_target())
-            );
+            trace!("resolve_assoc_of_impl: {}", assoc_ty.debug_display(self.db));
             self.resolve_assoc_of_impl_impl(assoc_ty)
         }
 
@@ -1179,7 +1173,8 @@ mod rustc_ty {
                     let AliasTyKind::Opaque { def_id } = self_ty_alias.kind else {
                         panic!(
                             "Tries to assoc but not assoc (self is not opaque): {assoc_ty}\nkind: {kind:?}",
-                            assoc_ty = assoc_ty.display(self.db, self.display_target()),
+                            assoc_ty =
+                                assoc_ty.display(self.db, self.krate.to_display_target(self.db)),
                             kind = self_ty_alias.kind,
                         );
                         // return assoc_type.clone();
@@ -1199,7 +1194,8 @@ mod rustc_ty {
                         ParsedProjection::Traits(traits) => {
                             eprintln!(
                                 "type: {assoc_ty_rs}, traits: {traits:?}",
-                                assoc_ty_rs = assoc_ty.display(self.db, self.display_target()),
+                                assoc_ty_rs = assoc_ty
+                                    .display(self.db, self.krate.to_display_target(self.db)),
                                 traits = traits
                                     .iter()
                                     .map(|x| x.0.debug_display(self.db).to_string())
@@ -1285,10 +1281,10 @@ mod rustc_ty {
 
                     trace!(
                         "resolved?: {assoc_ty} => {resolved}\n{resolved1:?}",
-                        assoc_ty = self.new_type(assoc_ty).display(db, self.display_target()),
+                        assoc_ty = self.new_type(assoc_ty).debug_display(self.db),
                         resolved = self
                             .new_type(resolved_impl_assoc.unwrap())
-                            .display(db, self.display_target()),
+                            .debug_display(self.db),
                         resolved1 = self.ty_to_str(resolved_impl_assoc.unwrap()),
                     );
 
@@ -1789,24 +1785,6 @@ impl<'db> Constructable<'db> {
     }
 }
 
-pub trait DebugDisplay<'db> {
-    fn debug_display<'a>(&'a self, db: &'db dyn HirDatabase) -> impl Display + 'a
-    where
-        'db: 'a;
-}
-
-impl<'db, T> DebugDisplay<'db> for T
-where
-    T: HasCrate + HirDisplay<'db>,
-{
-    fn debug_display<'a>(&'a self, db: &'db dyn HirDatabase) -> impl Display + 'a
-    where
-        'db: 'a,
-    {
-        self.display_test(db, self.krate(db).to_display_target(db))
-    }
-}
-
 pub trait TypeExt<'db> {
     #[allow(dead_code)]
     fn expect_adt_with_args(&self) -> (Adt, Vec<Option<Type<'db>>>);
@@ -2073,7 +2051,7 @@ impl<'db> CodeGenerator<'db> {
     ) -> Option<Vec<DynCompatibilityViolation>> {
         let _scope = tracing::info_span!(
             "dyn_compatibility_all_violations_alt",
-            trait = %trait_.display_test(self.db, self.display_target()),
+            trait = %trait_.debug_display(self.db),
         )
         .entered();
         let db = self.db;
@@ -2308,10 +2286,7 @@ impl<'db> CodeGenerator<'db> {
                 .filter(|&(t, _)| !t.items_with_supertraits(db).is_empty())
                 .collect::<Vec<_>>();
             if traits.len() > 1 {
-                eprintln!(
-                    "Multiple traits are used: {}",
-                    ty.display(db, self.display_target())
-                );
+                eprintln!("Multiple traits are used: {}", ty.debug_display(self.db));
             }
             if traits.is_empty() {
                 false

@@ -2,7 +2,8 @@
 use std::collections::HashMap;
 
 use super::{CodeGenerator, generic_args, names, output::Code};
-use crate::codegen::ty::{Constructable, ConstructableDef, DebugDisplay, TypeExt};
+use crate::codegen::debug_display::DebugDisplay;
+use crate::codegen::ty::{Constructable, ConstructableDef, TypeExt};
 use hir::{HasContainer, InFile, ItemContainer, Local, ModuleDef, PathResolution, StructKind};
 use hir_ty::db::HirDatabase;
 use itertools::Either;

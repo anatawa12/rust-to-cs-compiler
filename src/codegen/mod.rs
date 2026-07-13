@@ -4,6 +4,7 @@ pub mod output;
 pub mod delay_format;
 #[macro_use]
 mod impl_from;
+mod debug_display;
 pub mod decl;
 pub mod expr;
 mod id_map;
@@ -22,7 +23,6 @@ use hir::{
     Type, TypeParam, db::HirDatabase,
 };
 use hir_def::lang_item::{LangItems, lang_items};
-use hir_ty::display::DisplayTarget;
 use hir_ty::next_solver::{AnyImplId, DbInterner};
 use ide_db::line_index;
 use itertools::Itertools;
@@ -79,10 +79,6 @@ impl<'db> CodeGenerator<'db> {
         let line_col = line_index.line_col(loc.range.start());
 
         format!("{}:{}:{}", path, line_col.line + 1, line_col.col + 1)
-    }
-
-    pub fn display_target(&self) -> DisplayTarget {
-        self.krate.to_display_target(self.db)
     }
 }
 

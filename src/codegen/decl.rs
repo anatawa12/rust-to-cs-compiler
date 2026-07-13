@@ -1,4 +1,5 @@
 use super::{CodeGenerator, expr::BodyGen, names, output::Code};
+use crate::codegen::debug_display::DebugDisplay;
 use crate::codegen::expr::ItemInBody;
 use crate::codegen::ty::TraitExt;
 use cfg::CfgExpr;
@@ -7,7 +8,6 @@ use hir::{
     Adt, AssocItem, GenericDef, HasAttrs, HasContainer, HasCrate, HasSource, Impl, ItemContainer,
     Trait, db::HirDatabase,
 };
-use hir_ty::display::HirDisplay;
 use std::collections::HashMap;
 use syntax::ast::HasAttrs as AstHasAttrs;
 
@@ -193,7 +193,7 @@ impl<'db> CodeGenerator<'db> {
         let db = self.db;
         let _scope = tracing::info_span!(
             "emit_function",
-            f = %f.display(db, self.display_target()),
+            f = %f.debug_display(db),
         )
         .entered();
 
