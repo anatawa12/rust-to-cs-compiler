@@ -4,9 +4,10 @@ use crate::codegen::simple_extensions::{TraitExt, TypeExt as _};
 /// Converts Rust HIR types to C# type strings.
 use hir::db::HirDatabase;
 use hir::{
-    Adt, AssocItem, BuiltinType, GenericDef, GenericSubstitution, HasContainer, HirDisplay,
-    ItemContainer, MethodViolationCode, Module, Name, Symbol, Trait, Type, sym,
+    Adt, AssocItem, BuiltinType, GenericDef, GenericSubstitution, ItemContainer,
+    MethodViolationCode, Module, Name, Symbol, Trait, Type,
 };
+use hir::{HasContainer, HasCrate, HirDisplay, sym};
 use itertools::Either;
 use ra_internal::*;
 use std::collections::HashMap;
@@ -124,11 +125,17 @@ impl<'db> CodeGenerator<'db> {
             //type_name.push_str(&format!(" /* {} */", ty.display(db, self.display_target())));
 
             type_name
-        } else if let Some(traits) = ty.as_impl_traits_with_params(db) {
+        } else if let Some(mut traits) = ty.as_impl_traits_with_params(db) {
             // Unfortunately hir crate does not provide us generic parameters of trait so we access
             // new solver's ty
+
+            traits.retain_mut(|&mut (t, _)| !ignored_trait(t, db));
+
             if traits.len() > 1 {
-                eprintln!("Multiple traits are used: {}", ty.debug_display(self.db));
+                eprintln!(
+                    "Multiple traits are used(r2cs): {}",
+                    ty.debug_display(self.db)
+                );
             }
             if traits.is_empty() {
                 eprintln!("empty impl traits: {:?}", ty);
@@ -613,14 +620,9 @@ impl<'db> CodeGenerator<'db> {
         if let bounds = param
             .trait_bounds_with_args(db)
             .into_iter()
-            .filter(|&(t, _)| Some(t) != self.lang_items.Sized())
-            .filter(|&(t, _)| Some(t) != self.lang_items.Sync())
-            .filter(|&(t, _)| Some(t) != self.lang_items.Unpin())
-            .filter(|&(t, _)| Some(t) != self.lang_items.Copy())
-            //.filter(|&(t, _)| Some(t.into()) != self.lang_items.Send)
+            .filter(|&(t, _)| !ignored_trait(t, db))
             .collect::<Vec<_>>()
             && let &[(trait_, ref args)] = bounds.as_slice()
-            && let trait_id = trait_.into()
         {
             if Some(trait_) == self.lang_items.Fn()
                 || Some(trait_) == self.lang_items.FnMut()
@@ -639,7 +641,7 @@ impl<'db> CodeGenerator<'db> {
                 let output = output.resolve_associated_type(db);
 
                 return SpecialImplBounds::Func(output, parameters);
-            } else if Some(trait_id) == self.lang_items.Future() {
+            } else if Some(trait_) == self.lang_items.Future() {
                 assert_eq!(args.len(), 1); // one for self
                 let self_ty = &args[0];
                 let output = self_ty
@@ -1217,9 +1219,17 @@ fn includes_type_in_type<'db>(
     } else if let Some(mut traits) = ty.as_impl_traits_with_params(db) {
         // items_with_supertraits filter removes marker traits including lang items like Send, Sized
         traits.retain_mut(|(t, _)| t.items_with_supertraits(db).is_empty());
+        traits.retain_mut(|&mut (t, _)| !ignored_trait(t, db));
 
         if traits.len() > 1 {
-            eprintln!("Multiple traits are used: {}", ty.debug_display(db));
+            eprintln!(
+                "Multiple traits are used(includes_type_in_type): {} ({traits:?})",
+                ty.debug_display(db),
+                traits = traits
+                    .iter()
+                    .map(|(t, _)| t.debug_display(db).to_string())
+                    .collect::<Vec<_>>(),
+            );
         }
 
         if traits.is_empty() {
@@ -1235,6 +1245,16 @@ fn includes_type_in_type<'db>(
     } else {
         false
     }
+}
+
+fn ignored_trait(trait_: hir::Trait, db: &dyn HirDatabase) -> bool {
+    let lang_item = LangItems::new(db, trait_.krate(db));
+    Some(trait_) == lang_item.Sized()
+        || Some(trait_) == lang_item.MetaSized()
+        || Some(trait_) == lang_item.Send()
+        || Some(trait_) == lang_item.Sync()
+        || Some(trait_) == lang_item.Unpin()
+        || Some(trait_) == lang_item.Copy()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

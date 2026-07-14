@@ -8,14 +8,38 @@ use hir_ty::db::HirDatabase;
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
 pub struct LangItems {
     inner: HirDefLangItems,
+    send: Option<hir::Trait>,
 }
 
 impl LangItems {
     pub fn new(db: &dyn HirDatabase, krate: hir::Crate) -> &Self {
         #[salsa_macros::tracked(returns(ref))]
         fn new(db: &dyn HirDatabase, krate: Crate) -> LangItems {
+            let mut send: Option<hir::Trait> = None;
+
+            if let Some(core) = all_crates(db).iter().copied().find(|&krate| {
+                matches!(
+                    krate.data(db).origin,
+                    CrateOrigin::Lang(LangCrateOrigin::Core)
+                )
+            }) {
+                let core = hir::Crate::from(core);
+                send = core
+                    .root_module(db)
+                    .resolve_mod_path(
+                        db,
+                        [Name::new_symbol_root(sym::marker), Name::new_root("Send")],
+                    )
+                    .into_iter()
+                    .flatten()
+                    .flat_map(|x| variant_or_none!(x, hir::ItemInNs::Types))
+                    .flat_map(|x| variant_or_none!(x, hir::ModuleDef::Trait))
+                    .next();
+            }
+
             LangItems {
                 inner: lang_items(db, krate).clone(),
+                send,
             }
         }
 
@@ -40,6 +64,7 @@ macro_rules! lang_item_wrapper {
 lang_item_wrapper! {
     struct LangItems {
         Sized: Trait,
+        MetaSized: Trait,
         Copy: Trait,
         Sync: Trait,
 
@@ -62,4 +87,7 @@ lang_item_wrapper! {
 }
 
 impl LangItems {
+    pub fn Send(&self) -> Option<hir::Trait> {
+        self.send
+    }
 }

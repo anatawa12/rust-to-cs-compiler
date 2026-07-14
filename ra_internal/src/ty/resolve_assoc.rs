@@ -181,7 +181,8 @@ fn resolve_assoc_of_impl_impl<'db>(
         TyKind::Error(_) => assoc_type.clone(),
         _ => {
             eprintln!(
-                "Unsupported assoc type resolution but not assoc (self is not alias): {assoc_type:?}"
+                "Unsupported assoc type resolution but not assoc (self is not alias): {assoc_type:?}, {self_ty:?}",
+                self_ty = self_ty.kind(),
             );
             hir::Type::error(db, assoc_type.env().krate.into())
         }
