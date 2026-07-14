@@ -248,9 +248,13 @@ impl<'db> CodeGenerator<'db> {
             //if let Some((trait_, args)) = impl_.trait_with_args(db) {
             if let Some(trait_ref) = impl_.trait_ref(db) {
                 let trait_ = trait_ref.trait_();
-                let cs_iface = self.trait_itf_cs2(
-                    trait_ref.trait_(),
-                    trait_ref.generic_types(db).flatten().collect(),
+                let cs_iface = generic_args(
+                    self.trait_itf_cs(trait_),
+                    self.map_type_param_source(
+                        &self.trait_generic_params_cs_sources(trait_),
+                        &trait_ref.generic_types(db).flatten().collect::<Vec<_>>(),
+                    )
+                    .map(|x| self.rust_type_to_cs(&x)),
                 );
 
                 trait_interfaces.push(cs_iface);

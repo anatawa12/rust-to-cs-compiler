@@ -193,8 +193,11 @@ impl<'db> CodeGenerator<'db> {
                 || match param.trait_bounds_of_nested_type_with_args(&param_type, db) {
                     Either::Right(projection) => includes_type_in_type(&projection, db, &cond),
                     Either::Left(traits) => traits.iter().any(|&(trait_, ref args)| {
-                        self.trait_type_args_impl(trait_, args, true)
-                            .any(|t| includes_type_in_type(&t, db, &cond))
+                        self.map_type_param_source(
+                            &self.trait_generic_params_cs_sources_impl(trait_, true),
+                            args,
+                        )
+                        .any(|t| includes_type_in_type(&t, db, &cond))
                     }),
                 }
         })

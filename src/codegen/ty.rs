@@ -142,11 +142,14 @@ impl<'db> CodeGenerator<'db> {
                 let rs_generic_args =
                     (iter::once(ty.clone()).chain(args.into_iter().flatten())).collect::<Vec<_>>();
 
-                let param_sources = self.trait_generic_params_cs_sources(trait_);
-                let cs_generic_args = self
-                    .map_type_param_source(&param_sources, &rs_generic_args)
-                    .map(|x| self.rust_type_to_cs(&x));
-                generic_args(self.trait_itf_cs(trait_), cs_generic_args)
+                generic_args(
+                    self.trait_itf_cs(trait_),
+                    self.map_type_param_source(
+                        &self.trait_generic_params_cs_sources(trait_),
+                        &rs_generic_args,
+                    )
+                    .map(|x| self.rust_type_to_cs(&x)),
+                )
             }
         } else if ty.is_error() {
             "object /* error type */".to_string()
@@ -343,17 +346,19 @@ impl<'db> CodeGenerator<'db> {
 
                     assert!(!self.with_self_in_cs(trait_));
 
-                    let args = self.trait_type_args(trait_, args).collect::<Vec<_>>();
+                    let args_types = self
+                        .map_type_param_source(&self.trait_generic_params_cs_sources(trait_), args)
+                        .collect::<Vec<_>>();
 
                     self.special_types.borrow_mut().insert(
                         param,
-                        if args.is_empty() {
+                        if args_types.is_empty() {
                             delayed_format!(str(&self.trait_itf_cs(trait_)))
                         } else {
                             delayed_format!(
                                 str(&self.trait_itf_cs(trait_)),
                                 "<",
-                                join(args, ","),
+                                join(args_types, ","),
                                 ">"
                             )
                         },
@@ -367,7 +372,7 @@ impl<'db> CodeGenerator<'db> {
     pub fn trait_generic_params_cs_sources(&self, trait_: hir::Trait) -> Vec<CsTypeParamSource> {
         self.trait_generic_params_cs_sources_impl(trait_, false)
     }
-    fn trait_generic_params_cs_sources_impl(
+    pub fn trait_generic_params_cs_sources_impl(
         &self,
         trait_: hir::Trait,
         exclude_self: bool,
@@ -482,12 +487,14 @@ impl<'db> CodeGenerator<'db> {
                     if !traits.is_empty() {
                         let mut cs_constraints = vec![];
                         for &(trait_, ref args) in &traits {
-                            let args = self
-                                .trait_type_args(trait_, args)
-                                .map(|t| self.rust_type_to_cs(&t));
-
-                            let constraint = generic_args(self.trait_itf_cs(trait_), args);
-                            cs_constraints.push(constraint);
+                            cs_constraints.push(generic_args(
+                                self.trait_itf_cs(trait_),
+                                self.map_type_param_source(
+                                    &self.trait_generic_params_cs_sources(trait_),
+                                    args,
+                                )
+                                .map(|t| self.rust_type_to_cs(&t)),
+                            ));
                         }
                         constraints.push(format!("{name} : {}", cs_constraints.join(", ")));
                     }
@@ -496,25 +503,6 @@ impl<'db> CodeGenerator<'db> {
         }
 
         constraints
-    }
-
-    pub fn trait_type_args(
-        &self,
-        trait_: Trait,
-        all_args: &[Type<'db>],
-    ) -> impl Iterator<Item = Type<'db>> {
-        self.trait_type_args_impl(trait_, all_args, false)
-    }
-    pub fn trait_type_args_impl(
-        &self,
-        trait_: Trait,
-        all_args: &[Type<'db>],
-        exclude_self: bool,
-    ) -> impl Iterator<Item = Type<'db>> {
-        let x = self.trait_generic_params_cs_sources_impl(trait_, exclude_self);
-        self.map_type_param_source(&x, all_args)
-            .collect::<Vec<_>>()
-            .into_iter()
     }
 }
 
@@ -661,49 +649,6 @@ impl<'db> CodeGenerator<'db> {
         }
 
         SpecialImplBounds::None
-    }
-
-    pub fn trait_itf_cs2(&self, trait_: Trait, args: Vec<Type<'db>>) -> String {
-        let db = self.db;
-
-        let mut cs_type_params = Vec::new();
-
-        for x in &args {
-            cs_type_params.push(self.rust_type_to_cs_inner(x, false));
-        }
-
-        if !self.with_self_in_cs(trait_) && !cs_type_params.is_empty() {
-            cs_type_params.remove(0);
-        }
-
-        let self_ty = &args[0];
-        for alias in trait_.assoc_types(db) {
-            if is_omit_trait_assoc_type(db, alias) {
-                continue;
-            }
-            match self_ty
-                .normalize_trait_assoc_type(db, &args, alias)
-                .map(|x| x.resolve_associated_type(db))
-            {
-                None => {
-                    eprintln!(
-                        "Failed to resolve type {alias} of {ty}",
-                        alias = alias.debug_display(self.db),
-                        ty = self_ty.debug_display(self.db)
-                    );
-                    cs_type_params.push(format!(
-                        "void /* {alias} of {ty} */",
-                        alias = alias.debug_display(self.db),
-                        ty = self_ty.debug_display(self.db),
-                    ));
-                }
-                Some(ty) => {
-                    cs_type_params.push(self.rust_type_to_cs(&ty));
-                }
-            }
-        }
-
-        generic_args(self.trait_itf_cs(trait_), cs_type_params)
     }
 
     pub fn trait_itf_cs(&self, t: Trait) -> String {
