@@ -1,5 +1,4 @@
 use super::{CodeGenerator, expr::BodyGen, names, output::Code};
-use crate::codegen::debug_display::DebugDisplay;
 use crate::codegen::expr::ItemInBody;
 use crate::codegen::simple_extensions::TraitExt;
 use cfg::CfgExpr;
@@ -8,6 +7,7 @@ use hir::{
     Adt, AssocItem, GenericDef, HasAttrs, HasContainer, HasCrate, HasSource, Impl, ItemContainer,
     Trait, db::HirDatabase,
 };
+use ra_internal::*;
 use std::collections::HashMap;
 use syntax::ast::HasAttrs as AstHasAttrs;
 
@@ -203,7 +203,7 @@ impl<'db> CodeGenerator<'db> {
 
         let gen_params = if let ItemContainer::Impl(impl_) = f.container(db)
             && let Some(trait_) = impl_.trait_(db)
-            && Some(trait_.into()) == self.lang_items.Hash
+            && Some(trait_) == self.lang_items.Hash()
             && f.name(db) == hir::sym::hash
         {
             // it's hash. Derive method has <H> but `GenericDef::from` returns empty array

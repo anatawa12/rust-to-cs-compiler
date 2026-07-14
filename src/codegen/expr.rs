@@ -3,11 +3,11 @@ use std::collections::HashMap;
 
 use super::{CodeGenerator, generic_args, names, output::Code};
 use crate::codegen::constructable::{Constructable, ConstructableDef};
-use crate::codegen::debug_display::DebugDisplay;
 use crate::codegen::simple_extensions::TypeExt;
+use hir::db::HirDatabase;
 use hir::{HasContainer, InFile, ItemContainer, Local, ModuleDef, PathResolution, StructKind};
-use hir_ty::db::HirDatabase;
 use itertools::Either;
+use ra_internal::*;
 use syntax::ast::{
     self, ArithOp, AstNode as _, HasArgList as _, HasLoopBody as _, LogicOp, RangeItem as _,
 };
@@ -708,7 +708,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     Some(BinaryOp::ArithOp(ArithOp::BitOr)) => "|",
                     Some(BinaryOp::ArithOp(ArithOp::BitAnd)) => "&",
                     Some(BinaryOp::CmpOp(c)) => {
-                        use hir_def::hir::{CmpOp, Ordering};
+                        use ast::{CmpOp, Ordering};
                         match c {
                             CmpOp::Eq { negated: false } => "==",
                             CmpOp::Eq { negated: true } => "!=",

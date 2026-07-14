@@ -1394,6 +1394,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "ra_internal"
+version = "0.1.0"
+dependencies = [
+ "itertools",
+ "ra-ap-rustc_next_trait_solver",
+ "ra-ap-rustc_type_ir",
+ "ra_ap_base_db",
+ "ra_ap_hir",
+ "ra_ap_hir_def",
+ "ra_ap_hir_ty",
+ "salsa",
+ "salsa-macros",
+ "tracing",
+]
+
+[[package]]
 name = "rayon"
 version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1457,17 +1473,14 @@ name = "rust-to-cs-compiler"
 version = "0.1.0"
 dependencies = [
  "itertools",
- "ra-ap-rustc_next_trait_solver",
- "ra-ap-rustc_type_ir",
  "ra_ap_cfg",
  "ra_ap_hir",
- "ra_ap_hir_def",
- "ra_ap_hir_ty",
  "ra_ap_ide_db",
  "ra_ap_load-cargo",
  "ra_ap_project_model",
  "ra_ap_syntax",
  "ra_ap_vfs",
+ "ra_internal",
  "tracing",
  "tracing-panic",
  "tracing-subscriber",

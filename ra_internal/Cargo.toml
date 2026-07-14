@@ -1,0 +1,19 @@
+[package]
+name = "ra_internal"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+hir.workspace = true
+hir_def.workspace = true
+hir_ty.workspace = true
+base_db.workspace = true
+
+rustc_type_ir.workspace = true
+rustc_next_trait_solver.workspace = true
+
+salsa.workspace = true
+salsa-macros.workspace = true
+
+tracing.workspace = true
+itertools.workspace = true

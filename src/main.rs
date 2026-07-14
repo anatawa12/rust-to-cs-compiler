@@ -53,7 +53,9 @@ fn main() {
         )
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-                tracing_subscriber::EnvFilter::new("rust_to_cs_compiler=debug,warn")
+                tracing_subscriber::EnvFilter::new(
+                    "rust_to_cs_compiler=debug,ra_internal=debug,warn",
+                )
             }),
         )
         .init();

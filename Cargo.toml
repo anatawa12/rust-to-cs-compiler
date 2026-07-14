@@ -4,18 +4,45 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+hir.workspace = true
+syntax.workspace = true
+cfg.workspace = true
+ide_db.workspace = true
+load-cargo.workspace = true
+vfs.workspace = true
+project_model.workspace = true
+
+ra_internal = { path = "ra_internal" }
+
+tracing.workspace = true
+itertools.workspace = true
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+tracing-panic = "0.1.2"
+
+[workspace]
+members = [".", "ra_internal"]
+
+[workspace.dependencies]
+# ra-ap
 hir = { package = "ra_ap_hir", version = "0.0.331" }
 hir_def = { package = "ra_ap_hir_def", version = "0.0.331" }
 hir_ty = { package = "ra_ap_hir_ty", version = "0.0.331" }
 syntax = { package = "ra_ap_syntax", version = "0.0.331" }
 cfg = { package = "ra_ap_cfg", version = "0.0.331" }
 ide_db = { package = "ra_ap_ide_db", version = "0.0.331" }
+base_db = { package = "ra_ap_base_db", version = "0.0.331" }
 load-cargo = { package = "ra_ap_load-cargo", version = "0.0.331" }
 vfs = { package = "ra_ap_vfs", version = "0.0.331" }
 project_model = { package = "ra_ap_project_model", version = "0.0.331" }
+
+# ra-ap-rustc
 rustc_type_ir = { package = "ra-ap-rustc_type_ir", version = "0.160.0" }
 rustc_next_trait_solver = { package = "ra-ap-rustc_next_trait_solver", version = "0.160.0" }
-tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+
+# ra base lib
+salsa = "0.26.2"
+salsa-macros = "0.26.2"
+
+# other utils
 itertools = "0.14.0"
 tracing = "0.1.44"
-tracing-panic = "0.1.2"

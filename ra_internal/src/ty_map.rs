@@ -1,15 +1,23 @@
+use crate::internal::TyFromType;
 use hir::Type;
+use hir_ty::db::HirDatabase;
 use hir_ty::next_solver::Ty;
 use std::cell::RefCell;
 use std::collections::HashMap;
 
 type Inner<'db> = HashMap<Ty<'db>, Ty<'db>>;
 
-pub(crate) struct TypeMap<'db> {
+pub struct TyMap<'db> {
     inner: RefCell<Inner<'db>>,
 }
 
-impl<'db> TypeMap<'db> {
+impl<'db> Default for TyMap<'db> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<'db> TyMap<'db> {
     pub fn new() -> Self {
         Self {
             inner: RefCell::new(Inner::new()),
@@ -20,8 +28,26 @@ impl<'db> TypeMap<'db> {
         self.inner.borrow().is_empty()
     }
 
-    pub(super) fn get(&self, ty: Ty<'db>) -> Option<Ty<'db>> {
-        self.inner.borrow().get(&ty).copied()
+    pub(super) fn get(&self, ty: Ty<'db>) -> Ty<'db> {
+        self.inner.borrow().get(&ty).copied().unwrap_or(ty)
+    }
+
+    pub fn map_type_recursively(
+        &self,
+        ty: &Type<'db>,
+        db: &'db dyn HirDatabase,
+    ) -> Option<Type<'db>> {
+        if self.is_empty() {
+            None
+        } else {
+            let (ty, env) = (ty.ns_ty(), ty.env());
+            let ty = hir_ty::next_solver::fold::fold_tys(
+                hir_ty::next_solver::DbInterner::new_with(db, env.krate),
+                ty,
+                |ty| self.get(ty),
+            );
+            Some(Type::from_ty_env(ty, env))
+        }
     }
 
     pub fn modify(&self) -> NewTypeMapScope<'db, '_> {
@@ -29,13 +55,13 @@ impl<'db> TypeMap<'db> {
     }
 }
 
-pub(crate) struct NewTypeMapScope<'db, 'a> {
-    type_map: &'a TypeMap<'db>,
+pub struct NewTypeMapScope<'db, 'a> {
+    type_map: &'a TyMap<'db>,
     original_map: Inner<'db>,
 }
 
 impl<'db, 'a> NewTypeMapScope<'db, 'a> {
-    pub fn new(code_gen: &'a TypeMap<'db>) -> Self {
+    pub fn new(code_gen: &'a TyMap<'db>) -> Self {
         Self {
             type_map: code_gen,
             original_map: code_gen.inner.borrow().clone(),
@@ -43,7 +69,6 @@ impl<'db, 'a> NewTypeMapScope<'db, 'a> {
     }
 
     pub fn insert(&mut self, old: Type<'db>, new: Type<'db>) {
-        use crate::codegen::ty::TyFromType;
         self.type_map
             .inner
             .borrow_mut()

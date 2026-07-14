@@ -5,7 +5,6 @@ pub mod delay_format;
 #[macro_use]
 mod impl_from;
 mod constructable;
-mod debug_display;
 pub mod decl;
 pub mod expr;
 mod id_map;
@@ -20,15 +19,13 @@ use crate::codegen::decl::{
 };
 use crate::codegen::delay_format::DelayedFormatString;
 use crate::codegen::id_map::IdMap;
-use crate::codegen::ty::TypeMap;
 use hir::{
     Adt, AssocItem, Crate, GenericDef, Impl, InFile, Module, ModuleDef, Semantics, StructKind,
     Type, TypeParam, db::HirDatabase,
 };
-use hir_def::lang_item::{LangItems, lang_items};
-use hir_ty::next_solver::{AnyImplId, DbInterner};
 use ide_db::line_index;
 use itertools::Itertools;
+use ra_internal::*;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use vfs::Vfs;
@@ -39,14 +36,13 @@ pub struct CodeGenerator<'db> {
     krate: Crate,
     sem: Semantics<'db, dyn HirDatabase>,
     lang_items: &'db LangItems,
-    interner: DbInterner<'db>,
     root_namespace: String,
     // some internal information that hard is to determine
     impl_ty_param_id: IdMap<TypeParam>,
     // This map holds specially handled types like type arguments mirroring impl Fn()
     special_types: RefCell<HashMap<TypeParam, DelayedFormatString<Type<'db>>>>,
     // This map holds 'replaced' types to map `Self` type in trait default impls.
-    type_map: TypeMap<'db>,
+    type_map: TyMap<'db>,
 }
 
 impl<'db> CodeGenerator<'db> {
@@ -61,13 +57,12 @@ impl<'db> CodeGenerator<'db> {
             vfs,
             krate,
             sem: Semantics::new_dyn(db),
-            lang_items: lang_items(db, krate.base()),
-            interner: DbInterner::new_with(db, krate.base()),
+            lang_items: LangItems::new(db, krate),
             root_namespace,
 
             impl_ty_param_id: IdMap::new("impl_"),
             special_types: RefCell::new(HashMap::new()),
-            type_map: TypeMap::new(),
+            type_map: TyMap::new(),
         }
     }
 
@@ -87,7 +82,7 @@ impl<'db> CodeGenerator<'db> {
 
 pub mod as_syntax_node_ptr {
 
-    use hir_def::nameres::ModuleSource;
+    use hir::ModuleSource;
     use syntax::ast::Impl;
     use syntax::{AstNode, AstPtr, SyntaxNode, SyntaxNodePtr};
 
@@ -249,27 +244,16 @@ impl<'db> CodeGenerator<'db> {
         // Compute implemented interfaces
         let mut trait_interfaces: Vec<String> = Vec::new();
         for &impl_ in impls {
-            if let Some(trait_) = impl_.trait_(db) {
-                let cs_iface = match AnyImplId::from(impl_) {
-                    AnyImplId::ImplId(impl_id) => {
-                        let args = db.impl_trait(impl_id).unwrap().skip_binder().args;
-                        self.trait_itf_cs1(trait_, args)
-                    }
-                    AnyImplId::BuiltinDeriveImplId(_) => {
-                        let self_ty = impl_.self_ty(db);
-                        let mut args = vec![self_ty.clone()];
+            //if let Some((trait_, args)) = impl_.trait_with_args(db) {
+            if let Some(trait_ref) = impl_.trait_ref(db) {
+                let trait_ = trait_ref.trait_();
+                let cs_iface = self.trait_itf_cs2(
+                    trait_ref.trait_(),
+                    trait_ref.generic_types(db).flatten().collect(),
+                );
 
-                        if self.lang_items.PartialEq == Some(trait_.into())
-                            || self.lang_items.PartialOrd == Some(trait_.into())
-                        {
-                            args.push(self_ty.clone());
-                        }
-
-                        self.trait_itf_cs2(trait_, args)
-                    }
-                };
                 trait_interfaces.push(cs_iface);
-                if self.lang_items.Ord == Some(trait_.into()) {
+                if self.lang_items.Ord() == Some(trait_) {
                     trait_interfaces.push(format!("System.IComparable<{cs_name}>"));
                 }
             }
@@ -491,7 +475,7 @@ impl<'db> CodeGenerator<'db> {
 
         if impl_
             .trait_(db)
-            .is_some_and(|x| self.lang_items.PartialOrd == Some(x.into()))
+            .is_some_and(|x| self.lang_items.PartialOrd() == Some(x))
         {
             let self_ty = impl_.self_ty(db);
             let self_ty_cs = self.rust_type_to_cs(&self_ty);
@@ -501,7 +485,7 @@ impl<'db> CodeGenerator<'db> {
             out.wln(fcode!("public static bool operator>=({self_ty_cs} self, {self_ty_cs} right) => self.m_PartialCmp(right).m_IsSomeAnd(x => x.m_IsGe());"));
         } else if impl_
             .trait_(db)
-            .is_some_and(|x| self.lang_items.Ord == Some(x.into()))
+            .is_some_and(|x| self.lang_items.Ord() == Some(x))
         {
             let self_ty = impl_.self_ty(db);
             let self_ty_cs = self.rust_type_to_cs(&self_ty);
@@ -510,7 +494,7 @@ impl<'db> CodeGenerator<'db> {
             ));
         } else if impl_
             .trait_(db)
-            .is_some_and(|x| self.lang_items.PartialEq == Some(x.into()))
+            .is_some_and(|x| self.lang_items.PartialEq() == Some(x))
         {
             let self_ty = impl_.self_ty(db);
             let self_ty_cs = self.rust_type_to_cs(&self_ty);

@@ -1,6 +1,6 @@
 use crate::codegen::CodeGenerator;
+use hir::ModuleSource;
 use hir::{HasContainer, ItemContainer};
-use hir_def::nameres::ModuleSource;
 use syntax::AstNode;
 
 /// Converts a Rust identifier to a C# identifier per the naming conventions.
@@ -113,8 +113,7 @@ impl CodeGenerator<'_> {
         let db = self.db;
         match function.container(db) {
             ItemContainer::Impl(impl_) => {
-                if impl_.trait_(db) == self.lang_items.Debug.map(Into::into)
-                    && function.name(db) == hir::sym::fmt
+                if impl_.trait_(db) == self.lang_items.Debug() && function.name(db) == hir::sym::fmt
                 {
                     return "DebugFmt".into();
                 }
@@ -132,9 +131,7 @@ impl CodeGenerator<'_> {
                 }
             }
             ItemContainer::Trait(trait_) => {
-                if Some(trait_) == self.lang_items.Debug.map(Into::into)
-                    && function.name(db) == hir::sym::fmt
-                {
+                if Some(trait_) == self.lang_items.Debug() && function.name(db) == hir::sym::fmt {
                     return "DebugFmt".into();
                 }
 
