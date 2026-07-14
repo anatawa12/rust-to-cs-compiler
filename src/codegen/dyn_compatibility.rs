@@ -1,5 +1,5 @@
 use crate::codegen::CodeGenerator;
-use crate::codegen::ty::{collect_assoc_type_params, ignored_trait, includes_type_in_type};
+use crate::codegen::ty::{collect_assoc_type_params, includes_type_in_type};
 use hir::db::HirDatabase;
 use itertools::Either;
 use ra_internal::*;

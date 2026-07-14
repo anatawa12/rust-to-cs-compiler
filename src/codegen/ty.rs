@@ -4,14 +4,15 @@ use crate::codegen::simple_extensions::{TraitExt, TypeExt as _};
 /// Converts Rust HIR types to C# type strings.
 use hir::db::HirDatabase;
 use hir::{
-    Adt, AssocItem, BuiltinType, GenericDef, GenericSubstitution, ItemContainer,
-    MethodViolationCode, Module, Name, Symbol, Trait, Type,
+    Adt, BuiltinType, GenericDef, GenericSubstitution, ItemContainer, Module, Name, Symbol, Trait,
+    Type,
 };
 use hir::{HasContainer, HasCrate, HirDisplay, sym};
 use itertools::Either;
 use ra_internal::*;
 use std::collections::HashMap;
 use std::fmt::Write;
+use std::iter;
 use std::ops::Not;
 use tracing::*;
 
@@ -20,6 +21,7 @@ impl<'db> CodeGenerator<'db> {
         self.rust_type_to_cs_inner(ty, true)
     }
 
+    #[tracing::instrument(skip(self, ty), fields(ty = %ty.debug_display(self.db)))]
     fn rust_type_to_cs_inner(&self, ty: &Type<'db>, apply_special: bool) -> String {
         let db = self.db;
         if ty.is_unit() {
@@ -142,33 +144,11 @@ impl<'db> CodeGenerator<'db> {
                 "object".to_string()
             } else {
                 let (trait_, args) = { traits }.swap_remove(0);
-                let rs_generic_args = args.into_iter().flatten().collect::<Vec<_>>();
+                let rs_generic_args =
+                    (iter::once(ty.clone()).chain(args.into_iter().flatten())).collect::<Vec<_>>();
 
-                let param_sources =
-                    self.generic_params_cs_sources(&GenericDef::from(trait_).params(db));
-                let mut cs_generic_args =
-                    self.map_type_param_source(&param_sources, &rs_generic_args);
-                for alias in trait_.assoc_types(db) {
-                    if is_omit_trait_assoc_type(db, alias) {
-                        continue;
-                    }
-                    match ty
-                        .normalize_trait_assoc_type(db, &rs_generic_args, alias)
-                        .map(|x| x.resolve_associated_type(db))
-                    {
-                        None => {
-                            eprintln!(
-                                "Failed to resolve type {alias} of {ty}",
-                                alias = alias.debug_display(self.db),
-                                ty = ty.debug_display(self.db)
-                            );
-                            cs_generic_args.push("void/* Type */".into());
-                        }
-                        Some(type_) => {
-                            cs_generic_args.push(self.rust_type_to_cs(&type_));
-                        }
-                    }
-                }
+                let param_sources = self.trait_generic_params_cs_sources(trait_);
+                let cs_generic_args = self.map_type_param_source(&param_sources, &rs_generic_args);
                 generic_args(self.trait_itf_cs(trait_), cs_generic_args)
             }
         } else if ty.is_error() {
@@ -318,7 +298,7 @@ impl CsTypeParamSource {
     }
 }
 
-fn generic_types(params: &[hir::GenericParam]) -> impl Iterator<Item = hir::TypeParam> {
+fn generic_types(params: &[hir::GenericParam]) -> impl Iterator<Item = hir::TypeParam> + Clone {
     (params.iter()).filter_map(|&x| variant_or_none!(x, hir::GenericParam::TypeParam))
 }
 
@@ -387,6 +367,22 @@ impl<'db> CodeGenerator<'db> {
         }
     }
 
+    pub fn trait_generic_params_cs_sources(&self, trait_: hir::Trait) -> Vec<CsTypeParamSource> {
+        let db = self.db;
+
+        let params = GenericDef::from(trait_).params(db);
+        let mut type_params = self.generic_params_cs_sources(&params);
+
+        for alias in trait_.assoc_types(db) {
+            if is_omit_trait_assoc_type(db, alias) {
+                continue;
+            }
+            type_params.push(CsTypeParamSource::AliasOfParam(0, vec![alias]));
+        }
+
+        type_params
+    }
+
     pub fn generic_params_cs_sources(
         &self,
         params: &[hir::GenericParam],
@@ -419,7 +415,7 @@ impl<'db> CodeGenerator<'db> {
                 type_params.push(CsTypeParamSource::TypeParam(index));
             }
 
-            for instance in collect_assoc_type_params(param, param.ty(db), self.db) {
+            for instance in collect_assoc_type_params(param, param.ty(db), db) {
                 let (param_instance, aliases) = instance.as_assoc_of_type_param(db).unwrap();
 
                 assert_eq!(param_instance, param);
@@ -546,6 +542,7 @@ fn collect_assoc_type_params_impl<'db>(
     );
     traits
         .into_iter()
+        .filter(|&(trait_, _)| !ignored_trait(trait_, db))
         .flat_map(move |(trait_, _)| trait_.assoc_types(db))
         .flat_map(move |alias| {
             let _scope = tracing::info_span!(
@@ -610,12 +607,14 @@ impl<'db> SpecialImplBounds<'db> {
 
 impl<'db> CodeGenerator<'db> {
     fn special_type_param(&self, param: hir::TypeParam) -> SpecialImplBounds<'db> {
+        let db = self.db;
         let _scope = tracing::info_span!(
             "special_type_param",
-            param = %param.debug_display(self.db),
+            param = %param.debug_display(db),
         )
         .entered();
-        let db = self.db;
+
+        let lang_items = LangItems::new(db, param.module(db).krate(db));
 
         if let bounds = param
             .trait_bounds_with_args(db)
@@ -624,24 +623,24 @@ impl<'db> CodeGenerator<'db> {
             .collect::<Vec<_>>()
             && let &[(trait_, ref args)] = bounds.as_slice()
         {
-            if Some(trait_) == self.lang_items.Fn()
-                || Some(trait_) == self.lang_items.FnMut()
-                || Some(trait_) == self.lang_items.FnOnce()
+            if Some(trait_) == lang_items.Fn()
+                || Some(trait_) == lang_items.FnMut()
+                || Some(trait_) == lang_items.FnOnce()
             {
                 assert_eq!(args.len(), 2); // one for self, one for parameters
                 let self_ty = &args[0];
                 let parameters = args[1].tuple_fields(db);
                 let output = self_ty
-                    .normalize_trait_assoc_type(db, args, self.lang_items.FnOnceOutput().unwrap())
+                    .normalize_trait_assoc_type(db, args, lang_items.FnOnceOutput().unwrap())
                     .expect("No output for fn");
                 let output = output.resolve_associated_type(db);
 
                 return SpecialImplBounds::Func(output, parameters);
-            } else if Some(trait_) == self.lang_items.Future() {
+            } else if Some(trait_) == lang_items.Future() {
                 assert_eq!(args.len(), 1); // one for self
                 let self_ty = &args[0];
                 let output = self_ty
-                    .normalize_trait_assoc_type(db, args, self.lang_items.FutureOutput().unwrap())
+                    .normalize_trait_assoc_type(db, args, lang_items.FutureOutput().unwrap())
                     .expect("No output for fn");
                 let output = output.resolve_associated_type(db);
 
