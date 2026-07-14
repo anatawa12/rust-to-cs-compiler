@@ -6,6 +6,7 @@ pub mod delay_format;
 mod impl_from;
 mod constructable;
 pub mod decl;
+mod dyn_compatibility;
 pub mod expr;
 mod id_map;
 pub mod names;
