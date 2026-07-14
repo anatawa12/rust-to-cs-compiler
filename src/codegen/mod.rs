@@ -510,13 +510,19 @@ impl<'db> CodeGenerator<'db> {
     }
 }
 
-fn generic_args(mut base: String, args: Vec<impl Into<String>>) -> String {
-    if args.is_empty() {
-        base
-    } else {
+fn generic_args(mut base: String, args: impl IntoIterator<Item = impl AsRef<str>>) -> String {
+    let mut iter = args.into_iter();
+
+    if let Some(arg) = iter.next() {
         base.push('<');
-        base.push_str(&args.into_iter().map(|x| x.into()).join(", "));
+        base.push_str(arg.as_ref());
+        for arg in iter {
+            base.push(',');
+            base.push(' ');
+            base.push_str(arg.as_ref());
+        }
         base.push('>');
-        base
     }
+
+    base
 }

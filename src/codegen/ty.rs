@@ -83,18 +83,13 @@ impl<'db> CodeGenerator<'db> {
                 return mapped;
             }
 
-            let cs_path = self.adt_name_cs(adt);
             let param_sources = self.generic_params_cs_sources(&GenericDef::from(adt).params(db));
-            let type_args = self.map_type_param_source(
-                &param_sources,
-                &args.into_iter().flatten().collect::<Vec<_>>(),
-            );
+            let args = args.into_iter().flatten().collect::<Vec<_>>();
+            let type_args = self
+                .map_type_param_source(&param_sources, &args)
+                .map(|x| self.rust_type_to_cs(&x));
 
-            if type_args.is_empty() {
-                cs_path
-            } else {
-                format!("{}<{}>", cs_path, type_args.join(", "))
-            }
+            generic_args(self.adt_name_cs(adt), type_args)
         } else if let Some(trait_) = ty.as_dyn_trait() {
             // dyn Trait → T_TraitName (dyn interface)
             self.trait_itf_cs(trait_)
@@ -148,7 +143,9 @@ impl<'db> CodeGenerator<'db> {
                     (iter::once(ty.clone()).chain(args.into_iter().flatten())).collect::<Vec<_>>();
 
                 let param_sources = self.trait_generic_params_cs_sources(trait_);
-                let cs_generic_args = self.map_type_param_source(&param_sources, &rs_generic_args);
+                let cs_generic_args = self
+                    .map_type_param_source(&param_sources, &rs_generic_args)
+                    .map(|x| self.rust_type_to_cs(&x));
                 generic_args(self.trait_itf_cs(trait_), cs_generic_args)
             }
         } else if ty.is_error() {
@@ -277,7 +274,10 @@ impl<'db> CodeGenerator<'db> {
         let instances = generic_types(params)
             .map(|param| param.ty(self.db))
             .collect::<Vec<_>>();
-        let type_params = self.map_type_param_source(&sources, &instances);
+        let type_params = self
+            .map_type_param_source(&sources, &instances)
+            .map(|x| self.rust_type_to_cs(&x))
+            .collect();
         let constraints = self.generic_params_cs_constraints(&sources, params);
 
         (type_params, constraints)
@@ -343,10 +343,7 @@ impl<'db> CodeGenerator<'db> {
 
                     assert!(!self.with_self_in_cs(trait_));
 
-                    let args = self
-                        .trait_type_args(trait_, &args[0], &args[1..])
-                        //.map(|t| self.rust_type_to_cs(&t))
-                        .collect::<Vec<_>>();
+                    let args = self.trait_type_args(trait_, args).collect::<Vec<_>>();
 
                     self.special_types.borrow_mut().insert(
                         param,
@@ -368,10 +365,21 @@ impl<'db> CodeGenerator<'db> {
     }
 
     pub fn trait_generic_params_cs_sources(&self, trait_: hir::Trait) -> Vec<CsTypeParamSource> {
+        self.trait_generic_params_cs_sources_impl(trait_, false)
+    }
+    fn trait_generic_params_cs_sources_impl(
+        &self,
+        trait_: hir::Trait,
+        exclude_self: bool,
+    ) -> Vec<CsTypeParamSource> {
         let db = self.db;
 
         let params = GenericDef::from(trait_).params(db);
         let mut type_params = self.generic_params_cs_sources(&params);
+
+        if !exclude_self && self.with_self_in_cs(trait_) {
+            type_params.insert(0, CsTypeParamSource::TypeParam(0));
+        }
 
         for alias in trait_.assoc_types(db) {
             if is_omit_trait_assoc_type(db, alias) {
@@ -443,13 +451,9 @@ impl<'db> CodeGenerator<'db> {
     pub fn map_type_param_source(
         &self,
         params: &[CsTypeParamSource],
-        instances: &[Type<'db>],
-    ) -> Vec<String> {
-        params
-            .iter()
-            .map(|x| self.resolve_cs_type_param_source(x, instances))
-            .map(|x| self.rust_type_to_cs(&x))
-            .collect()
+        instances: &[hir::Type<'db>],
+    ) -> impl Iterator<Item = hir::Type<'db>> {
+        (params.iter()).map(|x| self.resolve_cs_type_param_source(x, instances))
     }
 
     pub fn generic_params_cs_constraints(
@@ -479,15 +483,10 @@ impl<'db> CodeGenerator<'db> {
                         let mut cs_constraints = vec![];
                         for &(trait_, ref args) in &traits {
                             let args = self
-                                .trait_type_args(
-                                    trait_,
-                                    &args[0],
-                                    &args[(!self.with_self_in_cs(trait_)) as usize..],
-                                )
-                                .map(|t| self.rust_type_to_cs(&t))
-                                .collect::<Vec<_>>();
+                                .trait_type_args(trait_, args)
+                                .map(|t| self.rust_type_to_cs(&t));
 
-                            let constraint = self::generic_args(self.trait_itf_cs(trait_), args);
+                            let constraint = generic_args(self.trait_itf_cs(trait_), args);
                             cs_constraints.push(constraint);
                         }
                         constraints.push(format!("{name} : {}", cs_constraints.join(", ")));
@@ -502,22 +501,20 @@ impl<'db> CodeGenerator<'db> {
     pub fn trait_type_args(
         &self,
         trait_: Trait,
-        self_ty: &Type<'db>,
-        args: &[Type<'db>],
+        all_args: &[Type<'db>],
     ) -> impl Iterator<Item = Type<'db>> {
-        let generic_args = args.iter().cloned();
-        let assoc_types = trait_
-            .assoc_types(self.db)
+        self.trait_type_args_impl(trait_, all_args, false)
+    }
+    pub fn trait_type_args_impl(
+        &self,
+        trait_: Trait,
+        all_args: &[Type<'db>],
+        exclude_self: bool,
+    ) -> impl Iterator<Item = Type<'db>> {
+        let x = self.trait_generic_params_cs_sources_impl(trait_, exclude_self);
+        self.map_type_param_source(&x, all_args)
+            .collect::<Vec<_>>()
             .into_iter()
-            .filter(|&alias| !is_omit_trait_assoc_type(self.db, alias))
-            .map(|alias| {
-                self_ty
-                    .normalize_trait_assoc_type(self.db, &[], alias)
-                    .unwrap()
-                    .resolve_associated_type(self.db)
-            });
-
-        generic_args.chain(assoc_types)
     }
 }
 
@@ -756,9 +753,15 @@ impl<'db> CodeGenerator<'db> {
             .collect::<Vec<_>>();
         let param_sources = self.generic_params_cs_sources(&def.params(self.db));
         self.map_type_param_source(&param_sources, &type_params)
+            .map(|x| self.rust_type_to_cs(&x))
+            .collect()
     }
 
-    fn params(&self, types: &HashMap<&Symbol, &Type<'db>>, def: GenericDef) -> Vec<String> {
+    fn params(
+        &self,
+        types: &HashMap<&Symbol, &Type<'db>>,
+        def: GenericDef,
+    ) -> impl Iterator<Item = String> {
         let type_params = generic_types(&def.params(self.db))
             .map(|x| {
                 types
@@ -771,6 +774,9 @@ impl<'db> CodeGenerator<'db> {
             .collect::<Vec<_>>();
         let param_sources = self.generic_params_cs_sources(&def.params(self.db));
         self.map_type_param_source(&param_sources, &type_params)
+            .map(|x| self.rust_type_to_cs(&x))
+            .collect::<Vec<_>>()
+            .into_iter()
     }
 
     pub fn fn_path_cs1(&self, f: hir::Function, args: &[(Symbol, Type<'db>)]) -> String {
