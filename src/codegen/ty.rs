@@ -635,7 +635,7 @@ impl<'db> CodeGenerator<'db> {
                     .normalize_trait_assoc_type(
                         db,
                         args,
-                        self.lang_items.FnOnceOutput().unwrap().into(),
+                        self.lang_items.FnOnceOutput().unwrap(),
                     )
                     .expect("No output for fn");
                 let output = output.resolve_associated_type(db);
@@ -648,7 +648,7 @@ impl<'db> CodeGenerator<'db> {
                     .normalize_trait_assoc_type(
                         db,
                         args,
-                        self.lang_items.FutureOutput().unwrap().into(),
+                        self.lang_items.FutureOutput().unwrap(),
                     )
                     .expect("No output for fn");
                 let output = output.resolve_associated_type(db);
@@ -760,7 +760,7 @@ impl<'db> CodeGenerator<'db> {
         let type_params = generic_types(&def.params(self.db))
             .enumerate()
             .map(|(i, _)| {
-                (types.get(i).cloned()).unwrap_or_else(|| Type::error(self.db, self.krate.into()))
+                (types.get(i).cloned()).unwrap_or_else(|| Type::error(self.db, self.krate))
             })
             .collect::<Vec<_>>();
         let param_sources = self.generic_params_cs_sources(&def.params(self.db));
@@ -775,7 +775,7 @@ impl<'db> CodeGenerator<'db> {
                     .copied()
                     .cloned()
                     .or_else(|| x.default(self.db))
-                    .unwrap_or_else(|| Type::error(self.db, self.krate.into()))
+                    .unwrap_or_else(|| Type::error(self.db, self.krate))
             })
             .collect::<Vec<_>>();
         let param_sources = self.generic_params_cs_sources(&def.params(self.db));
@@ -1047,7 +1047,7 @@ impl<'db> CodeGenerator<'db> {
         if trait_
             .all_supertraits(db)
             .iter()
-            .any(|&x| Some(x.into()) == self.lang_items.Sized())
+            .any(|&x| Some(x) == self.lang_items.Sized())
         {
             cb(DynCompatibilityViolation::SizedSelf);
         }
@@ -1070,7 +1070,7 @@ impl<'db> CodeGenerator<'db> {
             }
 
             match assoc_item {
-                AssocItem::Const(it) => cb(DynCompatibilityViolation::AssocConst(it.into())),
+                AssocItem::Const(it) => cb(DynCompatibilityViolation::AssocConst(it)),
                 AssocItem::Function(it) => {
                     let _scope = tracing::info_span!(
                         "dyn_compatibility_all_violations_alt for fn",
