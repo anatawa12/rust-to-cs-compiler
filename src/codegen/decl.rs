@@ -116,7 +116,7 @@ impl<'db> CodeGenerator<'db> {
             out.wln("// dyn compatible");
         }
 
-        for a in t.assoc_types(db) {
+        for a in t.assoc_types_for_cs(db) {
             let a_name = names::assoc_type_param(a.name(db).as_str());
             all_params.push(a_name);
         }

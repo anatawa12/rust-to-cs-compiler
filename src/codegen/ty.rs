@@ -1,4 +1,5 @@
 pub mod generic_params;
+pub mod trait_assoc_types;
 
 use super::{CodeGenerator, generic_args, names};
 use crate::codegen::constructable::{Constructable, ConstructableDef};
@@ -787,17 +788,6 @@ impl<'db> CodeGenerator<'db> {
             //}
         }
     }
-}
-
-fn is_omit_trait_assoc_type(db: &dyn HirDatabase, alias: hir::TypeAlias) -> bool {
-    let trait_ = match alias.container(db) {
-        ItemContainer::Trait(t) => t,
-        _ => panic!(),
-    };
-    if trait_.name(db).symbol() == &sym::IntoIterator && alias.name(db).symbol() == &sym::IntoIter {
-        return true;
-    }
-    false
 }
 
 pub fn includes_type_in_type<'db>(
