@@ -3,12 +3,14 @@ mod type_to_string;
 
 use super::internal::{TyExt, TyFromType};
 use crate::ty::type_to_string::TypeToString;
+use hir_def::HasModule;
 use hir_ty::db::HirDatabase;
 use hir_ty::next_solver::{
-    AliasTy, ClauseKind, DbInterner, ErrorGuaranteed, GenericArgs, SolverDefId, Ty, TyKind,
+    AliasTy, Clause, ClauseKind, DbInterner, ErrorGuaranteed, GenericArg, GenericArgs, SolverDefId,
+    TraitRef, Ty, TyKind,
 };
-use rustc_type_ir::AliasTyKind;
-use rustc_type_ir::inherent::IntoKind;
+use rustc_type_ir::inherent::{GenericArg as _, IntoKind};
+use rustc_type_ir::{AliasTyKind, Upcast};
 
 pub trait TypeExt<'db> {
     fn error(db: &'db dyn HirDatabase, krate: hir::Crate) -> Self;
@@ -55,18 +57,20 @@ impl<'db> TypeExt<'db> for hir::Type<'db> {
         &self,
         db: &'db dyn HirDatabase,
     ) -> Option<Vec<(hir::Trait, Vec<Option<hir::Type<'db>>>)>> {
-        self.ns_ty().impl_trait_bounds(db).map(|it| {
+        impl_trait_bounds(self.ns_ty(), db).map(|it| {
             it.into_iter()
                 .filter_map(|pred| match pred.kind().skip_binder() {
-                    ClauseKind::Trait(trait_ref) => Some((
-                        hir::Trait::from(trait_ref.def_id().0),
-                        trait_ref
-                            .trait_ref
+                    ClauseKind::Trait(trait_ref) => {
+                        let trait_ref = trait_ref.trait_ref;
+
+                        let types = trait_ref
                             .args
+                            .as_slice()
                             .iter()
-                            .map(|arg| Some(self.derived(arg.ty()?)))
-                            .collect(),
-                    )),
+                            ./*flat_*/map(|arg| Some(self.derived(arg.as_type()?)))
+                            .collect::<Vec<_>>();
+                        Some((hir::Trait::from(trait_ref.def_id.0), types))
+                    }
                     _ => None,
                 })
                 .collect()
@@ -129,5 +133,31 @@ impl<'db> TypeExt<'db> for hir::Type<'db> {
                 f,
             )
         })
+    }
+}
+
+fn impl_trait_bounds<'db>(ty: Ty<'db>, db: &'db dyn HirDatabase) -> Option<Vec<Clause<'db>>> {
+    if let TyKind::Coroutine(coroutine_id, _args) = ty.kind() {
+        // impl_trait_bounds returns TraitRef without self type specified
+        let interner = DbInterner::new_no_crate(db);
+
+        let owner = coroutine_id.0.loc(db).owner;
+        let krate = owner.krate(db);
+        if let Some(future_trait) = hir_def::lang_item::lang_items(db, krate).Future {
+            // This is only used by type walking.
+            // Parameters will be walked outside, and projection predicate is not used.
+            // So just provide the Future trait.
+            let impl_bound = TraitRef::new_from_args(
+                interner,
+                future_trait.into(),
+                GenericArgs::new_from_slice(&[GenericArg::from(ty)]),
+            )
+            .upcast(interner);
+            Some(vec![impl_bound])
+        } else {
+            None
+        }
+    } else {
+        ty.impl_trait_bounds(db)
     }
 }

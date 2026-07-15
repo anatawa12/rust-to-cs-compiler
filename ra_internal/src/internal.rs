@@ -199,8 +199,7 @@ pub(crate) fn parse_bounds_for<'db>(
                         .args
                         .as_slice()
                         .iter()
-                        .flat_map(|arg| arg.as_type())
-                        .map(|ty| target_type.derived(ty))
+                        .flat_map(|arg| Some(target_type.derived(arg.as_type()?)))
                         .collect();
                     (hir::Trait::from(trait_ref.def_id.0), types)
                 }

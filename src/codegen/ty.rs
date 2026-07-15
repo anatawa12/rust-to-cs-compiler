@@ -86,12 +86,15 @@ impl<'db> CodeGenerator<'db> {
                 return mapped;
             }
 
-            let param_sources = self.generic_params_cs_sources(adt.into());
-            let args = args.into_iter().flatten().collect::<Vec<_>>();
-            let type_args =
-                map_type_param_source(&param_sources, &args, db).map(|x| self.rust_type_to_cs(&x));
-
-            generic_args(self.adt_name_cs(adt), type_args)
+            generic_args(
+                self.adt_name_cs(adt),
+                map_type_param_source(
+                    &self.generic_params_cs_sources(adt.into()),
+                    &args.into_iter().flatten().collect::<Vec<_>>(),
+                    db,
+                )
+                .map(|x| self.rust_type_to_cs(&x)),
+            )
         } else if let Some(trait_) = ty.as_dyn_trait() {
             // dyn Trait → T_TraitName (dyn interface)
             self.trait_itf_cs(trait_)
@@ -141,14 +144,12 @@ impl<'db> CodeGenerator<'db> {
                 "object".to_string()
             } else {
                 let (trait_, args) = { traits }.swap_remove(0);
-                let rs_generic_args =
-                    (iter::once(ty.clone()).chain(args.into_iter().flatten())).collect::<Vec<_>>();
 
                 generic_args(
                     self.trait_itf_cs(trait_),
                     map_type_param_source(
                         &self.generic_params_cs_sources(trait_.into()),
-                        &rs_generic_args,
+                        &args.into_iter().flatten().collect::<Vec<_>>(),
                         db,
                     )
                     .map(|x| self.rust_type_to_cs(&x)),
