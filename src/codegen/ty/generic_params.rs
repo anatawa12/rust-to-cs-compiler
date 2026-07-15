@@ -1,7 +1,23 @@
 use crate::codegen::CodeGenerator;
 use crate::codegen::simple_extensions::{TraitExt, TypeExt, TypeParamExt};
+use crate::codegen::ty::generic_types;
 use crate::codegen::ty::trait_assoc_types::collect_assoc_type_params;
-use crate::codegen::ty::{CsTypeParamSource, generic_types};
+use hir::db::HirDatabase;
+use ra_internal::*;
+
+pub enum CsTypeParamSource {
+    TypeParam(usize),
+    AliasOfParam(usize, Vec<hir::TypeAlias>),
+}
+
+impl CsTypeParamSource {
+    pub fn index(&self) -> usize {
+        match *self {
+            CsTypeParamSource::TypeParam(idx) => idx,
+            CsTypeParamSource::AliasOfParam(idx, _) => idx,
+        }
+    }
+}
 
 impl<'db> CodeGenerator<'db> {
     pub fn trait_generic_params_cs_sources(&self, trait_: hir::Trait) -> Vec<CsTypeParamSource> {
@@ -49,4 +65,25 @@ impl<'db> CodeGenerator<'db> {
 
         type_params
     }
+}
+
+pub fn resolve_cs_type_param_source<'db>(
+    source: &CsTypeParamSource,
+    generic_types: &[hir::Type<'db>],
+    db: &'db dyn HirDatabase,
+) -> hir::Type<'db> {
+    match *source {
+        CsTypeParamSource::TypeParam(i) => generic_types[i].clone(),
+        CsTypeParamSource::AliasOfParam(i, ref alias) => {
+            generic_types[i].new_associated_type(alias, db)
+        }
+    }
+}
+
+pub fn map_type_param_source<'db>(
+    params: &[CsTypeParamSource],
+    instances: &[hir::Type<'db>],
+    db: &'db dyn HirDatabase,
+) -> impl Iterator<Item = hir::Type<'db>> {
+    (params.iter()).map(|x| resolve_cs_type_param_source(x, instances, db))
 }

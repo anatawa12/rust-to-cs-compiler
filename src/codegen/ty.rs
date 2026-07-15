@@ -4,6 +4,7 @@ pub mod trait_assoc_types;
 use super::{CodeGenerator, generic_args, names};
 use crate::codegen::constructable::{Constructable, ConstructableDef};
 use crate::codegen::simple_extensions::TypeExt as _;
+use crate::codegen::ty::generic_params::{map_type_param_source, resolve_cs_type_param_source};
 /// Converts Rust HIR types to C# type strings.
 use hir::db::HirDatabase;
 use hir::{
@@ -87,9 +88,8 @@ impl<'db> CodeGenerator<'db> {
 
             let param_sources = self.generic_params_cs_sources(&GenericDef::from(adt).params(db));
             let args = args.into_iter().flatten().collect::<Vec<_>>();
-            let type_args = self
-                .map_type_param_source(&param_sources, &args)
-                .map(|x| self.rust_type_to_cs(&x));
+            let type_args =
+                map_type_param_source(&param_sources, &args, db).map(|x| self.rust_type_to_cs(&x));
 
             generic_args(self.adt_name_cs(adt), type_args)
         } else if let Some(trait_) = ty.as_dyn_trait() {
@@ -146,9 +146,10 @@ impl<'db> CodeGenerator<'db> {
 
                 generic_args(
                     self.trait_itf_cs(trait_),
-                    self.map_type_param_source(
+                    map_type_param_source(
                         &self.trait_generic_params_cs_sources(trait_),
                         &rs_generic_args,
+                        db,
                     )
                     .map(|x| self.rust_type_to_cs(&x)),
                 )
@@ -279,27 +280,12 @@ impl<'db> CodeGenerator<'db> {
         let instances = generic_types(params)
             .map(|param| param.ty(self.db))
             .collect::<Vec<_>>();
-        let type_params = self
-            .map_type_param_source(&sources, &instances)
+        let type_params = map_type_param_source(&sources, &instances, self.db)
             .map(|x| self.rust_type_to_cs(&x))
             .collect();
         let constraints = self.generic_params_cs_constraints(&sources, params);
 
         (type_params, constraints)
-    }
-}
-
-pub enum CsTypeParamSource {
-    TypeParam(usize),
-    AliasOfParam(usize, Vec<hir::TypeAlias>),
-}
-
-impl CsTypeParamSource {
-    pub fn index(&self) -> usize {
-        match *self {
-            CsTypeParamSource::TypeParam(idx) => idx,
-            CsTypeParamSource::AliasOfParam(idx, _) => idx,
-        }
     }
 }
 
@@ -348,9 +334,12 @@ impl<'db> CodeGenerator<'db> {
 
                     assert!(!self.with_self_in_cs(trait_));
 
-                    let args_types = self
-                        .map_type_param_source(&self.trait_generic_params_cs_sources(trait_), args)
-                        .collect::<Vec<_>>();
+                    let args_types = map_type_param_source(
+                        &self.trait_generic_params_cs_sources(trait_),
+                        args,
+                        db,
+                    )
+                    .collect::<Vec<_>>();
 
                     self.special_types.borrow_mut().insert(
                         param,
@@ -371,30 +360,9 @@ impl<'db> CodeGenerator<'db> {
         }
     }
 
-    pub fn resolve_cs_type_param_source(
-        &self,
-        source: &CsTypeParamSource,
-        generic_types: &[Type<'db>],
-    ) -> Type<'db> {
-        match *source {
-            CsTypeParamSource::TypeParam(i) => generic_types[i].clone(),
-            CsTypeParamSource::AliasOfParam(i, ref alias) => {
-                generic_types[i].new_associated_type(alias, self.db)
-            }
-        }
-    }
-
-    pub fn map_type_param_source(
-        &self,
-        params: &[CsTypeParamSource],
-        instances: &[hir::Type<'db>],
-    ) -> impl Iterator<Item = hir::Type<'db>> {
-        (params.iter()).map(|x| self.resolve_cs_type_param_source(x, instances))
-    }
-
     pub fn generic_params_cs_constraints(
         &self,
-        cs_sources: &[CsTypeParamSource],
+        cs_sources: &[generic_params::CsTypeParamSource],
         params: &[hir::GenericParam],
     ) -> Vec<String> {
         let db = self.db;
@@ -405,7 +373,7 @@ impl<'db> CodeGenerator<'db> {
         let types = type_prams.iter().map(|x| x.ty(db)).collect::<Vec<_>>();
 
         for source in cs_sources {
-            let param_type = self.resolve_cs_type_param_source(source, &types);
+            let param_type = resolve_cs_type_param_source(source, &types, db);
             let param = type_prams[source.index()];
 
             let name = self.rust_type_to_cs(&param_type);
@@ -420,9 +388,10 @@ impl<'db> CodeGenerator<'db> {
                         for &(trait_, ref args) in &traits {
                             cs_constraints.push(generic_args(
                                 self.trait_itf_cs(trait_),
-                                self.map_type_param_source(
+                                map_type_param_source(
                                     &self.trait_generic_params_cs_sources(trait_),
                                     args,
+                                    db,
                                 )
                                 .map(|t| self.rust_type_to_cs(&t)),
                             ));
@@ -557,7 +526,7 @@ impl<'db> CodeGenerator<'db> {
             })
             .collect::<Vec<_>>();
         let param_sources = self.generic_params_cs_sources(&def.params(self.db));
-        self.map_type_param_source(&param_sources, &type_params)
+        map_type_param_source(&param_sources, &type_params, self.db)
             .map(|x| self.rust_type_to_cs(&x))
             .collect()
     }
@@ -567,18 +536,19 @@ impl<'db> CodeGenerator<'db> {
         types: &HashMap<&Symbol, &Type<'db>>,
         def: GenericDef,
     ) -> impl Iterator<Item = String> {
-        let type_params = generic_types(&def.params(self.db))
+        let db = self.db;
+        let type_params = generic_types(&def.params(db))
             .map(|x| {
                 types
                     .get(x.name(self.db).symbol())
                     .copied()
                     .cloned()
                     .or_else(|| x.default(self.db))
-                    .unwrap_or_else(|| Type::error(self.db, self.krate))
+                    .unwrap_or_else(|| Type::error(db, self.krate))
             })
             .collect::<Vec<_>>();
-        let param_sources = self.generic_params_cs_sources(&def.params(self.db));
-        self.map_type_param_source(&param_sources, &type_params)
+        let param_sources = self.generic_params_cs_sources(&def.params(db));
+        map_type_param_source(&param_sources, &type_params, db)
             .map(|x| self.rust_type_to_cs(&x))
             .collect::<Vec<_>>()
             .into_iter()

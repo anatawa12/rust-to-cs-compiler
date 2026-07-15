@@ -20,6 +20,7 @@ use crate::codegen::decl::{
 };
 use crate::codegen::delay_format::DelayedFormatString;
 use crate::codegen::id_map::IdMap;
+use crate::codegen::ty::generic_params::map_type_param_source;
 use hir::{
     Adt, AssocItem, Crate, GenericDef, Impl, InFile, Module, ModuleDef, Semantics, StructKind,
     Type, TypeParam, db::HirDatabase,
@@ -249,9 +250,10 @@ impl<'db> CodeGenerator<'db> {
                 let trait_ = trait_ref.trait_();
                 let cs_iface = generic_args(
                     self.trait_itf_cs(trait_),
-                    self.map_type_param_source(
+                    map_type_param_source(
                         &self.trait_generic_params_cs_sources(trait_),
                         &trait_ref.generic_types(db).flatten().collect::<Vec<_>>(),
+                        db,
                     )
                     .map(|x| self.rust_type_to_cs(&x)),
                 );
