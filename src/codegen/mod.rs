@@ -30,7 +30,6 @@ use crate::codegen::decl::{
 };
 use crate::codegen::delay_format::DelayedFormatString;
 use crate::codegen::id_map::IdMap;
-use crate::codegen::ty::generic_params::map_type_param_source;
 use hir::{
     Adt, AssocItem, Crate, GenericDef, Impl, InFile, Module, ModuleDef, Semantics, StructKind,
     Type, TypeParam, db::HirDatabase,
@@ -257,15 +256,7 @@ impl<'db> CodeGenerator<'db> {
             //if let Some((trait_, args)) = impl_.trait_with_args(db) {
             if let Some(trait_ref) = impl_.trait_ref(db) {
                 let trait_ = trait_ref.trait_();
-                let cs_iface = generic_args(
-                    self.trait_itf_cs(trait_),
-                    map_type_param_source(
-                        &self.generic_params_cs_sources(trait_.into()),
-                        &trait_ref.generic_types(db).flatten().collect::<Vec<_>>(),
-                        db,
-                    )
-                    .map(|x| self.rust_type_to_cs(&x)),
-                );
+                let cs_iface = self.cs_path_with_args(trait_, trait_ref.generic_types(db));
 
                 trait_interfaces.push(cs_iface);
                 if self.lang_items.Ord() == Some(trait_) {
