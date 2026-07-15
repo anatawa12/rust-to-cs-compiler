@@ -1,7 +1,8 @@
 //! Extensions for the `hir` crate types without any non-hir crate types
 
 use hir::db::HirDatabase;
-use hir::{Adt, Trait, Type};
+use hir::next_solver::Ty;
+use hir::{Adt, Trait, Type, sym};
 use ra_internal::*;
 
 pub trait TraitExt {
@@ -65,5 +66,29 @@ impl<'db> TypeExt<'db> for Type<'db> {
         } else {
             None
         }
+    }
+}
+
+pub trait TypeParamExt<'db> {
+    fn is_self(&self, db: &dyn HirDatabase) -> bool;
+    /// Returns true if the type parameter is removed in C# code
+    fn is_ignored(&self, db: &dyn HirDatabase) -> bool;
+}
+
+impl TypeParamExt<'_> for hir::TypeParam {
+    fn is_self(&self, db: &dyn HirDatabase) -> bool {
+        self.is_implicit(db) && self.name(db) == sym::Self_
+    }
+
+    fn is_ignored(&self, db: &dyn HirDatabase) -> bool {
+        self.is_self(db)
+            || self.is_unstable(db)
+            || self
+                .default(db)
+                .and_then(|x| x.as_adt())
+                .map(|x| x.name(db))
+                .as_ref()
+                .map(|x| x.as_str())
+                == Some("RandomState")
     }
 }

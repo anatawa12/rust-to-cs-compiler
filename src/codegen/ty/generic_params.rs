@@ -1,5 +1,5 @@
 use crate::codegen::CodeGenerator;
-use crate::codegen::simple_extensions::{TraitExt, TypeExt};
+use crate::codegen::simple_extensions::{TraitExt, TypeExt, TypeParamExt};
 use crate::codegen::ty::{
     CsTypeParamSource, generic_types, ignored_trait, is_omit_trait_assoc_type,
 };
@@ -34,39 +34,16 @@ impl<'db> CodeGenerator<'db> {
         &self,
         params: &[hir::GenericParam],
     ) -> Vec<CsTypeParamSource> {
-        self.generic_params_cs_sources_impl(params, false)
-    }
-
-    pub fn generic_params_cs_sources_impl(
-        &self,
-        params: &[hir::GenericParam],
-        assoc_only: bool,
-    ) -> Vec<CsTypeParamSource> {
         let db = self.db;
 
         let mut type_params = Vec::new();
 
         for (index, param) in generic_types(params).enumerate() {
-            if param.is_implicit(db) && param.name(db) == sym::Self_ {
+            if param.is_ignored(db) {
                 continue;
             }
 
-            if param.is_unstable(db) {
-                continue;
-            }
-
-            if param
-                .default(db)
-                .and_then(|x| x.as_adt())
-                .map(|x| x.name(db))
-                .as_ref()
-                .map(|x| x.as_str())
-                == Some("RandomState")
-            {
-                continue;
-            }
-
-            if !assoc_only && !self.special_type_param(param).is_special_impl() {
+            if !self.special_type_param(param).is_special_impl() {
                 type_params.push(CsTypeParamSource::TypeParam(index));
             }
 

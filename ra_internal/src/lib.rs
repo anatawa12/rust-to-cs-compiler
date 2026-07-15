@@ -31,3 +31,4 @@ pub use type_param::*;
 
 pub use crate::TraitExt as _;
 pub use crate::TypeExt as _;
+pub use crate::TypeParamExt as _;

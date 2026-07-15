@@ -1,11 +1,13 @@
 use crate::codegen::CodeGenerator;
-use crate::codegen::ty::{generic_types, includes_type_in_type};
+use crate::codegen::ty::{CsTypeParamSource, generic_types, includes_type_in_type};
 use hir::db::HirDatabase;
 use itertools::Either;
 use ra_internal::*;
 use std::ops::Not;
 use tracing::trace;
 
+use crate::codegen::simple_extensions::{TypeExt, TypeParamExt};
+use crate::codegen::ty::generic_params::collect_assoc_type_params;
 pub use hir::MethodViolationCode;
 use hir::sym;
 
@@ -177,17 +179,21 @@ impl<'db> CodeGenerator<'db> {
     ) -> bool {
         let db = self.db;
 
-        let type_prams = generic_types(params).collect::<Vec<_>>();
-        let types = type_prams.iter().map(|x| x.ty(db)).collect::<Vec<_>>();
+        generic_types(params)
+            .filter(|param| param.is_ignored(db).not())
+            .flat_map(|param| {
+                collect_assoc_type_params(param, param.ty(db), db).map(move |instance| {
+                    let (param_instance, aliases) = instance.as_assoc_of_type_param(db).unwrap();
 
-        self.generic_params_cs_sources_impl(params, true)
-            .iter()
-            .flat_map(|source| {
-                let param_type = self.resolve_cs_type_param_source(source, &types);
+                    assert_eq!(param_instance, param);
 
-                match type_prams[source.index()]
-                    .trait_bounds_of_nested_type_with_args(&param_type, db)
-                {
+                    (param, aliases.clone())
+                })
+            })
+            .flat_map(|(param, aliases)| {
+                let param_type = param.ty(db).new_associated_type(&aliases, db);
+
+                match param.trait_bounds_of_nested_type_with_args(&param_type, db) {
                     Either::Right(_) => Vec::new(),
                     Either::Left(traits) => traits,
                 }
