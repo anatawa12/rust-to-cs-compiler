@@ -1,11 +1,9 @@
 use super::{CodeGenerator, expr::BodyGen, names, output::Code};
 use crate::codegen::expr::ItemInBody;
-use crate::codegen::simple_extensions::TraitExt;
 use cfg::CfgExpr;
 /// Generates C# type declarations from Rust HIR types.
 use hir::{
-    Adt, AssocItem, GenericDef, HasAttrs, HasContainer, HasCrate, HasSource, Impl, ItemContainer,
-    Trait, db::HirDatabase,
+    Adt, AssocItem, HasAttrs, HasContainer, HasCrate, HasSource, Impl, Trait, db::HirDatabase,
 };
 use ra_internal::*;
 use std::collections::HashMap;
@@ -105,8 +103,7 @@ impl<'db> CodeGenerator<'db> {
         let cs_iface = names::trait_name(name.as_str());
         let _cs_dyn_iface = names::dyn_trait_name(name.as_str());
 
-        let gen_params = GenericDef::from(t).params(db);
-        let (mut all_params, mut constraints) = self.generic_params_cs(&gen_params);
+        let (all_params, mut constraints) = self.generic_def_params_cs(t.into());
 
         if let Some(compatibility) = t.dyn_compatibility_all_violations(db) {
             for x in compatibility {
@@ -116,14 +113,8 @@ impl<'db> CodeGenerator<'db> {
             out.wln("// dyn compatible");
         }
 
-        for a in t.assoc_types_for_cs(db) {
-            let a_name = names::assoc_type_param(a.name(db).as_str());
-            all_params.push(a_name);
-        }
-
         // For non-dyn compatible trait, we insert 'Self' type parameter
         if self.with_self_in_cs(t) {
-            all_params.insert(0, "P_Self".into());
             constraints.push(format!("P_Self : {}<{}>", cs_iface, all_params.join(", ")));
         }
 
@@ -166,8 +157,7 @@ impl<'db> CodeGenerator<'db> {
     fn emit_trait_method_sig(&self, out: &mut Code, f: hir::Function) {
         let db = self.db;
 
-        let gen_params = GenericDef::from(f).params(db);
-        let (all_params, _constraints) = self.generic_params_cs(&gen_params);
+        let (all_params, _constraints) = self.generic_def_params_cs(f.into());
 
         let is_async = f.is_async(db);
         let ret_ty = f.ret_type(db);
@@ -201,24 +191,7 @@ impl<'db> CodeGenerator<'db> {
             return;
         }
 
-        let gen_params = if let ItemContainer::Impl(impl_) = f.container(db)
-            && let Some(trait_) = impl_.trait_(db)
-            && Some(trait_) == self.lang_items.Hash()
-            && f.name(db) == hir::sym::hash
-        {
-            // it's hash. Derive method has <H> but `GenericDef::from` returns empty array
-            // so we retrieve the H from parameter instead of GenericDef
-            let param = f.params_without_self(db).swap_remove(0);
-            let param_type = param.ty();
-            let param_type = param_type.remove_ref().unwrap();
-            let type_param = param_type
-                .as_type_param(db)
-                .unwrap_or_else(|| panic!("type {param_type:?} is not type_param"));
-            vec![type_param.into()]
-        } else {
-            GenericDef::from(f).params(db)
-        };
-        let (tp_names, constraints) = self.generic_params_cs(&gen_params);
+        let (tp_names, constraints) = self.generic_def_params_cs(f.into());
         let generics = self.format_generics(&tp_names);
 
         let is_async = f.is_async(db);

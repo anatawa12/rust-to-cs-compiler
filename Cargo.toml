@@ -19,8 +19,14 @@ itertools.workspace = true
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tracing-panic = "0.1.2"
 
+[lints]
+workspace = true
+
 [workspace]
 members = [".", "ra_internal"]
+
+[workspace.lints.clippy]
+disallowed_methods = "deny"
 
 [workspace.dependencies]
 # ra-ap

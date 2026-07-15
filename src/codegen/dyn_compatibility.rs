@@ -6,7 +6,7 @@ use ra_internal::*;
 use std::ops::Not;
 use tracing::trace;
 
-use crate::codegen::simple_extensions::{TypeExt, TypeParamExt};
+use crate::codegen::simple_extensions::*;
 use crate::codegen::ty::trait_assoc_types::collect_assoc_type_params;
 pub use hir::MethodViolationCode;
 use hir::{HasCrate, sym};
@@ -99,7 +99,7 @@ fn dyn_compatibility_all_violations_alt(
         }
     }
 
-    fn predicates_reference_self<'db>(db: &'db dyn HirDatabase, trait_: hir::Trait) -> bool {
+    fn predicates_reference_self(db: &dyn HirDatabase, trait_: hir::Trait) -> bool {
         trait_.predicate_types(db).any(|type_| {
             includes_type_in_type(&type_, db, &|ty| {
                 if let Some(param) = ty.as_type_param(db) {
@@ -163,7 +163,7 @@ fn virtual_call_violations_for_method<'db, F>(
         cb(MethodViolationCode::ReferencesSelfOutput);
     }
 
-    let params = hir::GenericDef::from(func).params(db);
+    let params = hir::GenericDef::from(func).params0(db);
 
     if includes_type_in_generic_params_cs_constraints(&params, &is_self_ty, db) {
         cb(MethodViolationCode::WhereClauseReferencesSelf);

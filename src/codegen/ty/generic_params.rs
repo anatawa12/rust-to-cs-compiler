@@ -1,5 +1,5 @@
 use crate::codegen::CodeGenerator;
-use crate::codegen::simple_extensions::{TraitExt, TypeExt, TypeParamExt};
+use crate::codegen::simple_extensions::*;
 use crate::codegen::ty::generic_types;
 use crate::codegen::ty::trait_assoc_types::collect_assoc_type_params;
 use hir::db::HirDatabase;
@@ -20,32 +20,18 @@ impl CsTypeParamSource {
 }
 
 impl<'db> CodeGenerator<'db> {
-    pub fn trait_generic_params_cs_sources(&self, trait_: hir::Trait) -> Vec<CsTypeParamSource> {
-        let db = self.db;
-
-        let params = hir::GenericDef::from(trait_).params(db);
-        let mut type_params = self.generic_params_cs_sources(&params);
-
-        if self.with_self_in_cs(trait_) {
-            type_params.insert(0, CsTypeParamSource::TypeParam(0));
-        }
-
-        for alias in trait_.assoc_types_for_cs(db) {
-            type_params.push(CsTypeParamSource::AliasOfParam(0, vec![alias]));
-        }
-
-        type_params
-    }
-
-    pub fn generic_params_cs_sources(
-        &self,
-        params: &[hir::GenericParam],
-    ) -> Vec<CsTypeParamSource> {
+    pub fn generic_params_cs_sources(&self, def: hir::GenericDef) -> Vec<CsTypeParamSource> {
         let db = self.db;
 
         let mut type_params = Vec::new();
 
-        for (index, param) in generic_types(params).enumerate() {
+        if let hir::GenericDef::Trait(trait_) = def
+            && self.with_self_in_cs(trait_)
+        {
+            type_params.insert(0, CsTypeParamSource::TypeParam(0));
+        }
+
+        for (index, param) in generic_types(&def.params0(db)).enumerate() {
             if param.is_ignored(db) {
                 continue;
             }
@@ -60,6 +46,12 @@ impl<'db> CodeGenerator<'db> {
                 assert_eq!(param_instance, param);
 
                 type_params.push(CsTypeParamSource::AliasOfParam(index, aliases.clone()));
+            }
+        }
+
+        if let hir::GenericDef::Trait(trait_) = def {
+            for alias in trait_.assoc_types_for_cs(db) {
+                type_params.push(CsTypeParamSource::AliasOfParam(0, vec![alias]));
             }
         }
 

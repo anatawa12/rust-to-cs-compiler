@@ -1,7 +1,7 @@
 //! Extensions for the `hir` crate types without any non-hir crate types
 
 use hir::db::HirDatabase;
-use hir::{Adt, HasContainer, ItemContainer, Trait, Type, sym};
+use hir::{Adt, GenericDef, HasContainer, HasCrate, ItemContainer, Trait, Type, sym};
 use ra_internal::*;
 
 pub trait TraitExt {
@@ -103,5 +103,33 @@ impl TypeParamExt<'_> for hir::TypeParam {
                 .as_ref()
                 .map(|x| x.as_str())
                 == Some("RandomState")
+    }
+}
+
+pub trait GenericDefExt {
+    fn params0(self, db: &dyn HirDatabase) -> Vec<hir::GenericParam>;
+}
+
+impl GenericDefExt for GenericDef {
+    fn params0(self, db: &dyn HirDatabase) -> Vec<hir::GenericParam> {
+        if let GenericDef::Function(f) = self
+            && let ItemContainer::Impl(impl_) = f.container(db)
+            && let Some(trait_) = impl_.trait_(db)
+            && Some(trait_) == LangItems::new(db, trait_.krate(db)).Hash()
+            && f.name(db) == sym::hash
+        {
+            // it's hash. Derive method has <H> but `GenericDef::from` returns empty array for
+            // derived Hash::hash so we retrieve the H from parameter instead of GenericDef
+            let param = f.params_without_self(db).swap_remove(0);
+            let param_type = param.ty();
+            let param_type = param_type.remove_ref().unwrap();
+            let type_param = param_type
+                .as_type_param(db)
+                .unwrap_or_else(|| panic!("type {param_type:?} is not type_param"));
+            vec![type_param.into()]
+        } else {
+            #[allow(clippy::disallowed_methods)]
+            self.params(db)
+        }
     }
 }

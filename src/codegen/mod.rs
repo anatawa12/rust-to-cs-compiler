@@ -10,8 +10,18 @@ mod dyn_compatibility;
 pub mod expr;
 mod id_map;
 pub mod names;
-mod simple_extensions;
 pub mod ty;
+
+#[path = "."]
+mod simple_extensions {
+    #[path = "simple_extensions.rs"]
+    mod impl_;
+
+    pub use impl_::GenericDefExt as _;
+    pub use impl_::TraitExt as _;
+    pub use impl_::TypeExt as _;
+    pub use impl_::TypeParamExt as _;
+}
 
 use self::output::Code;
 use crate::codegen::constructable::ConstructableDef;
@@ -239,8 +249,7 @@ impl<'db> CodeGenerator<'db> {
 
         let cs_name = names::struct_name(adt.name(db).as_str());
 
-        let gen_params = GenericDef::from(adt).params(db);
-        let (tp_names, constraints) = self.generic_params_cs(&gen_params);
+        let (tp_names, constraints) = self.generic_def_params_cs(adt.into());
 
         // Compute implemented interfaces
         let mut trait_interfaces: Vec<String> = Vec::new();
@@ -251,7 +260,7 @@ impl<'db> CodeGenerator<'db> {
                 let cs_iface = generic_args(
                     self.trait_itf_cs(trait_),
                     map_type_param_source(
-                        &self.trait_generic_params_cs_sources(trait_),
+                        &self.generic_params_cs_sources(trait_.into()),
                         &trait_ref.generic_types(db).flatten().collect::<Vec<_>>(),
                         db,
                     )

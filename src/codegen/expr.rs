@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use super::{CodeGenerator, generic_args, names, output::Code};
 use crate::codegen::constructable::{Constructable, ConstructableDef};
-use crate::codegen::simple_extensions::TypeExt;
+use crate::codegen::simple_extensions::*;
 use hir::db::HirDatabase;
 use hir::{HasContainer, InFile, ItemContainer, Local, ModuleDef, PathResolution, StructKind};
 use itertools::Either;
@@ -1397,7 +1397,7 @@ fn resolve_into<'db>(
         && let ItemContainer::Trait(trait_) = f.container(db)
         && trait_.name(db).symbol() == &hir::sym::Into
     {
-        let params = hir::GenericDef::Trait(trait_).params(db);
+        let params = hir::GenericDef::Trait(trait_).params0(db);
         let (symbol0, type0) = &args.types(db)[0];
         let (symbol1, type1) = &args.types(db)[1];
         assert_eq!(params[0].name(db).symbol(), symbol0);

@@ -1,0 +1,3 @@
+disallowed-methods = [
+    "ra_ap_hir::GenericDef::params",
+]

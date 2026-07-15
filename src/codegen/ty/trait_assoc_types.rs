@@ -1,4 +1,4 @@
-use crate::codegen::simple_extensions::TraitExt;
+use crate::codegen::simple_extensions::*;
 use crate::codegen::ty::ignored_trait;
 use hir::HirDisplay;
 use hir::db::HirDatabase;
