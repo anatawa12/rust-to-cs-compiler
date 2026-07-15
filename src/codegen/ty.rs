@@ -278,7 +278,7 @@ impl<'db> CodeGenerator<'db> {
         let db = self.db;
         let params = &def.params0(db);
         self.register_special_impls(params);
-        let sources = self.generic_params_cs_sources(def.into());
+        let sources = self.generic_params_cs_sources(def);
         let instances = generic_types(params)
             .map(|param| param.ty(db))
             .collect::<Vec<_>>();
@@ -520,19 +520,6 @@ impl<'db> CodeGenerator<'db> {
         }
     }
 
-    pub fn params1(&self, types: &[Type<'db>], def: GenericDef) -> Vec<String> {
-        let type_params = generic_types(&def.params0(self.db))
-            .enumerate()
-            .map(|(i, _)| {
-                (types.get(i).cloned()).unwrap_or_else(|| Type::error(self.db, self.krate))
-            })
-            .collect::<Vec<_>>();
-        let param_sources = self.generic_params_cs_sources(def.into());
-        map_type_param_source(&param_sources, &type_params, self.db)
-            .map(|x| self.rust_type_to_cs(&x))
-            .collect()
-    }
-
     fn params(
         &self,
         types: &HashMap<&Symbol, &Type<'db>>,
@@ -670,8 +657,12 @@ impl<'db> CodeGenerator<'db> {
         generic_def: impl Copy + HasContainer + DebugDisplay<'db> + Into<GenericDef>,
         substitution: GenericSubstitution<'db>,
     ) -> Vec<Type<'db>> {
+        let db = self.db;
         let container = generic_def.container(self.db);
         let resolved_as_generic_def = generic_def.into();
+
+        let resolved_as_generic_def_len =
+            generic_types(&resolved_as_generic_def.params0(self.db)).count();
 
         let parent_def = match container {
             ItemContainer::Trait(trait_) => Some(GenericDef::Trait(trait_)),
@@ -693,6 +684,12 @@ impl<'db> CodeGenerator<'db> {
                 !x.is_implicit(self.db) || !x.name(self.db).is_missing()
             })
             .collect::<Vec<_>>();
+        let filtered_args = generic_types(&resolved_as_generic_def.params0(self.db))
+            .filter(|x| {
+                // implicit && missing => replacement parameter for impl trait
+                !(!x.is_implicit(self.db) || !x.name(self.db).is_missing())
+            })
+            .count();
 
         assert_eq!(
             args.len(),
@@ -716,7 +713,22 @@ impl<'db> CodeGenerator<'db> {
             |(param, (arg_symbol, _arg_type))| { param.name(self.db).symbol() == arg_symbol }
         ));
 
-        self_args.into_iter().map(|(_, ty)| ty).collect()
+        assert_eq!(
+            self_args.len() + filtered_args,
+            resolved_as_generic_def_len,
+            "container: {container:?}, params: {self_params}, parent_params: {parent_params}, sum: {sum}, f: {f}, filtered_args: {filtered_args}",
+            parent_params = parent_params.len(),
+            self_params = self_params.len(),
+            sum = parent_params.len() + self_params.len(),
+            f = generic_def.debug_display(self.db),
+        );
+
+        (self_args.into_iter().map(|(_, ty)| ty))
+            .chain(iter::repeat_n(
+                hir::Type::error(self.db, resolved_as_generic_def.module(db).krate(db)),
+                filtered_args,
+            ))
+            .collect()
     }
 
     pub fn const_path_cs(&self, adt: hir::Const) -> String {

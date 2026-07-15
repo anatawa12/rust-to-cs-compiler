@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use super::{CodeGenerator, generic_args, names, output::Code};
 use crate::codegen::constructable::{Constructable, ConstructableDef};
 use crate::codegen::simple_extensions::*;
+use crate::codegen::ty::generic_params::map_type_param_source;
 use hir::db::HirDatabase;
 use hir::{HasContainer, InFile, ItemContainer, Local, ModuleDef, PathResolution, StructKind};
 use itertools::Either;
@@ -573,10 +574,13 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     }
                     Some((Either::Left(resolved), generics)) => {
                         let generics = generics.map(|generics| {
-                            self.params1(
+                            map_type_param_source(
+                                &self.generic_params_cs_sources(resolved.into()),
                                 &self.extract_generic_args(resolved, generics),
-                                resolved.into(),
+                                self.db,
                             )
+                            .map(|x| self.rust_type_to_cs(&x))
+                            .collect::<Vec<_>>()
                         });
                         //generic_args(String::new(), generics.into_iter().flatten().collect()),
                         let method_cs = self.function_name(resolved);
