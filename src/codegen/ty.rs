@@ -2,21 +2,19 @@ pub mod generic_params;
 
 use super::{CodeGenerator, generic_args, names};
 use crate::codegen::constructable::{Constructable, ConstructableDef};
-use crate::codegen::simple_extensions::{TraitExt, TypeExt as _};
-use crate::codegen::ty::generic_params::collect_assoc_type_params;
+use crate::codegen::simple_extensions::TypeExt as _;
 /// Converts Rust HIR types to C# type strings.
 use hir::db::HirDatabase;
 use hir::{
     Adt, BuiltinType, GenericDef, GenericSubstitution, ItemContainer, Module, Name, Symbol, Trait,
     Type,
 };
-use hir::{HasContainer, HasCrate, HirDisplay, sym};
+use hir::{HasContainer, HasCrate, sym};
 use itertools::Either;
 use ra_internal::*;
 use std::collections::HashMap;
 use std::fmt::Write;
 use std::iter;
-use std::ops::Not;
 use tracing::*;
 
 impl<'db> CodeGenerator<'db> {
@@ -296,7 +294,7 @@ pub enum CsTypeParamSource {
 }
 
 impl CsTypeParamSource {
-    fn index(&self) -> usize {
+    pub fn index(&self) -> usize {
         match *self {
             CsTypeParamSource::TypeParam(idx) => idx,
             CsTypeParamSource::AliasOfParam(idx, _) => idx,
@@ -304,7 +302,7 @@ impl CsTypeParamSource {
     }
 }
 
-fn generic_types(params: &[hir::GenericParam]) -> impl Iterator<Item = hir::TypeParam> + Clone {
+pub fn generic_types(params: &[hir::GenericParam]) -> impl Iterator<Item = hir::TypeParam> + Clone {
     (params.iter()).filter_map(|&x| variant_or_none!(x, hir::GenericParam::TypeParam))
 }
 

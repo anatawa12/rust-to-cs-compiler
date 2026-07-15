@@ -1,12 +1,11 @@
 use crate::codegen::CodeGenerator;
-use crate::codegen::ty::includes_type_in_type;
+use crate::codegen::ty::{generic_types, includes_type_in_type};
 use hir::db::HirDatabase;
 use itertools::Either;
 use ra_internal::*;
 use std::ops::Not;
 use tracing::trace;
 
-use crate::codegen::ty::generic_params::collect_assoc_type_params;
 pub use hir::MethodViolationCode;
 use hir::sym;
 
@@ -176,32 +175,25 @@ impl<'db> CodeGenerator<'db> {
         params: &[hir::GenericParam],
         cond: &impl Fn(&hir::Type<'db>) -> bool,
     ) -> bool {
-        (params.iter())
-            .filter_map(|&x| variant_or_none!(x, hir::GenericParam::TypeParam))
-            .any(|param| self.includes_type_in_generic_param_cs_constraints(param, cond))
-    }
-
-    pub fn includes_type_in_generic_param_cs_constraints(
-        &self,
-        param: hir::TypeParam,
-        cond: &impl Fn(&hir::Type<'db>) -> bool,
-    ) -> bool {
         let db = self.db;
 
-        let param_type = param.ty(db);
-        collect_assoc_type_params(param, param_type.clone(), db).any(|_assoc_ty| {
-            includes_type_in_type(&param_type, db, &cond)
-                || match param.trait_bounds_of_nested_type_with_args(&param_type, db) {
-                    Either::Right(projection) => includes_type_in_type(&projection, db, &cond),
-                    Either::Left(traits) => traits.iter().any(|&(trait_, ref args)| {
-                        self.map_type_param_source(
-                            &self.trait_generic_params_cs_sources_impl(trait_, true),
-                            args,
-                        )
-                        .any(|t| includes_type_in_type(&t, db, &cond))
-                    }),
+        let type_prams = generic_types(params).collect::<Vec<_>>();
+        let types = type_prams.iter().map(|x| x.ty(db)).collect::<Vec<_>>();
+
+        self.generic_params_cs_sources_impl(params, true)
+            .iter()
+            .flat_map(|source| {
+                let param_type = self.resolve_cs_type_param_source(source, &types);
+
+                match type_prams[source.index()]
+                    .trait_bounds_of_nested_type_with_args(&param_type, db)
+                {
+                    Either::Right(_) => Vec::new(),
+                    Either::Left(traits) => traits,
                 }
-        })
+            })
+            .flat_map(|(_trait, args)| args)
+            .any(|t| cond(&t))
     }
 }
 

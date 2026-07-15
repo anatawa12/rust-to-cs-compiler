@@ -11,20 +11,12 @@ use std::ops::Not;
 
 impl<'db> CodeGenerator<'db> {
     pub fn trait_generic_params_cs_sources(&self, trait_: hir::Trait) -> Vec<CsTypeParamSource> {
-        self.trait_generic_params_cs_sources_impl(trait_, false)
-    }
-
-    pub fn trait_generic_params_cs_sources_impl(
-        &self,
-        trait_: hir::Trait,
-        exclude_self: bool,
-    ) -> Vec<CsTypeParamSource> {
         let db = self.db;
 
         let params = hir::GenericDef::from(trait_).params(db);
         let mut type_params = self.generic_params_cs_sources(&params);
 
-        if !exclude_self && self.with_self_in_cs(trait_) {
+        if self.with_self_in_cs(trait_) {
             type_params.insert(0, CsTypeParamSource::TypeParam(0));
         }
 
@@ -41,6 +33,14 @@ impl<'db> CodeGenerator<'db> {
     pub fn generic_params_cs_sources(
         &self,
         params: &[hir::GenericParam],
+    ) -> Vec<CsTypeParamSource> {
+        self.generic_params_cs_sources_impl(params, false)
+    }
+
+    pub fn generic_params_cs_sources_impl(
+        &self,
+        params: &[hir::GenericParam],
+        assoc_only: bool,
     ) -> Vec<CsTypeParamSource> {
         let db = self.db;
 
@@ -66,7 +66,7 @@ impl<'db> CodeGenerator<'db> {
                 continue;
             }
 
-            if !self.special_type_param(param).is_special_impl() {
+            if !assoc_only && !self.special_type_param(param).is_special_impl() {
                 type_params.push(CsTypeParamSource::TypeParam(index));
             }
 

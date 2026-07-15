@@ -25,7 +25,6 @@ use hir::{
     Type, TypeParam, db::HirDatabase,
 };
 use ide_db::line_index;
-use itertools::Itertools;
 use ra_internal::*;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
