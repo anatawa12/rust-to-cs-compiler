@@ -92,7 +92,7 @@ impl<'db> CodeGenerator<'db> {
             self.trait_itf_cs(trait_)
         } else if let Some(param) = ty.as_type_param(db) {
             if apply_special && let Some(cs) = self.special_types.borrow().get(&param) {
-                return cs.format(|t| self.rust_type_to_cs(t));
+                return cs(self);
             }
 
             // Generic parameter
@@ -291,55 +291,53 @@ impl<'db> CodeGenerator<'db> {
 
             match self.special_type_param(param) {
                 SpecialImplBounds::Func(output, parameters) => {
-                    let cs_type = if output.is_unit() {
-                        if parameters.is_empty() {
-                            delayed_format!("global::System.Action")
-                        } else {
-                            delayed_format!("global::System.Action<", join(parameters, ", "), ">")
-                        }
+                    if output.is_unit() {
+                        self.special_types.borrow_mut().insert(
+                            param,
+                            Box::new(move |this| {
+                                generic_args(
+                                    "global::System.Action".to_string(),
+                                    parameters.iter().map(|x| this.rust_type_to_cs(x)),
+                                )
+                            }),
+                        );
                     } else {
-                        //let output = self.rust_type_to_cs(&output);
                         let mut types = parameters;
                         types.push(output);
-                        //format!("global::System.Func<{}>", types.join(", "))
-                        delayed_format!("global::System.Func<", join(types, ", "), ">")
-                    };
 
-                    //eprintln!("{param:?}: {cs_type:?}");
-                    self.special_types.borrow_mut().insert(param, cs_type);
+                        self.special_types.borrow_mut().insert(
+                            param,
+                            Box::new(move |this| {
+                                generic_args(
+                                    "global::System.Func".to_string(),
+                                    types.iter().map(|x| this.rust_type_to_cs(x)),
+                                )
+                            }),
+                        );
+                    }
                 }
                 SpecialImplBounds::Future(output) => {
-                    let cs_type = delayed_format!("r2CsRuntime.RustTask<", output, ">");
-
-                    self.special_types.borrow_mut().insert(param, cs_type);
+                    self.special_types.borrow_mut().insert(
+                        param,
+                        Box::new(move |this| {
+                            generic_args(
+                                "r2CsRuntime.RustTask".to_string(),
+                                [this.rust_type_to_cs(&output)],
+                            )
+                        }),
+                    );
                 }
                 SpecialImplBounds::ArgOnlyTrait(param_type) => {
                     let traits = param
                         .trait_bounds_of_nested_type_with_args(&param_type, db)
                         .expect_left("Bounds of ArgOnlyTrait is projection");
-                    let (trait_, ref args) = traits[0];
+                    let (trait_, args) = { traits }.swap_remove(0);
 
                     assert!(!self.with_self_in_cs(trait_));
 
-                    let args_types = map_type_param_source(
-                        &self.generic_params_cs_sources(trait_.into()),
-                        args,
-                        db,
-                    )
-                    .collect::<Vec<_>>();
-
                     self.special_types.borrow_mut().insert(
                         param,
-                        if args_types.is_empty() {
-                            delayed_format!(str(&self.trait_itf_cs(trait_)))
-                        } else {
-                            delayed_format!(
-                                str(&self.trait_itf_cs(trait_)),
-                                "<",
-                                join(args_types, ","),
-                                ">"
-                            )
-                        },
+                        Box::new(move |this| this.cs_path_with_args(trait_, args.clone())),
                     );
                 }
                 SpecialImplBounds::None => {}
@@ -755,17 +753,18 @@ pub trait CsPathWithArgsMember {
     fn cs_path(self, code_gen: &CodeGenerator<'_>) -> String;
 }
 
-impl CsPathWithArgsMember for hir::Adt {
-    fn cs_path(self, code_gen: &CodeGenerator<'_>) -> String {
-        code_gen.adt_name_cs(self)
-    }
+macro_rules! cs_path {
+    ($ty: ty => $f: ident) => {
+        impl CsPathWithArgsMember for $ty {
+            fn cs_path(self, code_gen: &CodeGenerator<'_>) -> String {
+                code_gen.$f(self)
+            }
+        }
+    };
 }
 
-impl CsPathWithArgsMember for hir::Trait {
-    fn cs_path(self, code_gen: &CodeGenerator<'_>) -> String {
-        code_gen.trait_itf_cs(self)
-    }
-}
+cs_path!(hir::Adt => adt_name_cs);
+cs_path!(hir::Trait => trait_itf_cs);
 
 impl<'db> CodeGenerator<'db> {
     pub fn cs_path_with_args(

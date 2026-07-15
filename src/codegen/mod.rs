@@ -1,8 +1,6 @@
 #[macro_use]
 pub mod output;
 #[macro_use]
-pub mod delay_format;
-#[macro_use]
 mod impl_from;
 mod constructable;
 pub mod decl;
@@ -28,11 +26,10 @@ use crate::codegen::constructable::ConstructableDef;
 use crate::codegen::decl::{
     is_adt_cfg_disabled, is_adt_r2cs_native, is_impl_cfg_disabled, is_module_cfg_disabled,
 };
-use crate::codegen::delay_format::DelayedFormatString;
 use crate::codegen::id_map::IdMap;
 use hir::{
     Adt, AssocItem, Crate, GenericDef, Impl, InFile, Module, ModuleDef, Semantics, StructKind,
-    Type, TypeParam, db::HirDatabase,
+    TypeParam, db::HirDatabase,
 };
 use ide_db::line_index;
 use ra_internal::*;
@@ -50,7 +47,7 @@ pub struct CodeGenerator<'db> {
     // some internal information that hard is to determine
     impl_ty_param_id: IdMap<TypeParam>,
     // This map holds specially handled types like type arguments mirroring impl Fn()
-    special_types: RefCell<HashMap<TypeParam, DelayedFormatString<Type<'db>>>>,
+    special_types: RefCell<HashMap<TypeParam, Box<dyn (Fn(&CodeGenerator<'db>) -> String) + 'db>>>,
     // This map holds 'replaced' types to map `Self` type in trait default impls.
     type_map: TyMap<'db>,
 }
