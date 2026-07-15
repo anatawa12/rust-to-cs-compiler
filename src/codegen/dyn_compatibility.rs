@@ -1,11 +1,12 @@
 use crate::codegen::CodeGenerator;
-use crate::codegen::ty::{collect_assoc_type_params, includes_type_in_type};
+use crate::codegen::ty::includes_type_in_type;
 use hir::db::HirDatabase;
 use itertools::Either;
 use ra_internal::*;
 use std::ops::Not;
 use tracing::trace;
 
+use crate::codegen::ty::generic_params::collect_assoc_type_params;
 pub use hir::MethodViolationCode;
 use hir::sym;
 
