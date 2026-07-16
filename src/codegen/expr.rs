@@ -1,14 +1,15 @@
-/// Generates C# expressions and statements from Rust HIR bodies.
-use std::collections::HashMap;
-
 use super::{CodeGenerator, generic_args, names, output::Code};
 use crate::codegen::constructable::{Constructable, ConstructableDef};
 use crate::codegen::simple_extensions::*;
 use crate::codegen::ty::generic_params::map_type_param_source;
 use hir::db::HirDatabase;
 use hir::{HasContainer, InFile, ItemContainer, Local, ModuleDef, PathResolution, StructKind};
-use itertools::Either;
+use itertools::{Either, Itertools};
 use ra_internal::*;
+use std::cell::RefCell;
+/// Generates C# expressions and statements from Rust HIR bodies.
+use std::collections::HashMap;
+use std::sync::atomic::AtomicUsize;
 use syntax::ast::{
     self, ArithOp, AstNode as _, HasArgList as _, HasLoopBody as _, LogicOp, RangeItem as _,
 };
@@ -18,17 +19,17 @@ use syntax::ast::{BinaryOp, RangeOp, UnaryOp};
 pub struct BodyGen<'g, 'db> {
     cg: &'g CodeGenerator<'db>,
     /// Mapping from Local to the C# local name allocated for it.
-    locals: HashMap<Local, String>,
+    locals: RefCell<HashMap<Local, String>>,
     /// Counter per original Rust name for uniqueness.
-    name_counts: HashMap<String, usize>,
+    name_counts: RefCell<HashMap<String, usize>>,
     /// Whether we're inside an async fn (controls .GetAwaiter()/.GetResult() vs await).
     #[allow(dead_code)]
     is_async: bool,
 
     // internals
-    match_index: usize,
+    match_index: AtomicUsize,
 
-    pub deferred: Vec<ItemInBody>,
+    pub deferred: RefCell<Vec<ItemInBody>>,
 }
 
 /// Items emitting are deferred.
@@ -66,11 +67,11 @@ impl<'g, 'db> BodyGen<'g, 'db> {
     pub fn new(cg: &'g CodeGenerator<'db>, is_async: bool) -> Self {
         Self {
             cg,
-            locals: HashMap::new(),
-            name_counts: HashMap::new(),
+            locals: RefCell::new(HashMap::new()),
+            name_counts: RefCell::new(HashMap::new()),
             is_async,
-            match_index: 0,
-            deferred: Vec::new(),
+            match_index: AtomicUsize::new(0),
+            deferred: RefCell::new(Vec::new()),
         }
     }
 
@@ -79,17 +80,18 @@ impl<'g, 'db> BodyGen<'g, 'db> {
         self.location_with_file(InFile::new(self.sem.hir_file_for(node), node.clone()))
     }
 
-    fn alloc_binding_ast(&mut self, local: &Local) -> String {
+    fn alloc_binding_ast(&self, local: &Local) -> String {
         let rust_name = local.name(self.db).as_str().to_string();
-        let count = self.name_counts.entry(rust_name.clone()).or_insert(0);
+        let mut name_counts = self.name_counts.borrow_mut();
+        let count = name_counts.entry(rust_name.clone()).or_insert(0);
         let cs_name = names::local_name(&rust_name, *count);
         *count += 1;
-        self.locals.insert(*local, cs_name.clone());
+        self.add_local(*local, cs_name.clone());
         cs_name
     }
 
     fn binding_name_ast(&self, local: Local) -> String {
-        if let Some(local) = self.locals.get(&local) {
+        if let Some(local) = self.locals.borrow().get(&local) {
             return local.clone();
         }
 
@@ -107,12 +109,28 @@ impl<'g, 'db> BodyGen<'g, 'db> {
         names::camel(&l.text().as_str()[1..])
     }
 
+    fn add_local(&self, local: Local, name: String) {
+        self.locals.borrow_mut().insert(local, name);
+    }
+
+    fn add_deferred(&self, deferred: impl Into<ItemInBody>) {
+        self.deferred.borrow_mut().push(deferred.into());
+    }
+
+    pub fn deferred(&mut self) -> &mut Vec<ItemInBody> {
+        self.deferred.get_mut()
+    }
+
+    fn inc_match_index(&self) -> usize {
+        self.match_index
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    }
+
     /// Emit the full function body block.
-    pub fn emit_function_body(&mut self, f: ast::Fn, out: &mut Code) {
+    pub fn emit_function_body(&self, f: ast::Fn, out: &mut Code) {
         let params = f.param_list().unwrap();
         if let Some(self_param) = params.self_param() {
-            self.locals
-                .insert(self.sem.to_def(&self_param).unwrap(), "this".into());
+            self.add_local(self.sem.to_def(&self_param).unwrap(), "this".into());
         }
         for param in params.params() {
             match param.pat().unwrap() {
@@ -133,7 +151,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
 
     /// Emit an expression as a statement (with semicolon if needed).
     fn emit_expr_as_stmt_ast(
-        &mut self,
+        &self,
         out: &mut Code,
         expr: ast::Expr,
         is_tail: bool,
@@ -219,11 +237,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 let label_str = label
                     .map(|l| format!("{}: ", self.label_name(l.lifetime().unwrap())))
                     .unwrap_or_default();
-                let temp_name = {
-                    let match_index = self.match_index;
-                    self.match_index += 1;
-                    format!("__temp_{}", match_index)
-                };
+                let temp_name = format!("__temp_{}", self.inc_match_index());
                 out.w(label_str)
                     .w("foreach (var ")
                     .w(&temp_name)
@@ -303,11 +317,11 @@ impl<'g, 'db> BodyGen<'g, 'db> {
     }
 
     fn emit_let_stmt(
-        &mut self,
+        &self,
         out: &mut Code,
         pat: &ast::Pat,
         value_cs: Code,
-        else_gen: impl FnOnce(&mut BodyGen<'g, 'db>, &mut Code),
+        else_gen: impl FnOnce(&BodyGen<'g, 'db>, &mut Code),
     ) {
         if let ast::Pat::IdentPat(ident_pat) = pat {
             let local = self.sem.to_def(ident_pat).unwrap();
@@ -321,12 +335,12 @@ impl<'g, 'db> BodyGen<'g, 'db> {
         }
     }
 
-    fn emit_unreachable(&mut self, out: &mut Code) {
+    fn emit_unreachable(&self, out: &mut Code) {
         out.wln("throw new Exception(\"unreachable\");");
     }
 
     fn emit_block_contents(
-        &mut self,
+        &self,
         out: &mut Code,
         statements: impl IntoIterator<Item = ast::Stmt>,
         tail: Option<ast::Expr>,
@@ -373,22 +387,22 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 ast::Stmt::Item(ast::Item::Fn(fn_)) => {
                     let f = self.sem.to_def(&fn_).unwrap();
                     out.wln(format!("// inner fn: {}", f.name(self.db).as_str()));
-                    self.deferred.push(f.into());
+                    self.add_deferred(f);
                 }
                 ast::Stmt::Item(ast::Item::Enum(adt)) => {
                     let f = self.sem.to_def(&adt).unwrap();
                     out.wln(format!("// inner enum: {}", f.name(self.db).as_str()));
-                    self.deferred.push(f.into());
+                    self.add_deferred(f);
                 }
                 ast::Stmt::Item(ast::Item::Struct(adt)) => {
                     let f = self.sem.to_def(&adt).unwrap();
                     out.wln(format!("// inner enum: {}", f.name(self.db).as_str()));
-                    self.deferred.push(f.into());
+                    self.add_deferred(f);
                 }
                 ast::Stmt::Item(ast::Item::Impl(impl_)) => {
                     let f = self.sem.to_def(&impl_).unwrap();
                     out.wln("// impl");
-                    self.deferred.push(f.into());
+                    self.add_deferred(f);
                 }
                 // TODO: impl
                 // TODO: use, type alias: remove with comment?
@@ -414,11 +428,11 @@ impl<'g, 'db> BodyGen<'g, 'db> {
         }
     }
 
-    pub fn emit_expr_str_ast(&mut self, expr: &ast::Expr) -> Code {
+    pub fn emit_expr_str_ast(&self, expr: &ast::Expr) -> Code {
         self.emit_expr_str_ast_inner(expr, false)
     }
 
-    pub fn emit_expr_str_ast_inner(&mut self, expr: &ast::Expr, statement: bool) -> Code {
+    pub fn emit_expr_str_ast_inner(&self, expr: &ast::Expr, statement: bool) -> Code {
         match expr {
             //Expr::Missing => "/* missing */default!".into(),
             ast::Expr::Literal(lit) => self.emit_literal_ast(lit),
@@ -1136,7 +1150,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
     }
 
     /// Emit a pattern as a condition check against a scrutinee expression.
-    fn emit_pattern_ast(&mut self, pat: &ast::Pat) -> Code {
+    fn emit_pattern_ast(&self, pat: &ast::Pat) -> Code {
         match pat {
             ast::Pat::WildcardPat(_w) => "var _".into(),
             ast::Pat::IdentPat(ident_pat)
@@ -1344,11 +1358,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
         }
     }
 
-    fn resolve_tuple_like_struct(
-        &mut self,
-        field_count: usize,
-        patterns: &[ast::Pat],
-    ) -> Vec<Code> {
+    fn resolve_tuple_like_struct(&self, field_count: usize, patterns: &[ast::Pat]) -> Vec<Code> {
         if matches!(patterns, [ast::Pat::RestPat(_)]) {
             vec![code!("_"); field_count]
         } else if let Some(position) = patterns
