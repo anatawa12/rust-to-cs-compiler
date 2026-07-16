@@ -77,6 +77,22 @@ impl<'db> CodeGenerator<'db> {
             };
         }
 
+        // T::collect<B>() => B::from_iter
+        if f.name(db).as_str() == "collect"
+            && let Some(iterator_trait) = lang_items.Iterator()
+            && let Some(_trait_params) =
+                resolve_trait_impl(f, iterator_trait, parent_args.as_deref(), db)
+        {
+            return ResolvedFunction::Static {
+                self_ty: f_args[0].clone(),
+                trait_: None,
+                function_name: "m_FromIter/*collect*/".into(),
+                generic_sources: Vec::new(),
+                generic_args: Vec::new(),
+                args_map: None,
+            };
+        }
+
         if f.name(self.db).as_str() == "encode_utf8"
             && let hir::ItemContainer::Impl(impl_) = f.container(self.db)
             && let self_ty = impl_.self_ty(self.db)

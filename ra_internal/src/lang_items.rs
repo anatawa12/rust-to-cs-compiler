@@ -90,6 +90,8 @@ lang_item_wrapper! {
         Copy: Trait,
         Sync: Trait,
 
+        Iterator: Trait,
+
         Fn: Trait,
         FnMut: Trait,
         FnOnce: Trait,
