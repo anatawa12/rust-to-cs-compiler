@@ -1,8 +1,9 @@
 use crate::codegen::CodeGenerator;
+use crate::codegen::simple_extensions::*;
 use crate::codegen::ty::generic_params::CsTypeParamSource;
-use hir::HasContainer;
 use hir::db::HirDatabase;
-use ra_internal::TypeExt;
+use hir::{HasContainer, HasCrate, sym};
+use ra_internal::{LangItems, TypeExt};
 
 type TraitRef<'db> = (hir::Trait, Vec<hir::Type<'db>>);
 
@@ -46,19 +47,27 @@ impl<'db> CodeGenerator<'db> {
     ) -> ResolvedFunction<'db> {
         let (parent_args, f_args) = self.extract_generic_args(f, args);
         let db = self.db;
+        let lang_items = LangItems::new(db, f.krate(db));
 
         // T::into<U> => replace with U::from()
-        if let Some(resolved_info) = resolve_into(f, parent_args.as_deref(), &f_args, self.db) {
-            return if Some(&resolved_info.target_ty) == resolved_info.self_ty.as_ref()
-                || self.rust_type_to_cs(&resolved_info.target_ty)
-                    == self.rust_type_to_cs(resolved_info.self_ty.as_ref().unwrap())
+        if *f.name(db).symbol() == sym::into
+            && let Some(into_trait) = lang_items.Into()
+            && let Some(trait_params) =
+                resolve_trait_impl(f, into_trait, parent_args.as_deref(), db)
+        {
+            let [self_ty, target_ty] = trait_params.as_slice() else {
+                panic!("Into trait type params (self)");
+            };
+
+            return if target_ty == self_ty
+                || self.rust_type_to_cs(&target_ty) == self.rust_type_to_cs(&self_ty)
             {
                 ResolvedFunction::OmitCall {
                     comment: "/*omit Into::into method*/".into(),
                 }
             } else {
                 ResolvedFunction::Static {
-                    self_ty: resolved_info.target_ty,
+                    self_ty: target_ty.clone(),
                     trait_: None,
                     function_name: "m_From/*convert from Into::into method*/".into(),
                     generic_sources: Vec::new(),
@@ -149,46 +158,27 @@ impl<'db> CodeGenerator<'db> {
     }
 }
 
-struct ResolvedInto<'db> {
-    pub self_ty: Option<hir::Type<'db>>,
-    pub target_ty: hir::Type<'db>,
-}
-
-fn resolve_into<'db>(
+fn resolve_trait_impl<'db>(
     f: hir::Function,
+    trait_: hir::Trait,
     parent_args: Option<&[hir::Type<'db>]>,
-    f_args: &[hir::Type<'db>],
     db: &'db dyn HirDatabase,
-) -> Option<ResolvedInto<'db>> {
-    if f.name(db).symbol() == &hir::sym::into
-        && let hir::ItemContainer::Trait(trait_) = f.container(db)
-        && trait_.name(db).symbol() == &hir::sym::Into
-    {
-        assert_eq!(
-            parent_args.as_ref().unwrap().len(),
-            2,
-            "Into trait type params (self)"
-        );
-        assert_eq!(f_args.len(), 0, "into function type params");
-        Some(ResolvedInto {
-            self_ty: Some(parent_args.unwrap()[0].clone()),
-            target_ty: parent_args.unwrap()[1].clone(),
-        })
-    } else if f.name(db).symbol() == &hir::sym::into
-        && let hir::ItemContainer::Impl(impl_) = f.container(db)
+) -> Option<Vec<hir::Type<'db>>> {
+    if f.container(db) == hir::ItemContainer::Trait(trait_) {
+        Some(parent_args.unwrap().iter().cloned().collect())
+    } else if let hir::ItemContainer::Impl(impl_) = f.container(db)
         && let Some(trait_ref) = impl_.trait_ref(db)
-        && trait_ref.trait_().name(db).symbol() == &hir::sym::Into
+        && trait_ref.trait_() == trait_
     {
-        assert_eq!(
-            parent_args.as_ref().unwrap().len(),
-            2,
-            "Into trait type params (self)"
-        );
-        assert_eq!(f_args.len(), 0, "into function type params");
-        Some(ResolvedInto {
-            self_ty: Some(parent_args.unwrap()[0].clone()),
-            target_ty: parent_args.unwrap()[1].clone(),
-        })
+        let parent_args = parent_args.unwrap();
+        Some(
+            (hir::GenericDef::Trait(trait_).params0(db).into_iter())
+                .enumerate()
+                .filter(|(_, x)| matches!(x, hir::GenericParam::TypeParam(_)))
+                .flat_map(|(i, _)| trait_ref.get_type_argument(i))
+                .map(move |x| x.to_type(db).instantiate(impl_.into(), parent_args, db))
+                .collect(),
+        )
     } else {
         None
     }
