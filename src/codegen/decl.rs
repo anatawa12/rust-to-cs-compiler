@@ -244,7 +244,7 @@ impl<'db> CodeGenerator<'db> {
         out.dedent();
         out.wln("}");
 
-        self.deferred(out, &body_gen.deferred(), f.module(self.db));
+        self.deferred(out, body_gen.deferred(), f.module(self.db));
         out.blank_line();
     }
 

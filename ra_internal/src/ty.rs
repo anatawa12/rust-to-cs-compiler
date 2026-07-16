@@ -10,7 +10,7 @@ use hir_ty::next_solver::{
     TraitRef, Ty, TyKind,
 };
 use rustc_type_ir::inherent::{GenericArg as _, IntoKind};
-use rustc_type_ir::{AliasTyKind, TypeFoldable, Upcast};
+use rustc_type_ir::{AliasTyKind, Upcast};
 
 pub trait TypeExt<'db> {
     fn error(db: &'db dyn HirDatabase, krate: hir::Crate) -> Self;

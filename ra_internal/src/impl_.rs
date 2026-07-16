@@ -6,7 +6,6 @@ use hir_def::resolver::HasResolver;
 use hir_ty::ParamEnvAndCrate;
 use hir_ty::db::HirDatabase;
 use hir_ty::next_solver::{AnyImplId, DbInterner, GenericArg};
-use rustc_type_ir::inherent::SliceLike;
 
 pub trait ImplExt {
     fn self_ty_instantiated<'db>(

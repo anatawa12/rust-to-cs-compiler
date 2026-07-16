@@ -7,15 +7,10 @@ use crate::codegen::simple_extensions::*;
 use crate::codegen::ty::generic_params::{map_type_param_source, resolve_cs_type_param_source};
 /// Converts Rust HIR types to C# type strings.
 use hir::db::HirDatabase;
-use hir::{
-    Adt, BuiltinType, GenericDef, GenericSubstitution, ItemContainer, Module, Name, Symbol, Trait,
-    Type,
-};
+use hir::{Adt, BuiltinType, GenericDef, ItemContainer, Module, Name, Symbol, Trait, Type};
 use hir::{HasContainer, HasCrate, sym};
 use itertools::Either;
 use ra_internal::*;
-use std::collections::HashMap;
-use std::fmt::Write;
 use std::iter;
 use tracing::*;
 
@@ -492,140 +487,6 @@ impl<'db> CodeGenerator<'db> {
             // */
             path.push_str(self.mod_simple_name(module).as_str());
             path
-        }
-    }
-
-    fn params(&self, types: &[Type<'db>], def: GenericDef) -> impl Iterator<Item = String> {
-        let db = self.db;
-        let param_sources = self.generic_params_cs_sources(def);
-        map_type_param_source(&param_sources, types, db)
-            .map(|x| self.rust_type_to_cs(&x))
-            .collect::<Vec<_>>()
-            .into_iter()
-    }
-
-    pub fn fn_path_cs1(&self, f: hir::Function, args: Vec<(Symbol, Type<'db>)>) -> String {
-        fn resolve_param<'a, 'db>(
-            db: &'db dyn HirDatabase,
-            ty: &'a Type<'db>,
-            args_by_symbol: &'a Vec<Type<'db>>,
-        ) -> &'a Type<'db> {
-            if let Some(param) = ty.as_type_param(db)
-                && let Some(adt) = args_by_symbol.get(
-                    generic_types(&param.parent(db).params0(db))
-                        .position(|x| x == param)
-                        .unwrap(),
-                )
-            {
-                adt
-            } else {
-                ty
-            }
-        }
-
-        let (parent_args, f_args) = self.extract_generic_args(f, args);
-
-        match f.container(self.db) {
-            ItemContainer::Impl(impl_)
-                if let Some(adt) =
-                    //resolve_param(self.db, &impl_.self_ty(self.db), &args_by_symbol).as_adt() =>
-                    resolve_param(
-                        self.db,
-                        &impl_.self_ty(self.db),
-                        parent_args.as_ref().unwrap(),
-                    )
-                    .as_adt() =>
-            {
-                if f.self_param(self.db).is_some() {
-                    // TODO: explicit types?
-                    let num_params = f.num_params(self.db);
-                    let mut path = String::new();
-                    path.push_str("((");
-                    {
-                        let mut peekable = (0..num_params).peekable();
-                        while let Some(index) = peekable.next() {
-                            write!(path, "_p_{}", index).unwrap();
-                            if peekable.peek().is_some() {
-                                path.push_str(", ");
-                            }
-                        }
-                    }
-                    path.push_str(") => _p_0.");
-                    path.push_str(&self.function_name(f));
-                    path = generic_args(path, self.params(&f_args, f.into()));
-                    path.push('(');
-                    {
-                        let mut peekable = (1..num_params).peekable();
-                        while let Some(index) = peekable.next() {
-                            write!(path, "_p_{}", index).unwrap();
-                            if peekable.peek().is_some() {
-                                path.push_str(", ");
-                            }
-                        }
-                    }
-                    path.push_str("))");
-
-                    path
-                } else {
-                    // TODO: mapped type will have mapped type function. this might be necessary to fix
-                    let self_ty = impl_.self_ty_instantiated(self.db, parent_args.unwrap());
-                    let mut path = self.rust_type_to_cs(&self_ty);
-                    path.push('.');
-                    path.push_str(&self.function_name(f));
-                    path = generic_args(path, self.params(&f_args, f.into()));
-                    path
-                }
-            }
-            ItemContainer::Impl(impl_)
-                if let Some(primitive) =
-                    //resolve_param(self.db, &impl_.self_ty(self.db), &args_by_symbol).as_builtin() =>
-                    resolve_param(
-                        self.db,
-                        &impl_.self_ty(self.db),
-                        parent_args.as_ref().unwrap(),
-                    )
-                    .as_builtin() =>
-            {
-                let mut path = String::from(primitive.name().as_str());
-                path.push('.');
-                path.push_str(&self.function_name(f));
-                path
-            }
-            ItemContainer::Module(module) => {
-                let mut path = self.module_class_cs(module);
-                path.push('.');
-                path.push_str(&self.function_name(f));
-                path
-            }
-            ItemContainer::Trait(trait_) => {
-                let mut path = self.trait_itf_cs(trait_);
-                path.push('.');
-                path.push_str(&self.function_name(f));
-                path
-            }
-            //ItemContainer::ExternBlock(_) => {}
-            //ItemContainer::Crate(_) => {}
-            ItemContainer::Impl(impl_) => {
-                eprintln!(
-                    "Unsupported function type with self: {:?}",
-                    impl_.self_ty(self.db)
-                );
-                let mut path = self.module_class_cs(f.module(self.db));
-                path.push_str(&format!(
-                    "/*Unsupported impl with {}*/",
-                    impl_.self_ty(self.db).debug_display(self.db)
-                ));
-                path.push('.');
-                path.push_str(&self.function_name(f));
-                path
-            }
-            unsupported => {
-                eprintln!("Unsupported function type: {:?}", unsupported);
-                let mut path = self.module_class_cs(f.module(self.db));
-                path.push('.');
-                path.push_str(&self.function_name(f));
-                path
-            }
         }
     }
 

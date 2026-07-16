@@ -6,6 +6,7 @@ mod constructable;
 pub mod decl;
 mod dyn_compatibility;
 pub mod expr;
+mod function_resolution;
 mod id_map;
 pub mod names;
 pub mod ty;
@@ -47,6 +48,7 @@ pub struct CodeGenerator<'db> {
     // some internal information that hard is to determine
     impl_ty_param_id: IdMap<TypeParam>,
     // This map holds specially handled types like type arguments mirroring impl Fn()
+    #[allow(clippy::type_complexity)]
     special_types: RefCell<HashMap<TypeParam, Box<dyn (Fn(&CodeGenerator<'db>) -> String) + 'db>>>,
     // This map holds 'replaced' types to map `Self` type in trait default impls.
     type_map: TyMap<'db>,

@@ -1,13 +1,15 @@
+//! Generates C# expressions and statements from Rust HIR bodies.
+
 use super::{CodeGenerator, generic_args, names, output::Code};
 use crate::codegen::constructable::{Constructable, ConstructableDef};
+use crate::codegen::function_resolution::ResolvedFunction;
 use crate::codegen::simple_extensions::*;
 use crate::codegen::ty::generic_params::map_type_param_source;
 use hir::db::HirDatabase;
-use hir::{HasContainer, InFile, ItemContainer, Local, ModuleDef, PathResolution, StructKind};
-use itertools::{Either, Itertools};
+use hir::{HasCrate, InFile, Local, ModuleDef, PathResolution, StructKind, sym};
+use itertools::Either;
 use ra_internal::*;
 use std::cell::RefCell;
-/// Generates C# expressions and statements from Rust HIR bodies.
 use std::collections::HashMap;
 use std::sync::atomic::AtomicUsize;
 use syntax::ast::{
@@ -447,17 +449,53 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     );
                     fcode!("/* {} */", path.syntax().text().to_string())
                 }
-                Some((hir::PathResolution::Def(hir::ModuleDef::Function(f)), Some(ref args)))
-                    if let Some(resolved_info) = resolve_into(f, args, self.db) =>
-                {
-                    code!(
-                        self.rust_type_to_cs(&resolved_info.target_ty),
-                        ".m_From/*convert from Into::into*/"
-                    )
+                Some((hir::PathResolution::Def(hir::ModuleDef::Function(f)), args)) => {
+                    let args = args.map(|x| x.types(self.db)).unwrap_or_default();
+                    match self.resolve_function(f, args) {
+                        // simple: path simply represents static or module functions
+                        ResolvedFunction::Static {
+                            self_ty,
+                            trait_: _,
+                            function_name,
+                            generic_sources,
+                            generic_args: args,
+                            args_map: None,
+                        } => {
+                            let mut path = self.rust_type_to_cs(&self_ty);
+                            path.push('.');
+                            path.push_str(&function_name);
+                            path = generic_args(
+                                path,
+                                map_type_param_source(&generic_sources, &args, self.db)
+                                    .map(|x| self.rust_type_to_cs(&x))
+                                    .collect::<Vec<_>>(),
+                            );
+                            path.into()
+                        }
+                        ResolvedFunction::ModuleFunction {
+                            function_path,
+                            generic_sources: _,
+                            generic_args: _,
+                            args_map: None,
+                        } => function_path.into(),
+
+                        // other cases require wrapping with lambda expression
+                        resolved => {
+                            let num_params = f.num_params(self.db);
+
+                            code!(
+                                "((",
+                                join((0..num_params).map(|i| fcode!("_p_{i}")), ", "),
+                                ") => ",
+                                self.emit_call_expr(
+                                    resolved,
+                                    (0..num_params).map(|i| fcode!("_p_{i}"))
+                                ),
+                                ")"
+                            )
+                        }
+                    }
                 }
-                Some((hir::PathResolution::Def(hir::ModuleDef::Function(f)), args)) => self
-                    .fn_path_cs1(f, args.map(|x| x.types(self.db)).unwrap_or_default())
-                    .into(),
                 Some((hir::PathResolution::Def(module_def), _))
                     if let Some(def) = ConstructableDef::from_module_def(module_def) =>
                 {
@@ -558,73 +596,29 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 let receiver = self.emit_expr_str_ast(&method_call.receiver().unwrap());
 
                 match self.sem.resolve_method_call_fallback(method_call) {
-                    Some((Either::Left(f), Some(args)))
-                        if method_call.arg_list().unwrap().args().count() == 0
-                            && let Some(resolved_info) = resolve_into(f, &args, self.db) =>
-                    {
-                        if Some(&resolved_info.target_ty) == resolved_info.self_ty.as_ref()
-                            || self.rust_type_to_cs(&resolved_info.target_ty)
-                                == self.rust_type_to_cs(resolved_info.self_ty.as_ref().unwrap())
-                        {
-                            code!("/*omit Into::into method*/(", receiver, ")")
-                        } else {
-                            code!(
-                                self.rust_type_to_cs(&resolved_info.target_ty),
-                                ".m_From/*convert from Into::into method*/(",
-                                receiver,
-                                ")"
-                            )
-                        }
-                    }
-                    Some((Either::Left(f), Some(_args)))
-                        if method_call.arg_list().unwrap().args().count() == 1
-                            && let ItemContainer::Impl(impl_) = f.container(self.db)
-                            && let self_ty = impl_.self_ty(self.db)
-                            && let Some(type_) = self_ty.as_builtin()
-                            && type_.is_char()
-                            && f.name(self.db).as_str() == "encode_utf8" =>
-                    {
-                        code!(receiver, ".ToString/*converted from encode_utf8*/()")
-                    }
-                    Some((Either::Left(resolved), generics)) => {
-                        let sources = self.generic_params_cs_sources(resolved.into());
-                        let (_, generics_types) = generics
-                            .map(|generics| generics.types(self.db))
-                            .map(|types| self.extract_generic_args(resolved, types))
-                            .unwrap_or_default();
-
-                        let method_cs = self.function_name(resolved);
-                        let db = self.db;
-                        let cg = self.cg;
-
-                        let args = method_call
-                            .arg_list()
-                            .unwrap()
-                            .args()
-                            .map(|a| self.emit_expr_str_ast(&a));
-                        if matches!(method_cs.as_str(), "m_VisitStr") {
-                            code!(
-                                receiver,
-                                ".",
-                                generic_args(
-                                    method_cs,
-                                    map_type_param_source(&sources, &generics_types, db)
-                                        .map(|x| cg.rust_type_to_cs(&x))
-                                ),
-                                "(",
-                                join(
-                                    method_call
-                                        .arg_list()
-                                        .unwrap()
-                                        .args()
-                                        .map(|a| self.emit_expr_str_ast(&a)),
-                                    ", "
-                                ),
-                                ")"
-                            )
-                        } else {
-                            code!(receiver, ".", method_cs, "(", join(args, ", "), ")")
-                        }
+                    Some((Either::Left(f), args)) => {
+                        let args = args.map(|args| args.types(self.db)).unwrap_or_else(|| {
+                            // this is builtin derive. all except for Hash::hash implementation
+                            if *f.name(self.db).symbol() == sym::hash {
+                                vec![(
+                                    hir::Symbol::intern("H"),
+                                    hir::Type::error(self.db, f.krate(self.db)),
+                                )]
+                            } else {
+                                vec![]
+                            }
+                        });
+                        let resolved = self.resolve_function(f, args);
+                        self.emit_call_expr(
+                            resolved,
+                            [receiver].into_iter().chain(
+                                method_call
+                                    .arg_list()
+                                    .unwrap()
+                                    .args()
+                                    .map(|arg| self.emit_expr_str_ast(&arg)),
+                            ),
+                        )
                     }
                     Some((Either::Right(_), _)) => {
                         eprintln!(
@@ -686,26 +680,6 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                             let method_cs = self.function_name(f);
                             let args = args.map(|a| self.emit_expr_str_ast(&a));
                             return code!(receiver, ".", method_cs, "(", join(args, ", "), ")");
-                        }
-                        Some((PathResolution::Def(ModuleDef::Function(f)), Some(subst)))
-                            if call_expr.arg_list().unwrap().args().count() == 0
-                                && let Some(resolved_info) = resolve_into(f, &subst, self.db) =>
-                        {
-                            let receiver = self.emit_expr_str_ast(&{ args }.nth(0).unwrap());
-                            return if Some(&resolved_info.target_ty)
-                                == resolved_info.self_ty.as_ref()
-                                || self.rust_type_to_cs(&resolved_info.target_ty)
-                                    == self.rust_type_to_cs(resolved_info.self_ty.as_ref().unwrap())
-                            {
-                                code!("/*omit Into::into call*/(", receiver, ")")
-                            } else {
-                                code!(
-                                    self.rust_type_to_cs(&resolved_info.target_ty),
-                                    ".m_From/*convert from Into::into call*/(",
-                                    receiver,
-                                    ")"
-                                )
-                            };
                         }
                         _ => {}
                     }
@@ -1149,6 +1123,85 @@ impl<'g, 'db> BodyGen<'g, 'db> {
         }
     }
 
+    fn emit_call_expr(
+        &self,
+        function: ResolvedFunction<'db>,
+        mut args: impl Iterator<Item = Code>,
+    ) -> Code {
+        match function {
+            ResolvedFunction::Static {
+                self_ty,
+                trait_: _,
+                function_name,
+                generic_sources,
+                generic_args: generics,
+                args_map,
+            } => {
+                let mut path = self.rust_type_to_cs(&self_ty);
+                path.push('.');
+                path.push_str(&function_name);
+                path = generic_args(
+                    path,
+                    map_type_param_source(&generic_sources, &generics, self.db)
+                        .map(|x| self.rust_type_to_cs(&x))
+                        .collect::<Vec<_>>(),
+                );
+                match args_map {
+                    None => {
+                        code!(path, "(", join(args, ", "), ")")
+                    }
+                    Some(map) => {
+                        let args = args.collect::<Vec<_>>();
+                        code!(path, "(", join(map.iter().map(|&i| &args[i]), ", "), ")")
+                    }
+                }
+            }
+            ResolvedFunction::Method {
+                self_ty: _,
+                trait_: _,
+                function_name,
+                generic_sources,
+                generic_args: generics,
+                args_map,
+            } => {
+                let reference = if matches!(function_name.as_str(), "m_VisitStr") {
+                    generic_args(
+                        function_name,
+                        map_type_param_source(&generic_sources, &generics, self.db)
+                            .map(|x| self.rust_type_to_cs(&x)),
+                    )
+                } else {
+                    function_name
+                };
+
+                match args_map {
+                    None => {
+                        let receiver = args.next().unwrap();
+                        code!(receiver, ".", reference, "(", join(args, ", "), ")")
+                    }
+                    Some((self_i, map)) => {
+                        let args = args.collect::<Vec<_>>();
+                        code!(
+                            args[self_i],
+                            ".",
+                            reference,
+                            "(",
+                            join(map.iter().map(|&i| &args[i]), ", "),
+                            ")"
+                        )
+                    }
+                }
+            }
+            ResolvedFunction::ModuleFunction { function_path, .. } => {
+                code!(function_path, "(", join(args, ", "), ")")
+            }
+            ResolvedFunction::OmitCall { comment } => {
+                let value = args.next().unwrap();
+                code!(comment, "(", value, ")")
+            }
+        }
+    }
+
     /// Emit a pattern as a condition check against a scrutinee expression.
     fn emit_pattern_ast(&self, pat: &ast::Pat) -> Code {
         match pat {
@@ -1403,67 +1456,5 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 }
             }
         }
-    }
-}
-
-struct ResolvedInto<'db> {
-    pub self_ty: Option<hir::Type<'db>>,
-    pub target_ty: hir::Type<'db>,
-}
-
-fn resolve_into<'db>(
-    f: hir::Function,
-    args: &hir::GenericSubstitution<'db>,
-    db: &'db dyn HirDatabase,
-) -> Option<ResolvedInto<'db>> {
-    if f.name(db).symbol() == &hir::sym::into
-        && let ItemContainer::Trait(trait_) = f.container(db)
-        && trait_.name(db).symbol() == &hir::sym::Into
-    {
-        let params = hir::GenericDef::Trait(trait_).params0(db);
-        let (symbol0, type0) = &args.types(db)[0];
-        let (symbol1, type1) = &args.types(db)[1];
-        assert_eq!(params[0].name(db).symbol(), symbol0);
-        assert_eq!(params[1].name(db).symbol(), symbol1);
-        Some(ResolvedInto::<'db> {
-            self_ty: Some(type0.clone()),
-            target_ty: type1.clone(),
-        })
-    } else if f.name(db).symbol() == &hir::sym::into
-        && let ItemContainer::Impl(impl_) = f.container(db)
-        && let Some(trait_ref) = impl_.trait_ref(db)
-        && trait_ref.trait_().name(db).symbol() == &hir::sym::Into
-    {
-        let impl_params = hir::GenericDef::Impl(impl_).type_or_const_params(db);
-
-        let self_type = impl_.self_ty(db);
-        let type_arg: hir::Type = trait_ref
-            .get_type_argument(1)
-            .expect("get_type_argument of Into")
-            .to_type(db);
-
-        let self_as_param = self_type
-            .as_type_param(db)
-            .expect("Self type of impl Into<T> for U is not type param");
-        let target_as_param = type_arg
-            .as_type_param(db)
-            .expect("T of Into<T> impl is not type param");
-
-        let self_index = (impl_params.iter())
-            .position(|x| x.as_type_param(db).is_some_and(|x| x == self_as_param))
-            .unwrap_or_else(|| panic!("{self_as_param:?}\n{impl_params:?}"));
-        let target_index = (impl_params.iter())
-            .position(|x| x.as_type_param(db).is_some_and(|x| x == target_as_param))
-            .unwrap();
-
-        let self_type = args.types(db)[self_index].1.clone();
-        let target_type = args.types(db)[target_index].1.clone();
-
-        Some(ResolvedInto::<'db> {
-            self_ty: Some(self_type),
-            target_ty: target_type,
-        })
-    } else {
-        None
     }
 }
