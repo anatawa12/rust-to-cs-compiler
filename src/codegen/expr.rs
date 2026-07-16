@@ -1164,7 +1164,36 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 generic_args: generics,
                 args_map,
             } => {
-                let reference = if matches!(function_name.as_str(), "m_VisitStr") {
+                let reference = if matches!(
+                    function_name.as_str(),
+                    "m_VisitStr"
+                        | "m_VisitBorrowedStr"
+                        | "m_VisitString"
+                        | "m_VisitBool"
+                        | "m_VisitI8"
+                        | "m_VisitI16"
+                        | "m_VisitI32"
+                        | "m_VisitI64"
+                        | "m_VisitI128"
+                        | "m_VisitU8"
+                        | "m_VisitU16"
+                        | "m_VisitU32"
+                        | "m_VisitU64"
+                        | "m_VisitU128"
+                        | "m_VisitF32"
+                        | "m_VisitF64"
+                        | "m_VisitChar"
+                        | "m_VisitBytes"
+                        | "m_VisitBorrowedBytes"
+                        | "m_VisitByteBuf"
+                        | "m_VisitNone"
+                        | "m_VisitUnit"
+                    // ***Access methods
+                        | "m_NextKey"
+                    // Visitor Wrappers
+                        | "m_NewMapKeyDeserializer"
+                        | "m_NewDedupForwarderVisitor"
+                ) {
                     generic_args(
                         function_name,
                         map_type_param_source(&generic_sources, &generics, self.db)
