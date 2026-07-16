@@ -6,8 +6,8 @@ use crate::ty::type_to_string::TypeToString;
 use hir_def::HasModule;
 use hir_ty::db::HirDatabase;
 use hir_ty::next_solver::{
-    AliasTy, Clause, ClauseKind, DbInterner, ErrorGuaranteed, GenericArg, GenericArgs, SolverDefId,
-    TraitRef, Ty, TyKind,
+    AliasTy, Clause, ClauseKind, DbInterner, EarlyBinder, ErrorGuaranteed, GenericArg, GenericArgs,
+    SolverDefId, TraitRef, Ty, TyKind,
 };
 use rustc_type_ir::inherent::{GenericArg as _, IntoKind};
 use rustc_type_ir::{AliasTyKind, Upcast};
@@ -35,6 +35,13 @@ pub trait TypeExt<'db> {
 
     /// Returns if this type is a array type. This doesn't require the length to be known unlike [`Type::as_array`]
     fn as_array_unsized(&self, db: &'db dyn HirDatabase) -> Option<hir::Type<'db>>;
+
+    fn instantiate(
+        &self,
+        def: hir::GenericDef,
+        args: &[hir::Type<'db>],
+        db: &'db dyn HirDatabase,
+    ) -> hir::Type<'db>;
 
     // you should add members above this line. below this line is the debug utility
     /// Debug display the type with much information as possible
@@ -119,6 +126,40 @@ impl<'db> TypeExt<'db> for hir::Type<'db> {
             Some(self.derived(inner))
         } else {
             None
+        }
+    }
+
+    fn instantiate(
+        &self,
+        def: hir::GenericDef,
+        args: &[hir::Type<'db>],
+        db: &'db dyn HirDatabase,
+    ) -> hir::Type<'db> {
+        let params = def.params(db);
+        let mut def_args = Vec::with_capacity(params.len());
+        let mut type_iter = args.iter();
+        let interner = DbInterner::new_no_crate(db);
+        for x in params {
+            match x {
+                hir::GenericParam::TypeParam(_) => def_args.push(GenericArg::from(
+                    type_iter
+                        .next()
+                        .map(|x| x.ns_ty())
+                        .unwrap_or_else(|| hir::Type::error(db, def.module(db).krate(db)).ns_ty()),
+                )),
+                hir::GenericParam::ConstParam(_) => {
+                    def_args.push(hir_ty::next_solver::Const::error(interner).into())
+                }
+                hir::GenericParam::LifetimeParam(_) => {
+                    def_args.push(hir_ty::next_solver::Region::error(interner).into())
+                }
+            }
+        }
+
+        if args.is_empty() {
+            self.clone()
+        } else {
+            self.derived(EarlyBinder::bind(self.ns_ty()).instantiate(interner, def_args.as_slice()))
         }
     }
 

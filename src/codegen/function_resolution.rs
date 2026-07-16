@@ -2,7 +2,7 @@ use crate::codegen::CodeGenerator;
 use crate::codegen::ty::generic_params::CsTypeParamSource;
 use hir::HasContainer;
 use hir::db::HirDatabase;
-use ra_internal::ImplExt;
+use ra_internal::TypeExt;
 
 type TraitRef<'db> = (hir::Trait, Vec<hir::Type<'db>>);
 
@@ -87,7 +87,9 @@ impl<'db> CodeGenerator<'db> {
         // generic way
         match f.container(db) {
             hir::ItemContainer::Impl(impl_) => {
-                let self_ty = impl_.self_ty_instantiated(db, parent_args.unwrap());
+                let self_ty =
+                    (impl_.self_ty(db)).instantiate(impl_.into(), &parent_args.unwrap(), db);
+
                 if f.self_param(db).is_some() {
                     ResolvedFunction::Method {
                         self_ty,
