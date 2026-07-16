@@ -495,39 +495,27 @@ impl<'db> CodeGenerator<'db> {
         }
     }
 
-    fn params(
-        &self,
-        types: &HashMap<&Symbol, &Type<'db>>,
-        def: GenericDef,
-    ) -> impl Iterator<Item = String> {
+    fn params(&self, types: &[Type<'db>], def: GenericDef) -> impl Iterator<Item = String> {
         let db = self.db;
-        let type_params = generic_types(&def.params0(db))
-            .map(|x| {
-                types
-                    .get(x.name(self.db).symbol())
-                    .copied()
-                    .cloned()
-                    .or_else(|| x.default(self.db))
-                    .unwrap_or_else(|| Type::error(db, self.krate))
-            })
-            .collect::<Vec<_>>();
         let param_sources = self.generic_params_cs_sources(def);
-        map_type_param_source(&param_sources, &type_params, db)
+        map_type_param_source(&param_sources, types, db)
             .map(|x| self.rust_type_to_cs(&x))
             .collect::<Vec<_>>()
             .into_iter()
     }
 
-    pub fn fn_path_cs1(&self, f: hir::Function, args: &[(Symbol, Type<'db>)]) -> String {
-        let args_by_symbol = args.iter().map(|(x, y)| (x, y)).collect::<HashMap<_, _>>();
-
+    pub fn fn_path_cs1(&self, f: hir::Function, args: Vec<(Symbol, Type<'db>)>) -> String {
         fn resolve_param<'a, 'db>(
             db: &'db dyn HirDatabase,
             ty: &'a Type<'db>,
-            args_by_symbol: &HashMap<&Symbol, &'a Type<'db>>,
+            args_by_symbol: &'a Vec<Type<'db>>,
         ) -> &'a Type<'db> {
             if let Some(param) = ty.as_type_param(db)
-                && let Some(adt) = args_by_symbol.get(param.name(db).symbol())
+                && let Some(adt) = args_by_symbol.get(
+                    generic_types(&param.parent(db).params0(db))
+                        .position(|x| x == param)
+                        .unwrap(),
+                )
             {
                 adt
             } else {
@@ -535,13 +523,21 @@ impl<'db> CodeGenerator<'db> {
             }
         }
 
+        let (parent_args, f_args) = self.extract_generic_args(f, args);
+
         match f.container(self.db) {
             ItemContainer::Impl(impl_)
                 if let Some(adt) =
-                    resolve_param(self.db, &impl_.self_ty(self.db), &args_by_symbol).as_adt() =>
+                    //resolve_param(self.db, &impl_.self_ty(self.db), &args_by_symbol).as_adt() =>
+                    resolve_param(
+                        self.db,
+                        &impl_.self_ty(self.db),
+                        parent_args.as_ref().unwrap(),
+                    )
+                    .as_adt() =>
             {
                 if f.self_param(self.db).is_some() {
-                    // TODO: explicit types
+                    // TODO: explicit types?
                     let num_params = f.num_params(self.db);
                     let mut path = String::new();
                     path.push_str("((");
@@ -556,7 +552,7 @@ impl<'db> CodeGenerator<'db> {
                     }
                     path.push_str(") => _p_0.");
                     path.push_str(&self.function_name(f));
-                    path = generic_args(path, self.params(&args_by_symbol, f.into()));
+                    path = generic_args(path, self.params(&f_args, f.into()));
                     path.push('(');
                     {
                         let mut peekable = (1..num_params).peekable();
@@ -571,18 +567,24 @@ impl<'db> CodeGenerator<'db> {
 
                     path
                 } else {
-                    let mut path = self.adt_name_cs(adt);
-                    path = generic_args(path, self.params(&args_by_symbol, adt.into()));
+                    // TODO: mapped type will have mapped type function. this might be necessary to fix
+                    let self_ty = impl_.self_ty_instantiated(self.db, parent_args.unwrap());
+                    let mut path = self.rust_type_to_cs(&self_ty);
                     path.push('.');
                     path.push_str(&self.function_name(f));
-                    path = generic_args(path, self.params(&args_by_symbol, f.into()));
+                    path = generic_args(path, self.params(&f_args, f.into()));
                     path
                 }
             }
             ItemContainer::Impl(impl_)
                 if let Some(primitive) =
-                    resolve_param(self.db, &impl_.self_ty(self.db), &args_by_symbol)
-                        .as_builtin() =>
+                    //resolve_param(self.db, &impl_.self_ty(self.db), &args_by_symbol).as_builtin() =>
+                    resolve_param(
+                        self.db,
+                        &impl_.self_ty(self.db),
+                        parent_args.as_ref().unwrap(),
+                    )
+                    .as_builtin() =>
             {
                 let mut path = String::from(primitive.name().as_str());
                 path.push('.');
@@ -630,8 +632,8 @@ impl<'db> CodeGenerator<'db> {
     pub fn extract_generic_args(
         &self,
         generic_def: impl Copy + HasContainer + DebugDisplay<'db> + Into<GenericDef>,
-        substitution: GenericSubstitution<'db>,
-    ) -> Vec<Type<'db>> {
+        args: Vec<(Symbol, Type<'db>)>,
+    ) -> (Option<Vec<Type<'db>>>, Vec<Type<'db>>) {
         let db = self.db;
         let container = generic_def.container(self.db);
         let resolved_as_generic_def = generic_def.into();
@@ -646,64 +648,60 @@ impl<'db> CodeGenerator<'db> {
             ItemContainer::ExternBlock(_) => None,
             ItemContainer::Crate(_) => None,
         };
-        let args = substitution.types(self.db);
-        let parent_params = parent_def
+
+        let parent_params_len = parent_def
             .map(|def| def.params0(self.db))
             .as_deref()
+            .map(generic_types)
             .into_iter()
-            .flat_map(generic_types)
-            .collect::<Vec<_>>();
+            .flatten()
+            .count();
+        // implicit are replacement parameter for impl trait
         let self_params = generic_types(&resolved_as_generic_def.params0(self.db))
-            .filter(|x| {
-                // implicit && missing => replacement parameter for impl trait
-                !x.is_implicit(self.db) || !x.name(self.db).is_missing()
-            })
+            .filter(|x| !x.is_implicit(self.db))
             .collect::<Vec<_>>();
-        let filtered_args = generic_types(&resolved_as_generic_def.params0(self.db))
-            .filter(|x| {
-                // implicit && missing => replacement parameter for impl trait
-                !(!x.is_implicit(self.db) || !x.name(self.db).is_missing())
-            })
+        let self_params_len = self_params.len();
+        let implicit_args_len = generic_types(&resolved_as_generic_def.params0(self.db))
+            .filter(|x| x.is_implicit(self.db))
             .count();
 
         assert_eq!(
             args.len(),
-            parent_params.len() + self_params.len(),
-            "container: {container:?}, args: {args}, params: {self_params}, parent_params: {parent_params}, sum: {sum}, f: {f}",
-            args = args.len(),
-            parent_params = parent_params.len(),
-            self_params = self_params.len(),
-            sum = parent_params.len() + self_params.len(),
+            parent_params_len + self_params_len,
+            "container: {container:?}, params: {self_params_len}, parent_params: {parent_params_len}, f: {f}",
             f = generic_def.debug_display(self.db),
         );
 
-        //let self_args = &args[parent_params.len()..];
-        let self_args = {
-            let mut tmp = { args };
-            tmp.drain(0..parent_params.len());
-            tmp
+        assert_eq!(
+            self_params_len + implicit_args_len,
+            resolved_as_generic_def_len,
+            "container: {container:?}, params: {self_params_len}, parent_params: {parent_params}, sum: {sum}, f: {f}, filtered_args: {implicit_args_len}",
+            parent_params = parent_params_len,
+            sum = self_params_len + parent_params_len,
+            f = generic_def.debug_display(self.db),
+        );
+
+        let (parent_params, self_args) = {
+            let mut parent_params = { args };
+            let self_args = parent_params.drain(parent_params_len..).collect::<Vec<_>>();
+            (parent_params, self_args)
         };
 
         assert!(self_params.iter().zip(self_args.iter()).all(
             |(param, (arg_symbol, _arg_type))| { param.name(self.db).symbol() == arg_symbol }
         ));
 
-        assert_eq!(
-            self_args.len() + filtered_args,
-            resolved_as_generic_def_len,
-            "container: {container:?}, params: {self_params}, parent_params: {parent_params}, sum: {sum}, f: {f}, filtered_args: {filtered_args}",
-            parent_params = parent_params.len(),
-            self_params = self_params.len(),
-            sum = parent_params.len() + self_params.len(),
-            f = generic_def.debug_display(self.db),
+        let implicit_args = iter::repeat_n(
+            hir::Type::error(self.db, resolved_as_generic_def.module(db).krate(db)),
+            implicit_args_len,
         );
 
-        (self_args.into_iter().map(|(_, ty)| ty))
-            .chain(iter::repeat_n(
-                hir::Type::error(self.db, resolved_as_generic_def.module(db).krate(db)),
-                filtered_args,
-            ))
-            .collect()
+        let self_type_args = (self_args.into_iter().map(|(_, ty)| ty))
+            .chain(implicit_args)
+            .collect();
+        let parent_type_args = (parent_params.into_iter().map(|(_, ty)| ty)).collect();
+
+        (parent_def.map(|_| parent_type_args), self_type_args)
     }
 
     pub fn const_path_cs(&self, adt: hir::Const) -> String {

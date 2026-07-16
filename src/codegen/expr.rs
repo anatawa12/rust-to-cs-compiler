@@ -442,7 +442,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     )
                 }
                 Some((hir::PathResolution::Def(hir::ModuleDef::Function(f)), args)) => self
-                    .fn_path_cs1(f, &args.map(|x| x.types(self.db)).unwrap_or_default())
+                    .fn_path_cs1(f, args.map(|x| x.types(self.db)).unwrap_or_default())
                     .into(),
                 Some((hir::PathResolution::Def(module_def), _))
                     if let Some(def) = ConstructableDef::from_module_def(module_def) =>
@@ -573,17 +573,15 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         code!(receiver, ".ToString/*converted from encode_utf8*/()")
                     }
                     Some((Either::Left(resolved), generics)) => {
-                        let generics = generics.map(|generics| {
-                            map_type_param_source(
-                                &self.generic_params_cs_sources(resolved.into()),
-                                &self.extract_generic_args(resolved, generics),
-                                self.db,
-                            )
-                            .map(|x| self.rust_type_to_cs(&x))
-                            .collect::<Vec<_>>()
-                        });
-                        //generic_args(String::new(), generics.into_iter().flatten().collect()),
+                        let sources = self.generic_params_cs_sources(resolved.into());
+                        let (_, generics_types) = generics
+                            .map(|generics| generics.types(self.db))
+                            .map(|types| self.extract_generic_args(resolved, types))
+                            .unwrap_or_default();
+
                         let method_cs = self.function_name(resolved);
+                        let db = self.db;
+                        let cg = self.cg;
 
                         let args = method_call
                             .arg_list()
@@ -594,9 +592,20 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                             code!(
                                 receiver,
                                 ".",
-                                generic_args(method_cs, generics.unwrap_or_default()),
+                                generic_args(
+                                    method_cs,
+                                    map_type_param_source(&sources, &generics_types, db)
+                                        .map(|x| cg.rust_type_to_cs(&x))
+                                ),
                                 "(",
-                                join(args, ", "),
+                                join(
+                                    method_call
+                                        .arg_list()
+                                        .unwrap()
+                                        .args()
+                                        .map(|a| self.emit_expr_str_ast(&a)),
+                                    ", "
+                                ),
                                 ")"
                             )
                         } else {

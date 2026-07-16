@@ -13,6 +13,7 @@ mod internal;
 
 mod assoc_item;
 mod debug;
+mod impl_;
 mod lang_items;
 mod trait_;
 mod trait_ref;
@@ -22,6 +23,7 @@ mod type_param;
 
 pub use assoc_item::*;
 pub use debug::*;
+pub use impl_::*;
 pub use lang_items::*;
 pub use trait_::*;
 pub use trait_ref::*;
@@ -29,6 +31,7 @@ pub use ty::*;
 pub use ty_map::*;
 pub use type_param::*;
 
+pub use crate::ImplExt as _;
 pub use crate::TraitExt as _;
 pub use crate::TypeExt as _;
 pub use crate::TypeParamExt as _;
