@@ -4,7 +4,6 @@ use super::{CodeGenerator, generic_args, names, output::Code};
 use crate::codegen::constructable::{Constructable, ConstructableDef};
 use crate::codegen::function_resolution::ResolvedFunction;
 use crate::codegen::simple_extensions::*;
-use crate::codegen::ty::generic_params::map_type_param_source;
 use hir::db::HirDatabase;
 use hir::{HasCrate, InFile, Local, ModuleDef, PathResolution, StructKind, sym};
 use itertools::Either;
@@ -466,9 +465,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                             path.push_str(&function_name);
                             path = generic_args(
                                 path,
-                                map_type_param_source(&generic_sources, &args, self.db)
-                                    .map(|x| self.rust_type_to_cs(&x))
-                                    .collect::<Vec<_>>(),
+                                self.map_cs_type_param_source(&generic_sources, &args),
                             );
                             path.into()
                         }
@@ -1142,9 +1139,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 path.push_str(&function_name);
                 path = generic_args(
                     path,
-                    map_type_param_source(&generic_sources, &generics, self.db)
-                        .map(|x| self.rust_type_to_cs(&x))
-                        .collect::<Vec<_>>(),
+                    self.map_cs_type_param_source(&generic_sources, &generics),
                 );
                 match args_map {
                     None => {
@@ -1196,8 +1191,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 ) {
                     generic_args(
                         function_name,
-                        map_type_param_source(&generic_sources, &generics, self.db)
-                            .map(|x| self.rust_type_to_cs(&x)),
+                        self.map_cs_type_param_source(&generic_sources, &generics),
                     )
                 } else {
                     function_name

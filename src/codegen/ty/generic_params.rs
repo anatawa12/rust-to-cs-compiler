@@ -57,6 +57,15 @@ impl<'db> CodeGenerator<'db> {
 
         type_params
     }
+
+    pub fn map_cs_type_param_source(
+        &self,
+        params: &[CsTypeParamSource],
+        instances: &[hir::Type<'db>],
+    ) -> impl Iterator<Item = String> {
+        (params.iter())
+            .map(|x| self.rust_type_to_cs(&resolve_cs_type_param_source(x, instances, self.db)))
+    }
 }
 
 pub fn resolve_cs_type_param_source<'db>(
@@ -70,12 +79,4 @@ pub fn resolve_cs_type_param_source<'db>(
             generic_types[i].new_associated_type(alias, db)
         }
     }
-}
-
-pub fn map_type_param_source<'db>(
-    params: &[CsTypeParamSource],
-    instances: &[hir::Type<'db>],
-    db: &'db dyn HirDatabase,
-) -> impl Iterator<Item = hir::Type<'db>> {
-    (params.iter()).map(|x| resolve_cs_type_param_source(x, instances, db))
 }

@@ -293,8 +293,8 @@ impl<'db> CodeGenerator<'db> {
         let instances = generic_types(params)
             .map(|param| param.ty(db))
             .collect::<Vec<_>>();
-        let type_params = map_type_param_source(&sources, &instances, db)
-            .map(|x| self.rust_type_to_cs(&x))
+        let type_params = self
+            .map_cs_type_param_source(&sources, &instances)
             .collect();
         let constraints = self.generic_params_cs_constraints(&sources, params);
 
@@ -662,20 +662,17 @@ impl<'db> CodeGenerator<'db> {
         value: impl CsPathWithArgsMember + Into<hir::GenericDef> + Copy,
         args: impl IntoIterator<Item = impl Into<Option<hir::Type<'db>>>>,
     ) -> String {
-        let db = self.db;
         let as_def = value.into();
 
         generic_args(
             value.cs_path(self),
-            map_type_param_source(
+            self.map_cs_type_param_source(
                 &self.generic_params_cs_sources(as_def),
                 &args
                     .into_iter()
                     .filter_map(|x| x.into())
                     .collect::<Vec<_>>(),
-                db,
-            )
-            .map(|x| self.rust_type_to_cs(&x)),
+            ),
         )
     }
 }
