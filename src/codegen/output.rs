@@ -3,7 +3,8 @@
 #[derive(Clone, Default, Eq, PartialEq)]
 pub struct Code {
     buf: String,
-    indent: usize,
+    indent: isize,
+    pending_indent: isize,
 }
 
 impl Code {
@@ -18,6 +19,7 @@ impl Code {
         Self {
             buf: String::new(),
             indent: 0,
+            pending_indent: 0,
         }
     }
 
@@ -26,14 +28,20 @@ impl Code {
     }
 
     pub fn indent(&mut self) {
-        assert_eq!(self.buf.chars().rfind(|x| !Self::special(x)), Some('\n'));
-        self.buf.push(Self::INC_INDENT as char);
+        if self.buf.chars().rfind(|x| !Self::special(x)) == Some('\n') {
+            self.buf.push(Self::INC_INDENT as char);
+        } else {
+            self.pending_indent += 1;
+        }
         self.indent += 1;
     }
 
     pub fn dedent(&mut self) {
-        assert_eq!(self.buf.chars().rfind(|x| !Self::special(x)), Some('\n'));
-        self.buf.push(Self::DEC_INDENT as char);
+        if self.buf.chars().rfind(|x| !Self::special(x)) == Some('\n') {
+            self.buf.push(Self::DEC_INDENT as char);
+        } else {
+            self.pending_indent -= 1;
+        }
         self.indent = self.indent.saturating_sub(1);
     }
 
@@ -49,20 +57,32 @@ impl Code {
     }
 
     fn write_str(&mut self, s: &str) -> &mut Self {
-        self.buf.push_str(s);
-        self
-    }
+        if self.pending_indent == 0 {
+            self.buf.push_str(s);
+        } else if let Some((first_line, rest)) = s.split_once('\n') {
+            self.buf.push_str(first_line);
+            self.buf.push('\n');
 
-    fn write_inner(&mut self, s: &Self) -> &mut Self {
-        assert_eq!(s.indent, 0);
-        self.buf.push_str(&s.buf);
+            while self.pending_indent > 0 {
+                self.buf.push(Self::INC_INDENT as char);
+                self.pending_indent -= 1;
+            }
+            while self.pending_indent < 0 {
+                self.buf.push(Self::DEC_INDENT as char);
+                self.pending_indent += 1;
+            }
+
+            self.buf.push_str(rest);
+        } else {
+            self.buf.push_str(s);
+        }
         self
     }
 
     pub fn blank_line(&mut self) {
         // Avoid consecutive blank lines.
         if !self.buf.ends_with("\n\n") {
-            self.buf.push('\n');
+            self.write_str("\n");
         }
     }
 
@@ -155,7 +175,8 @@ impl WriteToCode for char {
 
 impl WriteToCode for Code {
     fn append(&self, out: &mut Code) {
-        out.write_inner(self);
+        assert_eq!(self.indent, 0);
+        out.write_str(&self.buf);
     }
 }
 
@@ -244,3 +265,4 @@ macro_rules! code {
 }
 
 pub(crate) use code;
+use std::fmt::Write;

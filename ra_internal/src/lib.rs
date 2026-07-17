@@ -13,6 +13,7 @@ mod internal;
 
 mod assoc_item;
 mod debug;
+pub mod function;
 mod impl_;
 mod lang_items;
 mod trait_;

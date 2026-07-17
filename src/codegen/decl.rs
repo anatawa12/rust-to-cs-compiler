@@ -1,10 +1,12 @@
 use super::{CodeGenerator, expr::BodyGen, names, output::Code};
 use crate::codegen::expr::ItemInBody;
+use crate::codegen::simple_extensions::*;
 use cfg::CfgExpr;
 /// Generates C# type declarations from Rust HIR types.
 use hir::{
     Adt, AssocItem, HasAttrs, HasContainer, HasCrate, HasSource, Impl, Trait, db::HirDatabase,
 };
+use ra_internal::function::FunctionExt;
 use ra_internal::*;
 use std::collections::HashMap;
 use syntax::ast::HasAttrs as AstHasAttrs;
@@ -134,7 +136,10 @@ impl<'db> CodeGenerator<'db> {
         for item in t.items(db) {
             match item {
                 AssocItem::Function(f) => {
-                    self.emit_trait_method_sig(out, f);
+                    if f.has_self_param(db) {
+                        self.emit_function_signature(out, f, "", "", false, |x| x);
+                        out.wln(";");
+                    }
                 }
                 AssocItem::Const(c) => {
                     if let Some(cn) = c.name(db) {
@@ -150,32 +155,22 @@ impl<'db> CodeGenerator<'db> {
             }
         }
 
+        if t.needs_statics(db) {
+            out.wln("public interface Statics").open_brace();
+            for item in t.items(db) {
+                if let AssocItem::Function(f) = item
+                    && !f.has_self_param(db)
+                    && !f.is_explicit_sized_self(db)
+                {
+                    self.emit_function_signature(out, f, "", "", true, |x| x);
+                    out.wln(";");
+                }
+            }
+            out.close_brace();
+        }
+
         out.close_brace();
         out.blank_line();
-    }
-
-    fn emit_trait_method_sig(&self, out: &mut Code, f: hir::Function) {
-        let db = self.db;
-
-        let (all_params, _constraints) = self.generic_def_params_cs(f.into());
-
-        let is_async = f.is_async(db);
-        let ret_ty = f.ret_type(db);
-        let cs_ret = self.cs_ret_type(is_async, &ret_ty);
-        let has_self = f.has_self_param(db);
-        let is_static_kw = if !has_self { "static " } else { "" };
-        let m_name = self.function_name(f);
-        let params = self.build_param_list(f);
-        let static_comment = if !has_self { "// " } else { "" };
-
-        let generics = if all_params.is_empty() {
-            String::new()
-        } else {
-            format!("<{}>", all_params.join(", "))
-        };
-        out.wln(format!(
-            "{static_comment}{is_static_kw}{cs_ret} {m_name}{generics}({params});"
-        ));
     }
 
     /// Emit a function/method with a stub body (TODO: real body generation).
@@ -191,50 +186,30 @@ impl<'db> CodeGenerator<'db> {
             return;
         }
 
-        let (tp_names, constraints) = self.generic_def_params_cs(f.into());
-        let generics = self.format_generics(&tp_names);
-
-        let is_async = f.is_async(db);
-        let ret_ty = f.async_ret_type(db).unwrap_or(f.ret_type(db));
-        let cs_ret = self.cs_ret_type(is_async, &ret_ty);
-        let async_kw = if is_async { "async " } else { "" };
-        let m_name = self.function_name(f);
-        let has_self = f.has_self_param(db);
-        let is_static_kw = if !has_self { "static " } else { "" };
-        let params = self.build_param_list(f);
-
         // Determine the class this method belongs to
         let cs_self = impl_ctx
             .map(|i| self.rust_type_to_cs(&i.self_ty(db)))
             .unwrap_or_else(|| "/* top-level */".to_string());
 
         if is_fn_r2cs_native(f, self.krate, db) {
-            writeln!(
-                out,
-                "// [r2cs_native] {m_name} — add implementation in r2CsNative/",
-            );
-            writeln!(
-                out,
-                "public {is_static_kw} partial {cs_ret} {m_name}{generics}({params})",
-            );
-            out.indent();
-            for constraint in constraints {
-                out.w("where ").wln(constraint);
-            }
-            out.dedent();
+            writeln!(out, "// [r2cs_native] - add implementation in r2CsNative/",);
+            self.emit_function_signature(out, f, "public ", "partial ", false, |x| x);
             out.wln(";");
             return;
         }
+
+        let is_async = f.is_async(db);
+
         writeln!(out, "// method on {}", cs_self);
-        writeln!(
+        self.emit_function_signature(
             out,
-            "public {is_static_kw}{async_kw}{cs_ret} {m_name}{generics}({params})",
+            f,
+            "public ",
+            if is_async { "async " } else { "" },
+            false,
+            |x| x,
         );
-        out.indent();
-        for constraint in constraints {
-            out.w("where ").wln(constraint);
-        }
-        out.dedent();
+        out.wln("");
         out.open_brace();
 
         // Try to generate a real body using BodyGen
@@ -246,6 +221,44 @@ impl<'db> CodeGenerator<'db> {
 
         self.deferred(out, body_gen.deferred(), f.module(self.db));
         out.blank_line();
+    }
+
+    pub fn emit_function_signature(
+        &self,
+        out: &mut Code,
+        f: hir::Function,
+        access: &str,
+        additional_modifier: &str,
+        always_instance: bool,
+        type_mapper: impl Fn(hir::Type<'db>) -> hir::Type<'db>,
+    ) {
+        let db = self.db;
+
+        let (tp_names, constraints) = self.generic_def_params_cs(f.into());
+        let generics = self.format_generics(&tp_names);
+
+        let is_async = f.is_async(db);
+        let ret_ty = type_mapper(f.async_ret_type(db).unwrap_or(f.ret_type(db)));
+        let cs_ret = self.cs_ret_type(is_async, &ret_ty);
+        let m_name = self.function_name(f);
+        let has_self = f.has_self_param(db);
+        let is_static_kw = if !has_self && !always_instance {
+            "static "
+        } else {
+            ""
+        };
+        let params = self.build_param_list(f, type_mapper);
+
+        write!(
+            out,
+            "{access}{is_static_kw}{additional_modifier}{cs_ret} {m_name}{generics}({params})",
+        );
+        out.indent();
+        for constraint in constraints {
+            out.wln("");
+            out.w("where ").w(constraint);
+        }
+        out.dedent();
     }
 
     fn deferred(&self, out: &mut Code, deferred: &[ItemInBody], parent: hir::Module) {
@@ -367,7 +380,11 @@ impl<'db> CodeGenerator<'db> {
         }
     }
 
-    fn build_param_list(&self, f: hir::Function) -> String {
+    fn build_param_list(
+        &self,
+        f: hir::Function,
+        type_mapper: impl Fn(hir::Type<'db>) -> hir::Type<'db>,
+    ) -> String {
         let db = self.db;
 
         let params = f.params_without_self(db);
@@ -375,7 +392,7 @@ impl<'db> CodeGenerator<'db> {
             .iter()
             .enumerate()
             .map(|(i, param)| {
-                let cs_ty = self.rust_type_to_cs(param.ty());
+                let cs_ty = self.rust_type_to_cs(&type_mapper(param.ty().clone()));
                 let p_name = param
                     .name(db)
                     .map(|n| names::local_name(n.as_str(), 0))

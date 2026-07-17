@@ -9,11 +9,6 @@ pub fn struct_name(rust_name: &str) -> String {
     format!("s_{}", pascal(rust_name))
 }
 
-/// Empty struct for trait static members (vtable).
-pub fn static_struct_name(rust_name: &str) -> String {
-    format!("S_{}", pascal(rust_name))
-}
-
 /// Non-dyn trait interface.
 pub fn trait_name(rust_name: &str) -> String {
     format!("t_{}", pascal(rust_name))

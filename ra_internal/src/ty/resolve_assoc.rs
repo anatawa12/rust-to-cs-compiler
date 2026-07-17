@@ -20,7 +20,7 @@ pub(super) fn resolve_associated_type<'db>(
     resolve_assoc_of_impl_impl(assoc_ty, db)
 }
 
-#[tracing::instrument]
+#[tracing::instrument(skip_all, fields(assoc_type = %assoc_type.debug_display(db)))]
 fn resolve_assoc_of_impl_impl<'db>(
     assoc_type: &hir::Type<'db>,
     db: &'db dyn HirDatabase,

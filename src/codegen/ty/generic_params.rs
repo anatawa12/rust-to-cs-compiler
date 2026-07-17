@@ -53,7 +53,7 @@ impl<'db> CodeGenerator<'db> {
 
             if !self.special_type_param(param).is_special_impl() {
                 type_params.push(CsTypeParamSource::TypeParam(index));
-                if param.trait_bounds(db).iter().any(|&t| t.has_static_fn(db)) {
+                if param.trait_bounds(db).iter().any(|&t| t.needs_statics(db)) {
                     type_params.push(CsTypeParamSource::TraitStaticTypeParam(index));
                 }
             }
@@ -70,7 +70,7 @@ impl<'db> CodeGenerator<'db> {
                     .left()
                     .expect("must be traits")
                     .iter()
-                    .any(|&(t, _)| t.has_static_fn(db))
+                    .any(|&(t, _)| t.needs_statics(db))
                 {
                     type_params.push(CsTypeParamSource::TraitStaticAliasOfParam(
                         index,
@@ -84,7 +84,7 @@ impl<'db> CodeGenerator<'db> {
             for alias in trait_.assoc_types_for_cs(db) {
                 type_params.push(CsTypeParamSource::AliasOfParam(0, vec![alias]));
 
-                if alias.bounds(db).iter().any(|&(t, _)| t.has_static_fn(db)) {
+                if alias.bounds(db).iter().any(|&(t, _)| t.needs_statics(db)) {
                     type_params.push(CsTypeParamSource::TraitStaticAliasOfParam(0, vec![alias]));
                 }
             }

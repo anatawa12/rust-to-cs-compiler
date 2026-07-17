@@ -431,7 +431,7 @@ impl<'db> CodeGenerator<'db> {
                 Either::Left(traits) if source.is_static_container() => {
                     let mut cs_constraints = vec!["struct".into()];
                     for (trait_, args) in traits {
-                        if trait_.has_static_fn(db) {
+                        if trait_.needs_statics(db) {
                             cs_constraints.push(self.cs_path_with_args(trait_, args) + ".Statics");
                         }
                     }

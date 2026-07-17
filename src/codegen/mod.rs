@@ -1,3 +1,4 @@
+use crate::codegen::simple_extensions::*;
 #[macro_use]
 pub mod output;
 #[macro_use]
@@ -33,6 +34,7 @@ use hir::{
     TypeParam, db::HirDatabase,
 };
 use ide_db::line_index;
+use ra_internal::function::FunctionExt;
 use ra_internal::*;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -299,8 +301,8 @@ impl<'db> CodeGenerator<'db> {
                 out.blank_line();
 
                 // Methods from all impl blocks
-                for impl_ in impls {
-                    self.emit_impl_methods(out, *impl_);
+                for &impl_ in impls {
+                    self.emit_impl_methods(out, &cs_name, impl_);
                 }
 
                 out.close_brace();
@@ -346,8 +348,8 @@ impl<'db> CodeGenerator<'db> {
                 }
 
                 // Methods from all impl blocks
-                for impl_ in impls {
-                    self.emit_impl_methods(out, *impl_);
+                for &impl_ in impls {
+                    self.emit_impl_methods(out, &cs_name, impl_);
                 }
 
                 out.close_brace();
@@ -424,7 +426,8 @@ impl<'db> CodeGenerator<'db> {
         }
     }
 
-    fn emit_impl_methods(&self, out: &mut Code, impl_: Impl) {
+    fn emit_impl_methods(&self, out: &mut Code, cs_name: &str, impl_: Impl) {
+        let _scope = tracing::info_span!("emit_impl_methods", cs_name).entered();
         let db = self.db;
         if is_impl_cfg_disabled(impl_, db) {
             return;
@@ -506,6 +509,60 @@ impl<'db> CodeGenerator<'db> {
             out.wln(fcode!("public static bool operator==({self_ty_cs} self, {self_ty_cs} right) => self.m_Eq(right);"));
             out.wln(fcode!("public static bool operator!=({self_ty_cs} self, {self_ty_cs} right) => !self.m_Eq(right);"));
             out.wln(fcode!("public override bool Equals(object? obj) => obj is {self_ty_cs} cast && this == cast;"));
+        }
+
+        if let Some(trait_ref) = impl_.trait_ref(db)
+            && let static_fns = trait_ref
+                .trait_()
+                .items(db)
+                .into_iter()
+                .filter_map(|x| variant_or_none!(x, hir::AssocItem::Function))
+                .filter(|x| !x.has_self_param(db) && !x.is_explicit_sized_self(db))
+                .collect::<Vec<_>>()
+            && !static_fns.is_empty()
+        {
+            out.wln(fcode!(
+                "// Statics wrapper for {}",
+                trait_ref.trait_().name(db).as_str()
+            ));
+            out.wln(fcode!("public partial struct Statics : {trait}.Statics {{", trait = self.cs_path_with_args(trait_ref.trait_(), trait_ref.generic_types(db))));
+            out.indent();
+            for f in static_fns {
+                let _scope =
+                    tracing::info_span!("static_wrapper", f = %f.debug_display(db), trait = %trait_ref.trait_().debug_display(db)).entered();
+                let type_args = trait_ref
+                    .generic_types(db)
+                    .flatten()
+                    .chain(
+                        hir::GenericDef::from(f)
+                            .params0(db)
+                            .iter()
+                            .filter_map(|x| variant_or_none!(x, hir::GenericParam::TypeParam))
+                            .map(|x| x.ty(db)),
+                    )
+                    .collect::<Vec<_>>();
+                self.emit_function_signature(out, f, "public ", "", true, |x| {
+                    x.instantiate(f.into(), &type_args, db)
+                });
+                let f_name = self.function_name(f);
+                let params = f
+                    .params_without_self(db)
+                    .iter()
+                    .enumerate()
+                    .map(|(i, param)| {
+                        param
+                            .name(db)
+                            .map(|n| names::local_name(n.as_str(), 0))
+                            .unwrap_or_else(|| format!("p_{}", i))
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                out.indent();
+                out.wln(fcode!("=> {cs_name}.{f_name}({params});"));
+                out.dedent();
+            }
+            out.dedent();
+            out.wln(fcode!("}}"));
         }
     }
 

@@ -2,7 +2,9 @@ mod resolve_assoc;
 mod type_to_string;
 
 use super::internal::{TyExt, TyFromType};
+use crate::DebugDisplay;
 use crate::ty::type_to_string::TypeToString;
+use hir::HasContainer;
 use hir_def::HasModule;
 use hir_ty::db::HirDatabase;
 use hir_ty::next_solver::{
@@ -135,11 +137,39 @@ impl<'db> TypeExt<'db> for hir::Type<'db> {
         args: &[hir::Type<'db>],
         db: &'db dyn HirDatabase,
     ) -> hir::Type<'db> {
-        let params = def.params(db);
+        let parent_def = match match def {
+            hir::GenericDef::Function(f) => Some(f.container(db)),
+            hir::GenericDef::Adt(_) => None,
+            hir::GenericDef::Trait(_) => None,
+            hir::GenericDef::TypeAlias(a) => Some(a.container(db)),
+            hir::GenericDef::Impl(_) => None,
+            hir::GenericDef::Const(c) => Some(c.container(db)),
+            hir::GenericDef::Static(s) => Some(s.container(db)),
+        } {
+            Some(hir::ItemContainer::Trait(trait_)) => Some(hir::GenericDef::Trait(trait_)),
+            Some(hir::ItemContainer::Impl(impl_)) => Some(hir::GenericDef::Impl(impl_)),
+            Some(hir::ItemContainer::Module(_)) => None,
+            Some(hir::ItemContainer::ExternBlock(_)) => None,
+            Some(hir::ItemContainer::Crate(_)) => None,
+            None => None,
+        };
+        let params = parent_def
+            .map(|def| def.params(db))
+            .unwrap_or_default()
+            .into_iter()
+            .chain(def.params(db))
+            .collect::<Vec<_>>();
         let mut def_args = Vec::with_capacity(params.len());
         let mut type_iter = args.iter();
         let interner = DbInterner::new_no_crate(db);
-        for x in params {
+
+        if matches!(def, hir::GenericDef::Trait(_))
+            || matches!(parent_def, Some(hir::GenericDef::Trait(_)))
+        {
+            def_args.push(GenericArg::from(type_iter.next().unwrap().ns_ty()))
+        }
+
+        for &x in &params {
             match x {
                 hir::GenericParam::TypeParam(_) => def_args.push(GenericArg::from(
                     type_iter
@@ -155,6 +185,16 @@ impl<'db> TypeExt<'db> for hir::Type<'db> {
                 }
             }
         }
+        tracing::trace!(
+            "instantiate: {} with {:?} ({params:?}) based on {def:?}",
+            self.debug_display(db),
+            args.iter()
+                .map(|x| std::fmt::from_fn(move |f| std::fmt::Display::fmt(
+                    &x.debug_display(db),
+                    f
+                )))
+                .collect::<Vec<_>>()
+        );
 
         if args.is_empty() {
             self.clone()

@@ -3,11 +3,12 @@
 use crate::codegen::ty::is_omit_trait_assoc_type;
 use hir::db::HirDatabase;
 use hir::{Adt, GenericDef, HasContainer, HasCrate, ItemContainer, Trait, Type, sym};
+use ra_internal::function::FunctionExt;
 use ra_internal::*;
 
 pub trait TraitExt {
     fn assoc_types_for_cs(&self, db: &dyn HirDatabase) -> Vec<hir::TypeAlias>;
-    fn has_static_fn(self, db: &dyn HirDatabase) -> bool;
+    fn needs_statics(self, db: &dyn HirDatabase) -> bool;
 }
 
 impl TraitExt for Trait {
@@ -19,9 +20,9 @@ impl TraitExt for Trait {
             .collect()
     }
 
-    fn has_static_fn(self, db: &dyn HirDatabase) -> bool {
+    fn needs_statics(self, db: &dyn HirDatabase) -> bool {
         self.items(db).iter().any(|item| match *item {
-            hir::AssocItem::Function(f) => !f.has_self_param(db),
+            hir::AssocItem::Function(f) => !f.has_self_param(db) && !f.is_explicit_sized_self(db),
             hir::AssocItem::Const(_) => false,
             hir::AssocItem::TypeAlias(_) => false,
         })
