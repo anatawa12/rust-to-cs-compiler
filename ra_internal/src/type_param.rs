@@ -1,6 +1,5 @@
 use crate::internal::{ParsedProjection, parse_bounds_for};
 use hir_def::TypeParamId;
-use hir_def::resolver::HasResolver;
 use hir_ty::GenericPredicates;
 use hir_ty::db::HirDatabase;
 use itertools::Either;
@@ -33,14 +32,11 @@ impl TypeParamExt for hir::TypeParam {
         t: &hir::Type<'db>,
         db: &'db dyn HirDatabase,
     ) -> Either<Vec<(hir::Trait, Vec<hir::Type<'db>>)>, hir::Type<'db>> {
-        let resolver = TypeParamId::from(self).parent().resolver(db);
-
         match parse_bounds_for(
             GenericPredicates::query_explicit(db, TypeParamId::from(self).parent())
                 .iter_identity()
                 .collect::<Vec<_>>(),
             t,
-            &resolver,
             db,
         ) {
             ParsedProjection::Projection(t) => Either::Right(t),

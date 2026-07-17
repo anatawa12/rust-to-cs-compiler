@@ -2,12 +2,11 @@ use crate::debug::DebugDisplay;
 use crate::internal::{ParsedProjection, TyFromType, parse_bounds_for};
 use crate::ty::TypeExt;
 use ::hir;
-use hir_def::resolver::HasResolver;
 use hir_def::signatures::TypeAliasSignature;
 use hir_def::*;
+use hir_ty::GenericPredicates;
 use hir_ty::db::HirDatabase;
 use hir_ty::next_solver::*;
-use hir_ty::{GenericPredicates, ImplTraitId};
 use rustc_type_ir::inherent::{GenericArg as _, IntoKind};
 use rustc_type_ir::{AliasTyKind, Interner};
 use tracing::{debug, trace};
@@ -62,12 +61,8 @@ fn resolve_assoc_of_impl_impl<'db>(
                 .expect_opaque_ty()
                 .predicates(db)
                 .iter_instantiated_copied(interner, self_ty_alias.args.as_slice());
-            let resolver = match def_id.expect_opaque_ty().loc(db) {
-                ImplTraitId::ReturnTypeImplTrait(f, _) => f.resolver(db),
-                ImplTraitId::TypeAliasImplTrait(a, _) => a.resolver(db),
-            };
 
-            match parse_bounds_for(bounds, assoc_type, &resolver, db) {
+            match parse_bounds_for(bounds, assoc_type, db) {
                 ParsedProjection::NoBounds => assoc_type.clone(),
                 ParsedProjection::Projection(ty) => ty,
                 ParsedProjection::Traits(traits) => {
@@ -85,8 +80,7 @@ fn resolve_assoc_of_impl_impl<'db>(
         }
         TyKind::Param(param) => {
             let bounds = GenericPredicates::query_explicit(db, param.id.parent()).iter_identity();
-            let resolver = param.id.parent().resolver(db);
-            match parse_bounds_for(bounds, assoc_type, &resolver, db) {
+            match parse_bounds_for(bounds, assoc_type, db) {
                 ParsedProjection::NoBounds => assoc_type.clone(),
                 ParsedProjection::Projection(ty) => ty,
                 ParsedProjection::Traits(_) => {

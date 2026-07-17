@@ -1,5 +1,6 @@
 //! Extensions for the `hir` crate types without any non-hir crate types
 
+use crate::codegen::ty::is_omit_trait_assoc_type;
 use hir::db::HirDatabase;
 use hir::{Adt, GenericDef, HasContainer, HasCrate, ItemContainer, Trait, Type, sym};
 use ra_internal::*;
@@ -10,19 +11,6 @@ pub trait TraitExt {
 
 impl TraitExt for Trait {
     fn assoc_types_for_cs(&self, db: &dyn HirDatabase) -> Vec<hir::TypeAlias> {
-        fn is_omit_trait_assoc_type(db: &dyn HirDatabase, alias: hir::TypeAlias) -> bool {
-            let trait_ = match alias.container(db) {
-                ItemContainer::Trait(t) => t,
-                _ => panic!(),
-            };
-            if trait_.name(db).symbol() == &sym::IntoIterator
-                && alias.name(db).symbol() == &sym::IntoIter
-            {
-                return true;
-            }
-            false
-        }
-
         self.items(db)
             .into_iter()
             .flat_map(|x| variant_or_none!(x, hir::AssocItem::TypeAlias))

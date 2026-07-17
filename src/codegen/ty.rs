@@ -100,6 +100,15 @@ impl<'db> CodeGenerator<'db> {
                 format!("/* implicit */ {}", self.impl_ty_param_id.id_name(&param))
             }
         } else if let Some((param, aliases)) = ty.as_assoc_of_type_param(db) {
+            if is_omit_trait_assoc_type(db, *aliases.last().unwrap()) {
+                let mut traits = param
+                    .trait_bounds_of_nested_type_with_args(ty, db)
+                    .expect_left("Bounds of ArgOnlyTrait is projection");
+                traits.retain(|&(trait_, _)| !ignored_trait(trait_, db));
+                let (trait_, args) = { traits }.swap_remove(0);
+                return self.cs_path_with_args(trait_, args);
+            }
+
             let mut type_name = if param.is_implicit(db) && param.name(db) == sym::Self_ {
                 "A".to_string()
             } else {
@@ -714,4 +723,23 @@ pub fn ignored_trait(trait_: hir::Trait, db: &dyn HirDatabase) -> bool {
         || Some(trait_) == lang_item.Sync()
         || Some(trait_) == lang_item.Unpin()
         || Some(trait_) == lang_item.Copy()
+}
+
+pub fn is_omit_trait_assoc_type(db: &dyn HirDatabase, alias: hir::TypeAlias) -> bool {
+    let trait_ = match alias.container(db) {
+        ItemContainer::Trait(t) => t,
+        _ => panic!(),
+    };
+    if trait_.name(db).symbol() == &sym::IntoIterator && alias.name(db).symbol() == &sym::IntoIter {
+        return true;
+    }
+    if trait_.name(db).as_str() == "IoTrait"
+        && matches!(
+            alias.name(db).as_str(),
+            "DirEntry" | "ReadDirStream" | "FileStream"
+        )
+    {
+        return true;
+    }
+    false
 }

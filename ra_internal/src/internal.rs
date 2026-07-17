@@ -103,7 +103,6 @@ pub(crate) enum ParsedProjection<'db> {
 pub(crate) fn parse_bounds_for<'db>(
     bounds: impl IntoIterator<Item = Clause<'db>>,
     target_type: &hir::Type<'db>,
-    resolver: &Resolver,
     db: &'db dyn HirDatabase,
 ) -> ParsedProjection<'db> {
     let target_ty = target_type.ns_ty();
@@ -158,14 +157,26 @@ pub(crate) fn parse_bounds_for<'db>(
         Some((alias.self_ty(), SolverDefId::TypeAliasId(alias_id)))
     };
 
-    let lang_items = lang_items(db, resolver.krate());
+    let clauses = (bounds.into_iter().chain(def_clauses.into_iter().flatten())).collect::<Vec<_>>();
+    parse_clauses(clauses, target_type, projection, db)
+}
+
+pub(crate) fn parse_clauses<'db>(
+    clauses: impl IntoIterator<Item = Clause<'db>>,
+    target_type: &hir::Type<'db>,
+    projection: Option<(Ty<'db>, SolverDefId)>,
+    db: &'db dyn HirDatabase,
+) -> ParsedProjection<'db> {
+    let target_ty = target_type.ns_ty();
+
+    let lang_items = lang_items(db, target_type.env().krate);
 
     #[derive(Debug)]
     enum Pred<'db> {
         Ty(Ty<'db>),
         Trait(TraitRef<'db>),
     }
-    let clauses = (bounds.into_iter().chain(def_clauses.into_iter().flatten())).collect::<Vec<_>>();
+
     let preds = (clauses.into_iter())
         .filter_map(|clause| match clause.kind().skip_binder() {
             ClauseKind::Projection(proj)
