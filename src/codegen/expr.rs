@@ -1188,6 +1188,11 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         | "m_VisitByteBuf"
                         | "m_VisitNone"
                         | "m_VisitUnit"
+                        | "m_VisitSome"
+                        | "m_VisitNewtypeStruct"
+                        | "m_VisitSeq"
+                        | "m_VisitMap"
+                        | "m_VisitEnum"
                     // ***Access methods
                         | "m_NextKey"
                     // Visitor Wrappers

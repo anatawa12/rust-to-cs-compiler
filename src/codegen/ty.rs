@@ -299,7 +299,6 @@ impl<'db> CodeGenerator<'db> {
             }
             "OsString" | "OsStr" | "CString" | "CStr" => Some("string".to_string()),
             "Duration" => Some("System.TimeSpan".to_string()),
-            "Instant" => Some("long".to_string()), // ticks
             "Url" => Some("System.Uri".to_string()),
             "Bytes" | "BytesMut" => Some("byte[]".to_string()),
             "RustTask" => {
