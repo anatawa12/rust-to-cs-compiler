@@ -19,6 +19,7 @@ mod trait_;
 mod trait_ref;
 mod ty;
 mod ty_map;
+pub mod type_alias;
 mod type_param;
 
 pub use assoc_item::*;

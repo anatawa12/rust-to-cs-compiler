@@ -7,6 +7,7 @@ use ra_internal::*;
 
 pub trait TraitExt {
     fn assoc_types_for_cs(&self, db: &dyn HirDatabase) -> Vec<hir::TypeAlias>;
+    fn has_static_fn(self, db: &dyn HirDatabase) -> bool;
 }
 
 impl TraitExt for Trait {
@@ -16,6 +17,14 @@ impl TraitExt for Trait {
             .flat_map(|x| variant_or_none!(x, hir::AssocItem::TypeAlias))
             .filter(|&alias| !is_omit_trait_assoc_type(db, alias))
             .collect()
+    }
+
+    fn has_static_fn(self, db: &dyn HirDatabase) -> bool {
+        self.items(db).iter().any(|item| match *item {
+            hir::AssocItem::Function(f) => !f.has_self_param(db),
+            hir::AssocItem::Const(_) => false,
+            hir::AssocItem::TypeAlias(_) => false,
+        })
     }
 }
 

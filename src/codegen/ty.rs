@@ -4,7 +4,7 @@ pub mod trait_assoc_types;
 use super::{CodeGenerator, generic_args, names};
 use crate::codegen::constructable::{Constructable, ConstructableDef};
 use crate::codegen::simple_extensions::*;
-use crate::codegen::ty::generic_params::{map_type_param_source, resolve_cs_type_param_source};
+use crate::codegen::ty::generic_params::resolve_cs_type_param_source;
 /// Converts Rust HIR types to C# type strings.
 use hir::db::HirDatabase;
 use hir::{Adt, BuiltinType, GenericDef, ItemContainer, Module, Name, Symbol, Trait, Type};
@@ -17,12 +17,16 @@ use tracing::*;
 #[derive(Debug)]
 pub struct CsTypeOption {
     pub apply_special: bool,
+    pub is_static_container: bool,
+    pub is_static_access: bool,
 }
 
 impl Default for CsTypeOption {
     fn default() -> Self {
         Self {
             apply_special: true,
+            is_static_container: false,
+            is_static_access: false,
         }
     }
 }
@@ -32,15 +36,25 @@ impl CsTypeOption {
         self.apply_special = false;
         self
     }
+
+    pub fn static_container(mut self, static_container: bool) -> Self {
+        self.is_static_container = static_container;
+        self
+    }
+
+    pub fn static_access(mut self, is_static_access: bool) -> Self {
+        self.is_static_access = is_static_access;
+        self
+    }
 }
 
 impl<'db> CodeGenerator<'db> {
     pub fn rust_type_to_cs(&self, ty: &Type<'db>) -> String {
-        self.rust_type_to_cs_inner(ty, CsTypeOption::default())
+        self.rust_type_to_cs_options(ty, CsTypeOption::default())
     }
 
     #[tracing::instrument(skip(self, ty), fields(ty = %ty.debug_display(self.db), option))]
-    fn rust_type_to_cs_inner(&self, ty: &Type<'db>, option: CsTypeOption) -> String {
+    pub fn rust_type_to_cs_options(&self, ty: &Type<'db>, option: CsTypeOption) -> String {
         let db = self.db;
         if ty.is_unit() {
             return "global::System.ValueTuple".to_string();
@@ -101,7 +115,12 @@ impl<'db> CodeGenerator<'db> {
                 return mapped;
             }
 
-            self.cs_path_with_args(adt, args)
+            let path = self.cs_path_with_args(adt, args);
+            if option.is_static_container {
+                format!("{}.Statics", path)
+            } else {
+                path
+            }
         } else if let Some(trait_) = ty.as_dyn_trait() {
             // dyn Trait → T_TraitName (dyn interface)
             self.trait_itf_cs(trait_)
@@ -114,13 +133,21 @@ impl<'db> CodeGenerator<'db> {
 
             // Generic parameter
             let name = param.name(db).as_str().to_string();
-            if name == "Self" {
+            let mut cs_name = if name == "Self" {
                 "P_Self".to_string()
             } else if !param.is_implicit(db) {
                 names::generic_param(&name)
             } else {
                 format!("/* implicit */ {}", self.impl_ty_param_id.id_name(&param))
+            };
+
+            if option.is_static_container {
+                cs_name.push_str("_statics");
+            } else if option.is_static_access {
+                cs_name = format!("default({cs_name}_statics)");
             }
+
+            cs_name
         } else if let Some((param, aliases)) = ty.as_assoc_of_type_param(db) {
             if is_omit_trait_assoc_type(db, *aliases.last().unwrap()) {
                 let mut traits = param
@@ -134,7 +161,7 @@ impl<'db> CodeGenerator<'db> {
             let mut type_name = if param.is_implicit(db) && param.name(db) == sym::Self_ {
                 "A".to_string()
             } else {
-                self.rust_type_to_cs_inner(&param.ty(db), CsTypeOption::default().no_special())
+                self.rust_type_to_cs_options(&param.ty(db), CsTypeOption::default().no_special())
             };
 
             for alias in aliases {
@@ -142,6 +169,11 @@ impl<'db> CodeGenerator<'db> {
                 type_name.push_str(alias.name(db).as_str());
             }
 
+            if option.is_static_container {
+                type_name.push_str("_statics");
+            } else if option.is_static_access {
+                type_name = format!("default({type_name}_statics)");
+            }
             //type_name.push_str(&format!(" /* {} */", ty.display(db, self.display_target())));
 
             type_name
@@ -387,9 +419,24 @@ impl<'db> CodeGenerator<'db> {
             let param_type = resolve_cs_type_param_source(source, &types, db);
             let param = type_prams[source.index()];
 
-            let name = self.rust_type_to_cs(&param_type);
+            let name = self.rust_type_to_cs_options(
+                &param_type,
+                CsTypeOption::default().static_container(source.is_static_container()),
+            );
 
             match param.trait_bounds_of_nested_type_with_args(&param_type, db) {
+                Either::Right(_) if source.is_static_container() => {
+                    constraints.push(format!("{name} : struct"));
+                }
+                Either::Left(traits) if source.is_static_container() => {
+                    let mut cs_constraints = vec!["struct".into()];
+                    for (trait_, args) in traits {
+                        if trait_.has_static_fn(db) {
+                            cs_constraints.push(self.cs_path_with_args(trait_, args) + ".Statics");
+                        }
+                    }
+                    constraints.push(format!("{name} : {}", cs_constraints.join(", ")));
+                }
                 Either::Right(_) => {
                     // nothing to do for projection
                 }
