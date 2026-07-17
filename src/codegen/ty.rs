@@ -14,13 +14,33 @@ use ra_internal::*;
 use std::iter;
 use tracing::*;
 
+#[derive(Debug)]
+pub struct CsTypeOption {
+    pub apply_special: bool,
+}
+
+impl Default for CsTypeOption {
+    fn default() -> Self {
+        Self {
+            apply_special: true,
+        }
+    }
+}
+
+impl CsTypeOption {
+    pub fn no_special(mut self) -> Self {
+        self.apply_special = false;
+        self
+    }
+}
+
 impl<'db> CodeGenerator<'db> {
     pub fn rust_type_to_cs(&self, ty: &Type<'db>) -> String {
-        self.rust_type_to_cs_inner(ty, true)
+        self.rust_type_to_cs_inner(ty, CsTypeOption::default())
     }
 
-    #[tracing::instrument(skip(self, ty), fields(ty = %ty.debug_display(self.db)))]
-    fn rust_type_to_cs_inner(&self, ty: &Type<'db>, apply_special: bool) -> String {
+    #[tracing::instrument(skip(self, ty), fields(ty = %ty.debug_display(self.db), option))]
+    fn rust_type_to_cs_inner(&self, ty: &Type<'db>, option: CsTypeOption) -> String {
         let db = self.db;
         if ty.is_unit() {
             return "global::System.ValueTuple".to_string();
@@ -86,7 +106,9 @@ impl<'db> CodeGenerator<'db> {
             // dyn Trait → T_TraitName (dyn interface)
             self.trait_itf_cs(trait_)
         } else if let Some(param) = ty.as_type_param(db) {
-            if apply_special && let Some(cs) = self.special_types.borrow().get(&param) {
+            if option.apply_special
+                && let Some(cs) = self.special_types.borrow().get(&param)
+            {
                 return cs(self);
             }
 
@@ -112,7 +134,7 @@ impl<'db> CodeGenerator<'db> {
             let mut type_name = if param.is_implicit(db) && param.name(db) == sym::Self_ {
                 "A".to_string()
             } else {
-                self.rust_type_to_cs_inner(&param.ty(db), false)
+                self.rust_type_to_cs_inner(&param.ty(db), CsTypeOption::default().no_special())
             };
 
             for alias in aliases {
