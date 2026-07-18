@@ -68,8 +68,7 @@ impl<'db> CodeGenerator<'db> {
 
                 if param
                     .trait_bounds_of_nested_type_with_args(&instance, db)
-                    .left()
-                    .expect("must be traits")
+                    .expect_left("generic params assoc types must not be a projection")
                     .iter()
                     .any(|&(t, _)| t.needs_statics(db))
                 {

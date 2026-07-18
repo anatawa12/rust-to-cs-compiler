@@ -2,7 +2,6 @@ use crate::codegen::simple_extensions::*;
 use crate::codegen::ty::ignored_trait;
 use hir::HirDisplay;
 use hir::db::HirDatabase;
-use itertools::Either;
 use ra_internal::{DebugDisplay, TypeExt};
 use std::ops::Not;
 
@@ -47,26 +46,24 @@ fn collect_assoc_type_params_impl<'db>(
                 && param_instance == outer_instance
                 && alias_instance == alias
             {
-                match param.trait_bounds_of_nested_type_with_args(&instance, db) {
-                    Either::Right(_projected) => {
-                        panic!("Projection should be resolved by normalize_trait_assoc_type")
-                    }
-                    Either::Left(traits) => Some(
-                        std::iter::once(instance.clone()).chain(
-                            traits
-                                .is_empty()
-                                .not()
-                                .then(|| {
-                                    Box::new(collect_assoc_type_params_impl(
-                                        param, traits, instance, db,
-                                    ))
-                                        as Box<dyn Iterator<Item = hir::Type<'db>> + 'db>
-                                })
-                                .into_iter()
-                                .flatten(),
-                        ),
+                let traits = param
+                    .trait_bounds_of_nested_type_with_args(&instance, db)
+                    .expect_left("generic params assoc types must not be a projection");
+                Some(
+                    std::iter::once(instance.clone()).chain(
+                        traits
+                            .is_empty()
+                            .not()
+                            .then(|| {
+                                Box::new(collect_assoc_type_params_impl(
+                                    param, traits, instance, db,
+                                ))
+                                    as Box<dyn Iterator<Item = hir::Type<'db>> + 'db>
+                            })
+                            .into_iter()
+                            .flatten(),
                     ),
-                }
+                )
             } else {
                 None
             }

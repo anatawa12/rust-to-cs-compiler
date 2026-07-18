@@ -9,7 +9,6 @@ use crate::codegen::ty::generic_params::resolve_cs_type_param_source;
 use hir::db::HirDatabase;
 use hir::{Adt, BuiltinType, GenericDef, ItemContainer, Module, Name, Symbol, Trait, Type};
 use hir::{HasContainer, HasCrate, sym};
-use itertools::Either;
 use ra_internal::*;
 use std::iter;
 use tracing::*;
@@ -423,29 +422,25 @@ impl<'db> CodeGenerator<'db> {
                 CsTypeOption::default().static_container(source.is_static_container()),
             );
 
-            match param.trait_bounds_of_nested_type_with_args(&param_type, db) {
-                Either::Right(_) => {
-                    // must not be a projection
-                    unreachable!()
-                }
-                Either::Left(traits) if source.is_static_container() => {
-                    let mut cs_constraints = vec!["struct".into()];
-                    for (trait_, args) in traits {
-                        if trait_.needs_statics(db) {
-                            cs_constraints.push(self.cs_path_with_args(trait_, args) + ".Statics");
-                        }
-                    }
-                    constraints.push(format!("{name} : {}", cs_constraints.join(", ")));
-                }
-                Either::Left(traits) => {
-                    if !traits.is_empty() {
-                        let mut cs_constraints = vec![];
-                        for (trait_, args) in traits {
-                            cs_constraints.push(self.cs_path_with_args(trait_, args));
-                        }
-                        constraints.push(format!("{name} : {}", cs_constraints.join(", ")));
+            let traits = param
+                .trait_bounds_of_nested_type_with_args(&param_type, db)
+                .expect_left("generic params assoc types must not be a projection");
+
+            let mut cs_constraints = vec![];
+            if source.is_static_container() {
+                cs_constraints.push("struct".into());
+                for (trait_, args) in traits {
+                    if trait_.needs_statics(db) {
+                        cs_constraints.push(self.cs_path_with_args(trait_, args) + ".Statics");
                     }
                 }
+            } else {
+                for (trait_, args) in traits {
+                    cs_constraints.push(self.cs_path_with_args(trait_, args));
+                }
+            }
+            if !cs_constraints.is_empty() {
+                constraints.push(format!("{name} : {}", cs_constraints.join(", ")));
             }
         }
 

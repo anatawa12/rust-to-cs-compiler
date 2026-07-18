@@ -105,18 +105,8 @@ impl TypeParamExt for hir::TypeParam {
         self,
         db: &'_ dyn HirDatabase,
     ) -> Vec<(hir::Trait, Vec<hir::Type<'_>>)> {
-        //*
-        match self.trait_bounds_of_nested_type_with_args(&self.ty(db), db) {
-            Either::Left(traits) => traits,
-            Either::Right(_) => unreachable!(),
-        }
-        /*
-        let mut self_args = self.trait_bounds_with_args_self(db);
-        if let Some(parent) = self.get_trait_base(db) {
-            self_args.extend(parent.trait_bounds_with_args_self(db));
-        }
-        self_args
-        // */
+        self.trait_bounds_of_nested_type_with_args(&self.ty(db), db)
+            .expect_left("type param itself must not become projection")
     }
     fn trait_bounds_of_nested_type_with_args<'db>(
         self,
