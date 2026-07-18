@@ -88,6 +88,7 @@ lang_item_wrapper! {
         Sized: Trait,
         MetaSized: Trait,
         Copy: Trait,
+        Clone: Trait,
         Sync: Trait,
 
         Iterator: Trait,

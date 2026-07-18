@@ -48,7 +48,7 @@ fn collect_assoc_type_params_impl<'db>(
             {
                 let traits = param
                     .trait_bounds_of_nested_type_with_args(&instance, db)
-                    .expect_left("generic params assoc types must not be a projection");
+                    .left()?;
                 Some(
                     std::iter::once(instance.clone()).chain(
                         traits

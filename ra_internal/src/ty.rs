@@ -13,6 +13,7 @@ use hir_ty::next_solver::{
 };
 use rustc_type_ir::inherent::{GenericArg as _, IntoKind};
 use rustc_type_ir::{AliasTyKind, Upcast};
+use std::hash::Hash;
 
 pub trait TypeExt<'db> {
     fn error(db: &'db dyn HirDatabase, krate: hir::Crate) -> Self;
@@ -240,5 +241,79 @@ fn impl_trait_bounds<'db>(ty: Ty<'db>, db: &'db dyn HirDatabase) -> Option<Vec<C
         }
     } else {
         ty.impl_trait_bounds(db)
+    }
+}
+
+#[repr(transparent)]
+pub struct TyEq<'db>(hir::Type<'db>);
+
+impl PartialEq for TyEq<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.ns_ty() == other.0.ns_ty()
+    }
+}
+
+impl Eq for TyEq<'_> {}
+
+impl Hash for TyEq<'_> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.ns_ty().hash(state);
+    }
+}
+
+mod ty_eq {
+    use crate::TyEq;
+    use std::slice;
+
+    pub trait WrapWithTyEq {
+        type Wrapped;
+        fn wrap(self) -> Self::Wrapped;
+    }
+
+    macro_rules! impl_wrap {
+        ($(for<$($l: lifetime),+>)? |$self: ident: $self_ty: ty| -> $wrapped_ty: ty $out: block) => {
+            impl$(<$($l),+>)? WrapWithTyEq for $self_ty {
+                type Wrapped = $wrapped_ty;
+                fn wrap($self: $self_ty) -> Self::Wrapped {
+                    $out
+                }
+            }
+        };
+    }
+
+    impl_wrap!(for<'db> |self: hir::Type<'db>| -> TyEq<'db> {
+        #[expect(clippy::init_numbered_fields)] // I don't know why but TyEq(self) is not accepted
+        TyEq { 0: self }
+    });
+    impl_wrap!(for<'db> |self: *const hir::Type<'db>| -> *const TyEq<'db> {
+        self as *const TyEq<'db>
+    });
+    impl_wrap!(for<'db> |self: *mut hir::Type<'db>| -> *mut TyEq<'db> { self as *mut TyEq<'db> });
+    impl_wrap!(for<'db> |self: Vec<hir::Type<'db>>| -> Vec<TyEq<'db>> {
+        let (ptr, len, cap) = self.into_raw_parts();
+        unsafe { Vec::from_raw_parts(TyEq::wrap(ptr), len, cap) }
+    });
+    impl_wrap!(
+        for<'db, 'a> |self: &'a Vec<hir::Type<'db>>| -> &'a [TyEq<'db>] {
+            TyEq::wrap(self.as_slice())
+        }
+    );
+    impl_wrap!(
+        for<'db, 'a> |self: &'a [hir::Type<'db>]| -> &'a [TyEq<'db>] {
+            let (ptr, len) = (self.as_ptr(), self.len());
+            unsafe { slice::from_raw_parts(TyEq::wrap(ptr), len) }
+        }
+    );
+    impl_wrap!(
+        for<'db, 'a> |self: &'a mut [hir::Type<'db>]| -> &'a mut [TyEq<'db>] {
+            let (ptr, len) = (self.as_mut_ptr(), self.len());
+            unsafe { slice::from_raw_parts_mut(TyEq::wrap(ptr), len) }
+        }
+    );
+}
+
+impl<'db> TyEq<'db> {
+    pub fn wrap<P: ty_eq::WrapWithTyEq>(ty: P) -> P::Wrapped {
+        ty.wrap()
     }
 }

@@ -15,7 +15,7 @@ pub trait TypeParamExt {
         t: &hir::Type<'db>,
         db: &'db dyn HirDatabase,
     ) -> Either<Vec<(hir::Trait, Vec<hir::Type<'db>>)>, hir::Type<'db>>;
-    fn param_index(self) -> usize;
+    fn param_index(self, db: &dyn HirDatabase) -> usize;
 }
 
 impl TypeParamExt for hir::TypeParam {
@@ -56,7 +56,8 @@ impl TypeParamExt for hir::TypeParam {
         }
     }
 
-    fn param_index(self) -> usize {
-        TypeParamId::from(self).local_id().into_raw().into_u32() as _
+    fn param_index(self, db: &dyn HirDatabase) -> usize {
+        self.parent(db).lifetime_params(db).len()
+            + TypeParamId::from(self).local_id().into_raw().into_u32() as usize
     }
 }

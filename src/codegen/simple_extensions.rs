@@ -4,9 +4,11 @@ use crate::codegen::ty::{generic_types, is_omit_trait_assoc_type};
 use hir::db::HirDatabase;
 use hir::{
     Adt, AssocItem, AssocItemContainer, GenericDef, GenericParam, HasContainer, HasCrate,
-    ItemContainer, Trait, Type, sym,
+    ItemContainer, Trait, Type, TypeParam, sym,
 };
+use ide_db::base_db::salsa_macros;
 use itertools::Either;
+use ra_internal::adt::AdtExt;
 use ra_internal::function::FunctionExt;
 use ra_internal::*;
 use std::collections::HashSet;
@@ -108,6 +110,7 @@ impl TypeParamExt for hir::TypeParam {
         self.trait_bounds_of_nested_type_with_args(&self.ty(db), db)
             .expect_left("type param itself must not become projection")
     }
+    #[tracing::instrument(skip_all, fields(t = %t.debug_display(db)))]
     fn trait_bounds_of_nested_type_with_args<'db>(
         self,
         t: &hir::Type<'db>,
@@ -162,6 +165,127 @@ impl TypeParamExt for hir::TypeParam {
                         }
                     }
                 }
+
+                // In cae of ADTs, there are some cases all impls (except for few 'wrapper' impls)
+                // use same bounds for the type. We add them
+                if let GenericDef::Adt(adt) = self.parent(db) {
+                    let _scop = tracing::info_span!("adt", adt = %adt.debug_display(db)).entered();
+                    let self_def = self.parent(db);
+
+                    let mut impl_bounds = vec![];
+                    let adt_as_def = self.parent(db);
+                    let mut bounds_set = None;
+                    if adt.name(db).as_str() == "DedupForwarder" {
+                        print!("");
+                    }
+
+                    let lang_items = LangItems::new(db, adt.krate(db));
+                    for &impl_ in adt.impls(db) {
+                        if let Some((impl_adt, impl_self_args)) =
+                            impl_.self_ty(db).as_adt_with_args()
+                            && !impl_.is_builtin_derive()
+                            && impl_adt == adt
+                            && impl_.trait_(db).is_none_or(|trait_| {
+                                Some(trait_) != lang_items.Debug()
+                                    && Some(trait_) != lang_items.Clone()
+                            })
+                            && let impl_as_def = GenericDef::from(impl_)
+                            && adt_as_def.params0(db).len() == impl_self_args.len()
+                            && let Some(impl_args_maps_adt) =
+                                map_impl_to_adt(adt, impl_, &impl_self_args, db)
+                        {
+                            let type_param = impl_self_args[self.param_index(db)]
+                                .as_ref()
+                                .unwrap()
+                                .as_type_param(db)
+                                .unwrap();
+
+                            let t_as_impl = t.instantiate(
+                                self_def,
+                                &impl_self_args.into_iter().flatten().collect::<Vec<_>>(),
+                                db,
+                            );
+
+                            match type_param.trait_bounds_of_nested_type_with_args(&t_as_impl, db) {
+                                Either::Right(projection) => {
+                                    impl_bounds.push(Either::Right(projection));
+                                }
+                                Either::Left(mut this_impl_bounds) => {
+                                    if !this_impl_bounds.is_empty() {
+                                        // impl types.
+                                        let impl_args_maps_adt = impl_args_maps_adt
+                                            .into_iter()
+                                            .flatten()
+                                            .collect::<Vec<_>>();
+                                        for (_, args) in &mut this_impl_bounds {
+                                            for ty in args {
+                                                *ty = ty.instantiate(
+                                                    impl_as_def,
+                                                    &impl_args_maps_adt,
+                                                    db,
+                                                );
+                                            }
+                                        }
+                                    }
+                                    let bounds_set = bounds_set.get_or_insert_with(|| {
+                                        traits
+                                            .iter()
+                                            .map(|&(t, ref types)| (t, TyEq::wrap(types)))
+                                            .collect::<HashSet<_>>()
+                                    });
+                                    this_impl_bounds.retain(|&(t, ref types)| {
+                                        !bounds_set.contains(&(t, TyEq::wrap(types)))
+                                    });
+                                    if !this_impl_bounds.is_empty() {
+                                        impl_bounds.push(Either::Left(this_impl_bounds));
+                                    }
+                                }
+                            }
+                        }
+
+                        fn map_impl_to_adt<'db>(
+                            adt: hir::Adt,
+                            impl_: hir::Impl,
+                            impl_self_args: &[Option<hir::Type<'db>>],
+                            db: &'db dyn HirDatabase,
+                        ) -> Option<Vec<Option<hir::Type<'db>>>> {
+                            let mut generic_args =
+                                vec![None; GenericDef::from(impl_).params0(db).len()];
+                            let adt_args = GenericDef::from(adt).params0(db);
+                            for (i, arg) in impl_self_args.iter().enumerate() {
+                                if let Some(type_arg) = arg {
+                                    let arg_as_impl_type_param = type_arg.as_type_param(db)?;
+                                    // Single generic argument is used for multiple type parameters
+                                    if generic_args[arg_as_impl_type_param.param_index(db)]
+                                        .is_some()
+                                    {
+                                        return None;
+                                    }
+                                    generic_args[arg_as_impl_type_param.param_index(db)] = Some(
+                                        variant_or_none!(adt_args[i], hir::GenericParam::TypeParam)
+                                            .unwrap()
+                                            .ty(db),
+                                    )
+                                }
+                            }
+                            Some(generic_args)
+                        }
+                    }
+                    if !impl_bounds.is_empty() && impl_bounds.iter().all(|x| x.is_left()) {
+                        let first = (impl_bounds[0].as_ref().unwrap_left().iter())
+                            .map(|&(t, ref types)| (t, TyEq::wrap(types)))
+                            .collect::<HashSet<_>>();
+                        if impl_bounds.iter().skip(1).all(|bound| {
+                            let as_set = (bound.as_ref().unwrap_left().iter())
+                                .map(|&(t, ref types)| (t, TyEq::wrap(types)))
+                                .collect::<HashSet<_>>();
+                            as_set == first
+                        }) {
+                            traits.extend(impl_bounds.swap_remove(0).unwrap_left())
+                        }
+                    }
+                }
+
                 Either::Left(traits)
             }
             Either::Right(t) => Either::Right(t),
@@ -201,6 +325,7 @@ impl GenericDefExt for GenericDef {
     fn params0(self, db: &dyn HirDatabase) -> Vec<hir::GenericParam> {
         if let GenericDef::Function(f) = self
             && let ItemContainer::Impl(impl_) = f.container(db)
+            && impl_.is_builtin_derive()
             && let Some(trait_) = impl_.trait_(db)
             && Some(trait_) == LangItems::new(db, trait_.krate(db)).Hash()
             && f.name(db) == sym::hash
@@ -325,7 +450,7 @@ impl HasTraitBase for hir::TypeParam {
         let parent = self.parent(db).to_assoc_item()?;
         let base = parent.get_trait_base(db)?;
         let Some(&hir::GenericParam::TypeParam(t)) =
-            base.to_generic_def().params0(db).get(self.param_index())
+            base.to_generic_def().params0(db).get(self.param_index(db))
         else {
             return None;
         };

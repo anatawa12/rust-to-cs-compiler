@@ -11,6 +11,7 @@ macro_rules! variant_or_none {
 
 mod internal;
 
+pub mod adt;
 mod assoc_item;
 mod debug;
 pub mod function;
