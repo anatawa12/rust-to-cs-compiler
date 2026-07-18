@@ -80,7 +80,7 @@ fn main() {
             //println!("crate map: {name:?}: {krate:?}");
             if !matches!(
                 name.as_ref().map(|x| x.crate_name().as_str()),
-                Some("vrc_get_vpm" /* | "serde_value"*/)
+                Some("vrc_get_vpm" | "serde_value")
             ) {
                 continue;
             }
