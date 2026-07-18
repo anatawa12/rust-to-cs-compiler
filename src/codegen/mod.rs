@@ -32,9 +32,10 @@ use crate::codegen::decl::{
     is_adt_cfg_disabled, is_adt_r2cs_native, is_impl_cfg_disabled, is_module_cfg_disabled,
 };
 use crate::codegen::id_map::IdMap;
+use crate::codegen::ty::generic_types;
 use hir::{
-    Adt, AssocItem, Crate, GenericDef, Impl, InFile, Module, ModuleDef, Semantics, StructKind,
-    TypeParam, db::HirDatabase,
+    Adt, AssocItem, Crate, Impl, InFile, Module, ModuleDef, Semantics, StructKind, TypeParam,
+    db::HirDatabase, sym,
 };
 use ide_db::line_index;
 use ra_internal::function::FunctionExt;
@@ -419,46 +420,29 @@ impl<'db> CodeGenerator<'db> {
             }
         }
 
-        if let Some(trait_) = impl_.trait_(db)
-            && matches!(trait_.name(db).as_str(), "Visitor")
+        if let Some(trait_ref) = impl_.trait_ref(db)
+            && matches!(trait_ref.trait_().name(db).as_str(), "Visitor")
         {
-            // implement 'default' methods
-            let _trait_super_impl_scope = tracing::debug_span!("emit_impl_methods of super methods", trait = trait_.name(db).as_str()).entered();
+            // implement inherited default methods
+            let _trait_super_impl_scope = tracing::debug_span!("emit_impl_methods of super methods", trait = trait_ref.trait_().name(db).as_str()).entered();
 
-            let mut new_type_map = self.type_map.modify();
+            let implemented_fns = (impl_.items(db).iter())
+                .filter_map(|item| item.as_function())
+                .map(|f| f.name(db).symbol().clone())
+                .collect::<HashSet<_>>();
 
-            let self_type_param = GenericDef::from(trait_).type_or_const_params(db)[0].ty(db);
-            new_type_map.insert(self_type_param, impl_.self_ty(db));
-            let mut assoc_by_name = HashMap::new();
-            for item in impl_.items(db) {
-                if let AssocItem::TypeAlias(type_) = item {
-                    assoc_by_name.insert(type_.name(db).symbol().clone(), type_.ty(db));
-                }
-            }
-            for item in trait_.items(db) {
-                if let AssocItem::TypeAlias(type_) = item {
-                    let ty = assoc_by_name.get(type_.name(db).symbol()).unwrap();
-                    new_type_map.insert(type_.ty(db), ty.clone());
-                }
-            }
+            out.wln("// default impls");
 
-            let mut method_names = HashSet::new();
-            for item in impl_.items(db) {
-                if let AssocItem::Function(f) = item {
-                    method_names.insert(f.name(db).symbol().clone());
-                }
-            }
+            let declared_class = format!(
+                "{trait_}.Defaults",
+                trait_ = self.cs_path_with_args(trait_ref.trait_(), trait_ref.generic_types(db))
+            );
 
-            for &f in trait_.items(db).iter().filter_map(|x| {
-                if let AssocItem::Function(f) = x {
-                    Some(f)
-                } else {
-                    None
-                }
-            }) {
-                if !method_names.contains(f.name(db).symbol()) {
-                    self.emit_function(out, f, Some(impl_));
-                }
+            for f in (trait_ref.trait_().items(db).iter())
+                .filter_map(|x| x.as_function())
+                .filter(|f| !implemented_fns.contains(f.name(db).symbol()))
+            {
+                self.emit_wrapper_fn(out, &trait_ref, f, &declared_class, false);
             }
         }
 
@@ -508,43 +492,63 @@ impl<'db> CodeGenerator<'db> {
             ));
             out.wln(fcode!("public partial struct Statics : {trait}.Statics {{", trait = self.cs_path_with_args(trait_ref.trait_(), trait_ref.generic_types(db))));
             out.indent();
+
             for f in static_fns {
-                let _scope =
-                    tracing::info_span!("static_wrapper", f = %f.debug_display(db), trait = %trait_ref.trait_().debug_display(db)).entered();
-                let type_args = trait_ref
-                    .generic_types(db)
-                    .flatten()
-                    .chain(
-                        hir::GenericDef::from(f)
-                            .params0(db)
-                            .iter()
-                            .filter_map(|x| variant_or_none!(x, hir::GenericParam::TypeParam))
-                            .map(|x| x.ty(db)),
-                    )
-                    .collect::<Vec<_>>();
-                self.emit_function_signature(out, f, "public ", "", true, |x| {
-                    x.instantiate(f.into(), &type_args, db)
-                });
-                let f_name = self.function_name(f);
-                let params = f
-                    .params_without_self(db)
-                    .iter()
-                    .enumerate()
-                    .map(|(i, param)| {
-                        param
-                            .name(db)
-                            .map(|n| names::local_name(n.as_str(), 0))
-                            .unwrap_or_else(|| format!("p_{}", i))
-                    })
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                out.indent();
-                out.wln(fcode!("=> {cs_name}.{f_name}({params});"));
-                out.dedent();
+                self.emit_wrapper_fn(out, &trait_ref, f, cs_name, true);
             }
             out.dedent();
             out.wln(fcode!("}}"));
         }
+    }
+
+    #[tracing::instrument(skip_all, fields(f = %f.debug_display(self.db), trait = %trait_ref.trait_().debug_display(self.db)))]
+    fn emit_wrapper_fn(
+        &self,
+        out: &mut Code,
+        trait_ref: &hir::TraitRef<'db>,
+        f: hir::Function,
+        declared_class: &str,
+        static_wrapper: bool,
+    ) {
+        let db = self.db;
+        let type_args = trait_ref
+            .generic_types(db)
+            .flatten()
+            .chain(generic_types(&hir::GenericDef::from(f).params0(db)).map(|x| x.ty(db)))
+            .collect::<Vec<_>>();
+        let generics = generic_args(
+            "".into(),
+            self.map_cs_type_param_source(
+                &self.generic_params_cs_sources(f.into()),
+                &generic_types(&hir::GenericDef::from(f).params0(db))
+                    .map(|param| param.ty(db))
+                    .collect::<Vec<_>>(),
+            ),
+        );
+        let f_name = self.function_name(f);
+        let params = f
+            .assoc_fn_params(db)
+            .iter()
+            .enumerate()
+            .map(|(i, param)| {
+                if param.name(db).is_some_and(|n| n == sym::self_) {
+                    "this".into()
+                } else {
+                    param
+                        .name(db)
+                        .map(|n| names::local_name(n.as_str(), 0))
+                        .unwrap_or_else(|| format!(", p_{}", i))
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.emit_function_signature(out, f, "public ", "", static_wrapper, |x| {
+            x.instantiate(f.into(), &type_args, db)
+        });
+        out.wln("");
+        out.indent();
+        out.wln(fcode!("=> {declared_class}.{f_name}{generics}({params});"));
+        out.dedent();
     }
 
     fn adt_key(&self, adt: Adt) -> String {
