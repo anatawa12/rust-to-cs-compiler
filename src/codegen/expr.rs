@@ -1225,8 +1225,26 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     }
                 }
             }
-            ResolvedFunction::ModuleFunction { function_path, .. } => {
-                code!(function_path, "(", join(args, ", "), ")")
+            ResolvedFunction::ModuleFunction {
+                function_path,
+                generic_sources,
+                generic_args: generics,
+                args_map,
+                ..
+            } => {
+                let path = generic_args(
+                    function_path,
+                    self.map_cs_type_param_source(&generic_sources, &generics),
+                );
+                match args_map {
+                    None => {
+                        code!(path, "(", join(args, ", "), ")")
+                    }
+                    Some(map) => {
+                        let args = args.collect::<Vec<_>>();
+                        code!(path, "(", join(map.iter().map(|&i| &args[i]), ", "), ")")
+                    }
+                }
             }
             ResolvedFunction::OmitCall { comment } => {
                 let value = args.next().unwrap();
