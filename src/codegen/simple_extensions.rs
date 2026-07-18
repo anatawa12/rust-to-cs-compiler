@@ -1,6 +1,6 @@
 //! Extensions for the `hir` crate types without any non-hir crate types
 
-use crate::codegen::ty::is_omit_trait_assoc_type;
+use crate::codegen::ty::{generic_types, is_omit_trait_assoc_type};
 use hir::db::HirDatabase;
 use hir::{
     Adt, AssocItem, AssocItemContainer, GenericDef, GenericParam, HasContainer, HasCrate,
@@ -116,47 +116,35 @@ impl TypeParamExt for hir::TypeParam {
         match self.trait_bounds_of_nested_type_with_args_self(t, db) {
             Either::Left(mut traits) => {
                 if let Some(base) = self.get_trait_base(db) {
+                    // get_trait_base returns some => the type param is of associated item of impl implements trait
+                    let self_def = self.parent(db);
                     let AssocItemContainer::Impl(impl_) =
-                        self.parent(db).to_assoc_item().unwrap().container(db)
+                        self_def.to_assoc_item().unwrap().container(db)
                     else {
                         unreachable!();
                     };
+                    let trait_ref = impl_.trait_ref(db).unwrap();
 
-                    let t = t.instantiate(
-                        self.parent(db),
-                        &GenericDef::from(impl_)
-                            .params0(db)
-                            .into_iter()
-                            .flat_map(|a| match a {
-                                GenericParam::TypeParam(_) => {
-                                    Some(Type::error(db, impl_.krate(db)))
-                                }
-                                _ => None,
-                            })
-                            .chain(base.parent(db).params0(db).into_iter().flat_map(|param| {
-                                match param {
-                                    GenericParam::TypeParam(p) => Some(p.ty(db)),
-                                    _ => None,
-                                }
-                            }))
+                    // Back-instantiate the T to the generic params of the item in trait.
+                    // The t is expected to be associated type of self (generic of impl item) so
+                    // making error types for impl generics is valid
+                    let t_as_trait = t.instantiate(
+                        self_def,
+                        &generic_types(&GenericDef::from(impl_).params0(db))
+                            .map(|_| Type::error(db, impl_.krate(db)))
+                            .chain(
+                                generic_types(&base.parent(db).params0(db))
+                                    .map(|param| param.ty(db)),
+                            )
                             .collect::<Vec<_>>(),
                         db,
                     );
 
-                    match base.trait_bounds_of_nested_type_with_args_self(&t, db) {
+                    match base.trait_bounds_of_nested_type_with_args_self(&t_as_trait, db) {
                         Either::Left(mut traits_base) => {
                             if !traits_base.is_empty() {
-                                let trait_ref = impl_.trait_ref(db).unwrap();
-                                let generic_args = trait_ref
-                                    .generic_types(db)
-                                    .flatten()
-                                    .chain(self.parent(db).params0(db).into_iter().flat_map(
-                                        |param| match param {
-                                            GenericParam::TypeParam(p) => Some(p.ty(db)),
-                                            _ => None,
-                                        },
-                                    ))
-                                    .collect::<Vec<_>>();
+                                let generic_args =
+                                    self_def.type_args_maps_trait_to_this_impl(db, &trait_ref);
 
                                 for (_, args) in &mut traits_base {
                                     for ty in args {
@@ -179,6 +167,7 @@ impl TypeParamExt for hir::TypeParam {
             Either::Right(t) => Either::Right(t),
         }
     }
+
     fn is_self(&self, db: &dyn HirDatabase) -> bool {
         self.is_implicit(db) && self.name(db) == sym::Self_
     }
@@ -199,6 +188,13 @@ impl TypeParamExt for hir::TypeParam {
 pub trait GenericDefExt: Copy {
     fn params0(self, db: &dyn HirDatabase) -> Vec<hir::GenericParam>;
     fn to_assoc_item(self) -> Option<AssocItem>;
+
+    /// Only valid if this is associated item of an impl of a trait.
+    fn type_args_maps_trait_to_this_impl<'db>(
+        &self,
+        db: &'db dyn HirDatabase,
+        trait_ref: &hir::TraitRef<'db>,
+    ) -> Vec<hir::Type<'db>>;
 }
 
 impl GenericDefExt for GenericDef {
@@ -231,6 +227,16 @@ impl GenericDefExt for GenericDef {
             GenericDef::Const(c) => Some(AssocItem::Const(c)),
             _ => None,
         }
+    }
+
+    fn type_args_maps_trait_to_this_impl<'db>(
+        &self,
+        db: &'db dyn HirDatabase,
+        trait_ref: &hir::TraitRef<'db>,
+    ) -> Vec<hir::Type<'db>> {
+        (trait_ref.generic_types(db).flatten())
+            .chain(generic_types(&self.params0(db)).map(|param| param.ty(db)))
+            .collect::<Vec<_>>()
     }
 }
 

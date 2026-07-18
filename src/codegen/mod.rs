@@ -511,25 +511,20 @@ impl<'db> CodeGenerator<'db> {
         static_wrapper: bool,
     ) {
         let db = self.db;
-        let type_args = trait_ref
-            .generic_types(db)
-            .flatten()
-            .chain(generic_types(&hir::GenericDef::from(f).params0(db)).map(|x| x.ty(db)))
-            .collect::<Vec<_>>();
+        let self_def = hir::GenericDef::from(f);
+
+        let type_args = self_def.type_args_maps_trait_to_this_impl(db, trait_ref);
         let generics = generic_args(
             "".into(),
             self.map_cs_type_param_source(
                 &self.generic_params_cs_sources(f.into()),
-                &generic_types(&hir::GenericDef::from(f).params0(db))
+                &generic_types(&self_def.params0(db))
                     .map(|param| param.ty(db))
                     .collect::<Vec<_>>(),
             ),
         );
         let f_name = self.function_name(f);
-        let params = f
-            .assoc_fn_params(db)
-            .iter()
-            .enumerate()
+        let params = (f.assoc_fn_params(db).iter().enumerate())
             .map(|(i, param)| {
                 if param.name(db).is_some_and(|n| n == sym::self_) {
                     "this".into()
