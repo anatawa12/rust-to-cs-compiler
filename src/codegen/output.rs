@@ -265,4 +265,5 @@ macro_rules! code {
 }
 
 pub(crate) use code;
+#[allow(unused_imports)]
 use std::fmt::Write;
