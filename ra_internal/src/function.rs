@@ -8,7 +8,7 @@ use hir_ty::db::HirDatabase;
 use hir_ty::next_solver::{ClauseKind, DbInterner, Ty};
 use rustc_type_ir::inherent::IntoKind;
 
-pub trait FunctionExt {
+pub trait FunctionExt: Copy {
     fn is_explicit_sized_self(self, db: &dyn HirDatabase) -> bool;
 }
 

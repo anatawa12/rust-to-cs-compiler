@@ -6,6 +6,7 @@ use hir::db::HirDatabase;
 use ra_internal::type_alias::TypeAliasExt;
 use ra_internal::*;
 
+#[allow(clippy::enum_variant_names)]
 pub enum CsTypeParamSource {
     TypeParam(usize),
     TraitStaticTypeParam(usize),

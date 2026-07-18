@@ -60,7 +60,7 @@ impl<'db> CodeGenerator<'db> {
             };
 
             return if target_ty == self_ty
-                || self.rust_type_to_cs(&target_ty) == self.rust_type_to_cs(&self_ty)
+                || self.rust_type_to_cs(target_ty) == self.rust_type_to_cs(self_ty)
             {
                 ResolvedFunction::OmitCall {
                     comment: "/*omit Into::into method*/".into(),
@@ -181,7 +181,7 @@ fn resolve_trait_impl<'db>(
     db: &'db dyn HirDatabase,
 ) -> Option<Vec<hir::Type<'db>>> {
     if f.container(db) == hir::ItemContainer::Trait(trait_) {
-        Some(parent_args.unwrap().iter().cloned().collect())
+        Some(parent_args.unwrap().to_vec())
     } else if let hir::ItemContainer::Impl(impl_) = f.container(db)
         && let Some(trait_ref) = impl_.trait_ref(db)
         && trait_ref.trait_() == trait_
