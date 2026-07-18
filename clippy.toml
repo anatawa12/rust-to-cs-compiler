@@ -1,3 +1,4 @@
 disallowed-methods = [
     "ra_ap_hir::GenericDef::params",
+    "ra_ap_hir::TypeParam::trait_bounds",
 ]

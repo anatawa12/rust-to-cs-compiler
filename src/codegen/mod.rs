@@ -14,10 +14,13 @@ pub mod ty;
 
 #[path = "."]
 mod simple_extensions {
+    #![allow(unused_imports)]
+
     #[path = "simple_extensions.rs"]
     mod impl_;
 
     pub use impl_::GenericDefExt as _;
+    pub use impl_::HasTraitBase as _;
     pub use impl_::TraitExt as _;
     pub use impl_::TypeExt as _;
     pub use impl_::TypeParamExt as _;
@@ -199,6 +202,7 @@ impl<'db> CodeGenerator<'db> {
         out.close_brace();
     }
 
+    #[tracing::instrument(skip(self, out), fields(adt = ?adt.debug_display(self.db)))]
     fn emit_adt_with_impls(&self, out: &mut Code, adt: Adt, impls: &[Impl]) {
         let db = self.db;
 
@@ -400,8 +404,11 @@ impl<'db> CodeGenerator<'db> {
         }
     }
 
+    #[tracing::instrument(skip(self, out), fields(
+        impl_trait = ?impl_.trait_(self.db).as_ref().map(|x| x.debug_display(self.db)),
+        impl_self = %impl_.self_ty(self.db).debug_display(self.db),
+    ))]
     fn emit_impl_methods(&self, out: &mut Code, cs_name: &str, impl_: Impl) {
-        let _scope = tracing::info_span!("emit_impl_methods", cs_name).entered();
         let db = self.db;
         if is_impl_cfg_disabled(impl_, db) {
             return;

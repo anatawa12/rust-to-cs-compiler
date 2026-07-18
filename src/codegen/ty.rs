@@ -424,8 +424,9 @@ impl<'db> CodeGenerator<'db> {
             );
 
             match param.trait_bounds_of_nested_type_with_args(&param_type, db) {
-                Either::Right(_) if source.is_static_container() => {
-                    constraints.push(format!("{name} : struct"));
+                Either::Right(_) => {
+                    // must not be a projection
+                    unreachable!()
                 }
                 Either::Left(traits) if source.is_static_container() => {
                     let mut cs_constraints = vec!["struct".into()];
@@ -435,9 +436,6 @@ impl<'db> CodeGenerator<'db> {
                         }
                     }
                     constraints.push(format!("{name} : {}", cs_constraints.join(", ")));
-                }
-                Either::Right(_) => {
-                    // nothing to do for projection
                 }
                 Either::Left(traits) => {
                     if !traits.is_empty() {
@@ -469,6 +467,7 @@ impl<'db> SpecialImplBounds<'db> {
 }
 
 impl<'db> CodeGenerator<'db> {
+    #[tracing::instrument(skip_all, fields(param = %param.debug_display(self.db)))]
     fn special_type_param(&self, param: hir::TypeParam) -> SpecialImplBounds<'db> {
         let db = self.db;
         let _scope = tracing::info_span!(

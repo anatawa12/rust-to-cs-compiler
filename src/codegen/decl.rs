@@ -98,6 +98,7 @@ fn ast_has_r2cs_native(node: &impl AstHasAttrs, krate: hir::Crate, db: &dyn HirD
 
 impl<'db> CodeGenerator<'db> {
     /// Emit a trait → C# interface (non-dyn form, with Self F-bound).
+    #[tracing::instrument(skip(self, out), fields(trait = %t.debug_display(self.db)))]
     pub fn emit_trait(&self, out: &mut Code, t: Trait) {
         let db = self.db;
 
@@ -105,7 +106,7 @@ impl<'db> CodeGenerator<'db> {
         let cs_iface = names::trait_name(name.as_str());
         let _cs_dyn_iface = names::dyn_trait_name(name.as_str());
 
-        let (all_params, mut constraints) = self.generic_def_params_cs(t.into());
+        let (all_params, constraints) = self.generic_def_params_cs(t.into());
 
         if let Some(compatibility) = t.dyn_compatibility_all_violations(db) {
             for x in compatibility {
@@ -113,11 +114,6 @@ impl<'db> CodeGenerator<'db> {
             }
         } else {
             out.wln("// dyn compatible");
-        }
-
-        // For non-dyn compatible trait, we insert 'Self' type parameter
-        if self.with_self_in_cs(t) {
-            constraints.push(format!("P_Self : {}<{}>", cs_iface, all_params.join(", ")));
         }
 
         let generics = if all_params.is_empty() {
@@ -174,6 +170,7 @@ impl<'db> CodeGenerator<'db> {
     }
 
     /// Emit a function/method with a stub body (TODO: real body generation).
+    #[tracing::instrument(skip(self, out), fields(function = %f.debug_display(self.db)))]
     pub fn emit_function(&self, out: &mut Code, f: hir::Function, impl_ctx: Option<Impl>) {
         let db = self.db;
         let _scope = tracing::info_span!(

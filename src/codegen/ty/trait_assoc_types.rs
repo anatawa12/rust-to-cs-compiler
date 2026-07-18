@@ -3,7 +3,7 @@ use crate::codegen::ty::ignored_trait;
 use hir::HirDisplay;
 use hir::db::HirDatabase;
 use itertools::Either;
-use ra_internal::{DebugDisplay, TypeExt, TypeParamExt};
+use ra_internal::{DebugDisplay, TypeExt};
 use std::ops::Not;
 
 pub fn collect_assoc_type_params<'db>(

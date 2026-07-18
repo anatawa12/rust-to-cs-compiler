@@ -129,6 +129,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
     }
 
     /// Emit the full function body block.
+    #[tracing::instrument(skip_all)]
     pub fn emit_function_body(&self, f: ast::Fn, out: &mut Code) {
         let params = f.param_list().unwrap();
         if let Some(self_param) = params.self_param() {

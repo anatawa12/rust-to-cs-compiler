@@ -54,7 +54,7 @@ impl<'db> CodeGenerator<'db> {
 
             if !self.special_type_param(param).is_special_impl() {
                 type_params.push(CsTypeParamSource::TypeParam(index));
-                if param.trait_bounds(db).iter().any(|&t| t.needs_statics(db)) {
+                if (param.trait_bounds_with_args(db).iter()).any(|&(t, _)| t.needs_statics(db)) {
                     type_params.push(CsTypeParamSource::TraitStaticTypeParam(index));
                 }
             }
