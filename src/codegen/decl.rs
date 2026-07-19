@@ -1,6 +1,7 @@
 use super::{CodeGenerator, expr::BodyGen, names, output::Code};
 use crate::codegen::expr::ItemInBody;
 use crate::codegen::simple_extensions::*;
+use crate::codegen::ty::generic_types;
 use cfg::CfgExpr;
 /// Generates C# type declarations from Rust HIR types.
 use hir::{
@@ -116,12 +117,31 @@ impl<'db> CodeGenerator<'db> {
             out.wln("// dyn compatible");
         }
 
+        let self_ty_param = generic_types(&hir::GenericDef::from(t).params0(db))
+            .next()
+            .unwrap();
+        let super_traits = (self_ty_param.trait_bounds_with_args(db).into_iter())
+            .filter(|&(super_trait, _)| super_trait != t);
+
         let generics = if all_params.is_empty() {
             String::new()
         } else {
             format!("<{}>", all_params.join(", "))
         };
-        writeln!(out, "public interface {cs_iface}{generics}");
+        write!(out, "public interface {cs_iface}{generics}");
+        {
+            // super traits
+            let mut super_traits = super_traits.clone();
+            if let Some(first) = super_traits.next() {
+                out.w(" : ")
+                    .w(self.cs_path_with_args(first.0, first.1.clone()));
+                for element in super_traits {
+                    out.w(", ")
+                        .w(self.cs_path_with_args(element.0, element.1.clone()));
+                }
+            }
+        }
+        writeln!(out);
         out.indent();
         for constraint in constraints {
             out.w("where ").wln(constraint);
@@ -152,7 +172,22 @@ impl<'db> CodeGenerator<'db> {
         }
 
         if t.needs_statics(db) {
-            out.wln("public interface Statics").open_brace();
+            out.w("public interface Statics");
+            {
+                // super traits
+                let mut super_traits = super_traits.filter(|(t, _)| t.needs_statics(db));
+                if let Some(first) = super_traits.next() {
+                    out.w(" : ")
+                        .w(self.cs_path_with_args(first.0, first.1.clone()))
+                        .w(".Statics");
+                    for element in super_traits {
+                        out.w(", ")
+                            .w(self.cs_path_with_args(element.0, element.1.clone()))
+                            .w(".Statics");
+                    }
+                }
+            }
+            out.open_brace();
             for item in t.items(db) {
                 if let AssocItem::Function(f) = item
                     && !f.has_self_param(db)
