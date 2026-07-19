@@ -6,7 +6,7 @@ use crate::codegen::function_resolution::ResolvedFunction;
 use crate::codegen::simple_extensions::*;
 use crate::codegen::ty::CsTypeOption;
 use hir::db::HirDatabase;
-use hir::{HasCrate, InFile, Local, ModuleDef, PathResolution, StructKind, sym};
+use hir::{Adt, HasCrate, InFile, Local, ModuleDef, PathResolution, StructKind, sym};
 use itertools::Either;
 use ra_internal::*;
 use std::cell::RefCell;
@@ -1322,21 +1322,21 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 if let Some(const_ref) = self.sem.resolve_bind_pat_to_const(ident_pat) =>
             {
                 match const_ref {
-                    ModuleDef::EnumVariant(variant) => {
+                    const_ref
+                        if let Some(constructable) =
+                            ConstructableDef::from_module_def(const_ref) =>
+                    {
                         let ty_args = (self.sem.type_of_pat(pat).unwrap().original)
-                            .expect_adt_of(variant.parent_enum(self.db).into());
+                            .expect_adt_of(constructable.adt(self.db));
 
                         fcode!(
                             "{}",
-                            self.constructable_name_cs(&Constructable::new(
-                                variant.into(),
-                                ty_args
-                            ))
+                            self.constructable_name_cs(&Constructable::new(constructable, ty_args))
                         )
                     }
                     _ => {
                         // TODO
-                        code!(format!("{:?}", const_ref))
+                        code!(format!("/* Unresolved ident */{:?}", const_ref))
                     }
                 }
             }
