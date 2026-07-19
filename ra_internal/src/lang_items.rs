@@ -93,6 +93,8 @@ lang_item_wrapper! {
 
         Iterator: Trait,
 
+        OwnedBox: Struct, // alloc::boxed::Box
+
         Fn: Trait,
         FnMut: Trait,
         FnOnce: Trait,
