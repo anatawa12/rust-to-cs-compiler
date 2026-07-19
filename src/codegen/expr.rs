@@ -6,7 +6,7 @@ use crate::codegen::function_resolution::ResolvedFunction;
 use crate::codegen::simple_extensions::*;
 use crate::codegen::ty::CsTypeOption;
 use hir::db::HirDatabase;
-use hir::{Adt, HasCrate, InFile, Local, ModuleDef, PathResolution, StructKind, sym};
+use hir::{HasCrate, InFile, Local, ModuleDef, PathResolution, StructKind, sym};
 use itertools::Either;
 use ra_internal::*;
 use std::cell::RefCell;
@@ -590,7 +590,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         code!(receiver, adjuster, ".", self.field_name(&field))
                     }
                     Some(Either::Right(field)) => {
-                        code!(receiver, adjuster, ".", field.index + 1)
+                        code!(receiver, adjuster, ".f_", field.index + 1)
                     }
                 }
             }
