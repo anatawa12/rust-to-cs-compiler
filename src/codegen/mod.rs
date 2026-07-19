@@ -421,7 +421,10 @@ impl<'db> CodeGenerator<'db> {
         }
 
         if let Some(trait_ref) = impl_.trait_ref(db)
-            && matches!(trait_ref.trait_().name(db).as_str(), "Visitor")
+            && matches!(
+                trait_ref.trait_().name(db).as_str(),
+                "Visitor" | "Deserializer" | "Serializer"
+            )
         {
             // implement inherited default methods
             let _trait_super_impl_scope = tracing::debug_span!("emit_impl_methods of super methods", trait = trait_ref.trait_().name(db).as_str()).entered();
@@ -532,7 +535,7 @@ impl<'db> CodeGenerator<'db> {
                     param
                         .name(db)
                         .map(|n| names::local_name(n.as_str(), 0))
-                        .unwrap_or_else(|| format!(", p_{}", i))
+                        .unwrap_or_else(|| format!("p_{}", i - (f.has_self_param(db) as usize)))
                 }
             })
             .collect::<Vec<_>>()
