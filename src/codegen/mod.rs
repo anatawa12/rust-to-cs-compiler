@@ -423,7 +423,7 @@ impl<'db> CodeGenerator<'db> {
         if let Some(trait_ref) = impl_.trait_ref(db)
             && matches!(
                 trait_ref.trait_().name(db).as_str(),
-                "Visitor" | "Deserializer" | "Serializer"
+                "Visitor" | "Deserializer" | "Serializer" | "SeqAccess" | "Deserialize"
             )
         {
             // implement inherited default methods

@@ -1196,6 +1196,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         | "m_VisitEnum"
                     // ***Access methods
                         | "m_NextKey"
+                        | "m_NextElement"
                     // Visitor Wrappers
                         | "m_NewMapKeyDeserializer"
                         | "m_NewDedupForwarderVisitor"
