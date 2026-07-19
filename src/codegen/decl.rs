@@ -314,13 +314,19 @@ impl<'db> CodeGenerator<'db> {
         }
 
         let mut adt_impls = HashMap::<_, Vec<_>>::default();
-        for &item in deferred {
-            if let ItemInBody::Impl(impl_) = item {
-                let self_ty = impl_.self_ty(self.db);
-                eprintln!("impl: {:?}", self_ty);
-                if let Some(adt) = self_ty.as_adt() {
-                    eprintln!("impl for {:?}", adt);
-                    adt_impls.entry(adt).or_default().push(impl_);
+        let all_impls = deferred.iter().flat_map(|&item| match item {
+            ItemInBody::Impl(impl_) => vec![impl_],
+            ItemInBody::Adt(adt) => adt.module(self.db).impl_defs(self.db),
+            _ => vec![],
+        });
+        for impl_ in all_impls {
+            let self_ty = impl_.self_ty(self.db);
+            //eprintln!("impl: {:?}", self_ty);
+            if let Some(adt) = self_ty.as_adt() {
+                //eprintln!("impl for {:?}", adt);
+                let impls = adt_impls.entry(adt).or_default();
+                if !impls.contains(&impl_) {
+                    impls.push(impl_);
                 }
             }
         }
