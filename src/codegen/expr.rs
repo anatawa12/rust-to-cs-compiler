@@ -1032,6 +1032,65 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 let match_expr = match_expr.expr().unwrap();
                 let scrutinee = self.emit_expr_str_ast(&match_expr);
 
+                // Since we lower Cow<T> => T, we remove
+                if let Some(cow) = self.sem.type_of_expr(&match_expr).and_then(|t| {
+                    if let Some((adt, _args)) = t.adjusted.unwrap_or(t.original).as_adt_with_args()
+                        && let hir::Adt::Enum(enum_) = adt
+                        && Some(enum_) == self.lang_items.Cow()
+                        && let Some(arms) = arms
+                            .arms()
+                            .map(|arm| {
+                                if let ast::Pat::TupleStructPat(pat) = arm.pat().unwrap()
+                                    && let Some(PathResolution::Def(def)) =
+                                        self.sem.resolve_path(&pat.path().unwrap())
+                                    && let ModuleDef::EnumVariant(variant) = def
+                                    && (Some(variant) == self.lang_items.CowBorrowed()
+                                        || Some(variant) == self.lang_items.CowOwned())
+                                {
+                                    Some(if Some(variant) == self.lang_items.CowBorrowed() {
+                                        Some((pat.fields(), arm))
+                                    } else {
+                                        None
+                                    })
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect::<Option<Vec<_>>>()
+                    {
+                        Some(arms)
+                    } else {
+                        None
+                    }
+                }) {
+                    let cow = cow.into_iter().flatten().collect::<Vec<_>>();
+                    assert!(cow.len() == 1);
+
+                    let mut out = Code::new();
+
+                    out.w("(").w(scrutinee).wln(") switch {");
+                    out.indent();
+
+                    for (pat, arm) in cow {
+                        // Emit pattern check
+                        let pat_cs = self.emit_pattern_ast(&{ pat }.next().unwrap());
+
+                        out.w("").w(pat_cs).w(" ");
+                        if let Some(guard) = arm.guard() {
+                            out.w("when ");
+                            out.w(self.emit_expr_str_ast(&guard.condition().unwrap()));
+                        }
+                        out.w("=> ")
+                            .w(self.emit_expr_str_ast(&arm.expr().unwrap()))
+                            .wln(",");
+                    }
+                    out.dedent();
+
+                    out.w("}");
+
+                    return out;
+                }
+
                 let mut out = Code::new();
 
                 out.w("(").w(scrutinee).wln(") switch {");

@@ -9,39 +9,55 @@ pub struct LangItems {
     inner: HirDefLangItems,
     send: Option<hir::Trait>,
     into: Option<hir::Trait>,
+    cow: Option<hir::Enum>,
+    cow_owned: Option<hir::EnumVariant>,
+    cow_borrowed: Option<hir::EnumVariant>,
 }
 
 impl LangItems {
     pub fn new(db: &dyn HirDatabase, krate: hir::Crate) -> &Self {
         #[salsa_macros::tracked(returns(ref))]
         fn new(db: &dyn HirDatabase, krate: Crate) -> LangItems {
-            let mut send: Option<hir::Trait> = None;
-            let mut into: Option<hir::Trait> = None;
+            let send: Option<hir::Trait>;
+            let into: Option<hir::Trait>;
+            let cow: Option<hir::Enum>;
+            let cow_owned: Option<hir::EnumVariant>;
+            let cow_borrowed: Option<hir::EnumVariant>;
 
-            if let Some(core) = all_crates(db).iter().copied().find(|&krate| {
-                matches!(
-                    krate.data(db).origin,
-                    CrateOrigin::Lang(LangCrateOrigin::Core)
-                )
-            }) {
-                let core = hir::Crate::from(core);
-
+            {
                 trait ItemInNsConvert: Sized {
                     fn into_ns(value: hir::ItemInNs) -> Option<Self>;
                 }
 
-                impl ItemInNsConvert for hir::Trait {
-                    fn into_ns(value: hir::ItemInNs) -> Option<Self> {
-                        variant_or_none!(
-                            variant_or_none!(value, hir::ItemInNs::Types)?,
-                            hir::ModuleDef::Trait
-                        )
-                    }
+                macro_rules! item_in_ns_convert_impl {
+                    ($ty: path as ($($convert: path),+)) => {
+                        impl ItemInNsConvert for $ty {
+                            fn into_ns(value: hir::ItemInNs) -> Option<Self> {
+                                $(let value = variant_or_none!(value, $convert)?;)+
+                                Some(value)
+                            }
+                        }
+                    };
                 }
 
+                item_in_ns_convert_impl!(
+                    hir::Trait as (hir::ItemInNs::Types, hir::ModuleDef::Trait)
+                );
+                item_in_ns_convert_impl!(
+                    hir::Enum as (hir::ItemInNs::Types, hir::ModuleDef::Adt, hir::Adt::Enum)
+                );
+                item_in_ns_convert_impl!(
+                    hir::EnumVariant as (hir::ItemInNs::Types, hir::ModuleDef::EnumVariant)
+                );
+
                 macro_rules! resolve_item {
-                    ($crate_:ident ::$($path:ident)::+ as $ty: ty) => {
-                        $crate_
+                    ($crate_:ident ::$($path:ident)::+ as $ty: ty) => {{
+                        {
+                            #![allow(unused)]
+                            extern crate alloc;
+                            use $crate_::$($path)::+;
+                        }
+                        $crate_.and_then(|crate_| crate_
                             .root_module(db)
                             .resolve_mod_path(
                                 db,
@@ -51,17 +67,45 @@ impl LangItems {
                             .flatten()
                             .flat_map(|x| <$ty as ItemInNsConvert>::into_ns(x))
                             .next()
+                        )
+                    }};
+                }
+
+                let all_crates = all_crates(db);
+                macro_rules! find_crate {
+                    (|$origin:ident| $expr: expr) => {
+                        all_crates
+                            .iter()
+                            .copied()
+                            .find(|&krate| {
+                                let $origin = &krate.data(db).origin;
+                                $expr
+                            })
+                            .map(hir::Crate::from)
                     };
                 }
 
+                let core = find_crate!(|origin| {
+                    matches!(origin, CrateOrigin::Lang(LangCrateOrigin::Core))
+                });
+                let alloc = find_crate!(|origin| {
+                    matches!(origin, CrateOrigin::Lang(LangCrateOrigin::Alloc))
+                });
+
                 send = resolve_item!(core::marker::Send as hir::Trait);
                 into = resolve_item!(core::convert::Into as hir::Trait);
+                cow = resolve_item!(alloc::borrow::Cow as hir::Enum);
+                cow_borrowed = resolve_item!(alloc::borrow::Cow::Borrowed as hir::EnumVariant);
+                cow_owned = resolve_item!(alloc::borrow::Cow::Owned as hir::EnumVariant);
             }
 
             LangItems {
                 inner: lang_items(db, krate).clone(),
                 send,
                 into,
+                cow,
+                cow_owned,
+                cow_borrowed,
             }
         }
 
@@ -120,5 +164,17 @@ impl LangItems {
 
     pub fn Into(&self) -> Option<hir::Trait> {
         self.into
+    }
+
+    pub fn Cow(&self) -> Option<hir::Enum> {
+        self.cow
+    }
+
+    pub fn CowOwned(&self) -> Option<hir::EnumVariant> {
+        self.cow_owned
+    }
+
+    pub fn CowBorrowed(&self) -> Option<hir::EnumVariant> {
+        self.cow_borrowed
     }
 }
