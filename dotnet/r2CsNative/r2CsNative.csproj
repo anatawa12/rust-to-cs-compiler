@@ -10,6 +10,7 @@
   <ItemGroup>
     <!--<ProjectReference Include="../r2CsRuntime/r2CsRuntime.csproj" />-->
     <Compile Include="../r2CsRuntime/*.cs" />
+    <PackageReference Include="System.Memory" Version="4.6.3" />
   </ItemGroup>
 
   <ItemGroup>
