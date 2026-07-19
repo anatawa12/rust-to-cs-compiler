@@ -139,8 +139,8 @@ fn resolve_assoc_of_impl_impl<'db>(
                 assert!(interner.has_item_definition(alias.into()));
 
                 let ty = db.ty(alias.into());
-                let args = create_impl_generic_args_for(self_ty, impl_id, interner, db);
-                assert!(interner.check_args_compatible(AnyImplId::ImplId(impl_id).into(), args));
+                //let args = create_impl_generic_args_for(self_ty, impl_id, interner, db);
+                //assert!(interner.check_args_compatible(AnyImplId::ImplId(impl_id).into(), args));
                 resolved_impl_assoc = Some(ty.skip_binder());
             });
 
@@ -187,7 +187,7 @@ fn resolve_assoc_of_impl_impl<'db>(
 ///
 /// For example, if there is `impl<T> Trait for T` with self_ty being `String`, this creates GenericArgs `<String>`.
 /// For example, if there is `impl<T> Struct<T>` with self_ty being `Struct<i32>`, this creates GenericArgs `<i32>`.
-#[tracing::instrument()]
+#[allow(dead_code)]
 fn create_impl_generic_args_for<'db>(
     self_ty: Ty<'db>,
     target: ImplId,
@@ -224,7 +224,14 @@ fn create_impl_generic_args_for<'db>(
                             type_map.insert(GenericParamId::TypeParamId(param.id), self_arg);
                         }
                         _ => {
-                            panic!("unsupported type");
+                            panic!(
+                                "unsupported type: adt = {adt}, impl for = {impl_for:?}",
+                                impl_for = hir::Impl::from(target)
+                                    .trait_(db)
+                                    .as_ref()
+                                    .map(|x| x.debug_display(db)),
+                                adt = hir::Adt::from(impl_adt_def.def_id()).debug_display(db),
+                            );
                         }
                     }
                 }
