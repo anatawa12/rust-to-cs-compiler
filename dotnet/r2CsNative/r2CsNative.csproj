@@ -8,7 +8,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../r2CsRuntime/r2CsRuntime.csproj" />
+    <!--<ProjectReference Include="../r2CsRuntime/r2CsRuntime.csproj" />-->
+    <Compile Include="../r2CsRuntime/*.cs" />
   </ItemGroup>
 
   <ItemGroup>
