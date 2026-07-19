@@ -764,7 +764,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
             ast::Expr::PrefixExpr(prefix_expr) => {
                 let inner_str = self.emit_expr_str_ast(&prefix_expr.expr().unwrap());
                 match prefix_expr.op_kind().unwrap() {
-                    UnaryOp::Deref => code!("(*", inner_str, ")"),
+                    UnaryOp::Deref => code!("(/* deref_op */", inner_str, ")"),
                     UnaryOp::Not => code!("!(", inner_str, ")"),
                     UnaryOp::Neg => code!("-(", inner_str, ")"),
                 }
