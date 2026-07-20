@@ -9,6 +9,7 @@ mod dyn_compatibility;
 pub mod expr;
 mod function_resolution;
 mod id_map;
+pub mod item_exclusion;
 pub mod names;
 pub mod ty;
 
@@ -28,10 +29,9 @@ mod simple_extensions {
 
 use self::output::Code;
 use crate::codegen::constructable::ConstructableDef;
-use crate::codegen::decl::{
-    is_adt_cfg_disabled, is_adt_r2cs_native, is_impl_cfg_disabled, is_module_cfg_disabled,
-};
+use crate::codegen::decl::is_adt_r2cs_native;
 use crate::codegen::id_map::IdMap;
+use crate::codegen::item_exclusion::should_emit;
 use crate::codegen::ty::generic_types;
 use hir::{
     Adt, AssocItem, Crate, Impl, InFile, Module, ModuleDef, Semantics, StructKind, TypeParam,
@@ -139,10 +139,13 @@ impl<'db> CodeGenerator<'db> {
         let mut adt_impls: HashMap<String, Vec<Impl>> = HashMap::new();
 
         for module in krate.modules(db) {
-            if is_module_cfg_disabled(module, db) {
+            if !should_emit(module, db) {
                 continue;
             }
             for impl_ in module.impl_defs(db) {
+                if !should_emit(impl_, db) {
+                    continue;
+                }
                 let self_ty = impl_.self_ty(db);
                 if let Some(adt) = self_ty.as_adt() {
                     let key = self.adt_key(adt);
@@ -156,7 +159,7 @@ impl<'db> CodeGenerator<'db> {
 
     fn emit_module(&self, out: &mut Code, module: Module, adt_impls: &HashMap<String, Vec<Impl>>) {
         let db = self.db;
-        if is_module_cfg_disabled(module, db) {
+        if !should_emit(module, db) {
             return;
         }
 
@@ -207,7 +210,8 @@ impl<'db> CodeGenerator<'db> {
     fn emit_adt_with_impls(&self, out: &mut Code, adt: Adt, impls: &[Impl]) {
         let db = self.db;
 
-        if is_adt_cfg_disabled(adt, db) {
+        if !should_emit(adt, db) {
+            out.wln(format!("// Omit {}", adt.name(db).as_str()));
             return;
         }
 
@@ -411,7 +415,7 @@ impl<'db> CodeGenerator<'db> {
     ))]
     fn emit_impl_methods(&self, out: &mut Code, cs_name: &str, impl_: Impl) {
         let db = self.db;
-        if is_impl_cfg_disabled(impl_, db) {
+        if !should_emit(impl_, db) {
             return;
         }
         for item in impl_.items(db) {

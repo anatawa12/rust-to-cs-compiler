@@ -1,0 +1,119 @@
+//! This module handles removing specific portion of crate from output.
+
+use hir::db::HirDatabase;
+use hir::{HasAttrs, HasContainer, HasCrate};
+
+pub trait RustPath: Copy {
+    fn rust_path(self, db: &dyn HirDatabase) -> Option<String>;
+}
+
+impl RustPath for hir::Adt {
+    fn rust_path(self, db: &dyn HirDatabase) -> Option<String> {
+        Some(self.module(db).rust_path(db)? + "::" + self.name(db).as_str())
+    }
+}
+
+impl RustPath for hir::Trait {
+    fn rust_path(self, db: &dyn HirDatabase) -> Option<String> {
+        Some(self.module(db).rust_path(db)? + "::" + self.name(db).as_str())
+    }
+}
+
+impl RustPath for hir::ExternBlock {
+    fn rust_path(self, db: &dyn HirDatabase) -> Option<String> {
+        self.module(db).rust_path(db)
+    }
+}
+
+impl RustPath for hir::Crate {
+    fn rust_path(self, db: &dyn HirDatabase) -> Option<String> {
+        Some(self.display_name(db)?.as_str().into())
+    }
+}
+
+impl RustPath for hir::Impl {
+    fn rust_path(self, db: &dyn HirDatabase) -> Option<String> {
+        let self_ty = self.self_ty(db);
+        if let Some(adt) = self_ty.as_adt() {
+            if let Some(trait_) = self.trait_(db) {
+                Some(
+                    String::from("<") + &adt.rust_path(db)? + " as " + &trait_.rust_path(db)? + ">",
+                )
+            } else {
+                adt.rust_path(db)
+            }
+        } else {
+            Some(self.module(db).rust_path(db)? + "::<impl>")
+        }
+    }
+}
+
+impl RustPath for hir::ItemContainer {
+    fn rust_path(self, db: &dyn HirDatabase) -> Option<String> {
+        match self {
+            hir::ItemContainer::Trait(t) => t.rust_path(db),
+            hir::ItemContainer::Impl(a) => a.rust_path(db),
+            hir::ItemContainer::Module(m) => m.rust_path(db),
+            hir::ItemContainer::ExternBlock(e) => e.rust_path(db),
+            hir::ItemContainer::Crate(e) => e.rust_path(db),
+        }
+    }
+}
+
+impl RustPath for hir::Function {
+    fn rust_path(self, db: &dyn HirDatabase) -> Option<String> {
+        Some(self.container(db).rust_path(db)? + "::" + self.name(db).as_str())
+    }
+}
+
+impl RustPath for hir::Module {
+    fn rust_path(self, db: &dyn HirDatabase) -> Option<String> {
+        if self.is_crate_root(db) {
+            self.krate(db).rust_path(db)
+        } else if let Some(parent) = self.parent(db) {
+            Some(parent.rust_path(db)? + "::" + self.name(db)?.as_str())
+        } else {
+            Some(self.name(db)?.as_str().into())
+        }
+    }
+}
+
+pub fn should_emit(
+    adt: impl RustPath + HasAttrs + HasCrate + std::fmt::Debug,
+    db: &dyn HirDatabase,
+) -> bool {
+    let path = adt.rust_path(db);
+    eprintln!("path: {path:?} for {adt:?}");
+    !matches!(
+        path.as_deref(),
+        Some(
+            "_____dummy_for_format"
+                | "serde_core::de::value::SeqAccessDeserializer"
+                | "serde_core::de::value::MapAccessDeserializer"
+                | "serde_core::de::value::EnumAccessDeserializer"
+                | "serde_core::de::value::PairDeserializer"
+                | "serde_core::de::value::PairVisitor"
+                | "<serde_core::de::value::BorrowedStrDeserializer as serde_core::de::EnumAccess>"
+                | "<serde_core::de::value::StringDeserializer as serde_core::de::EnumAccess>"
+                | "<serde_core::de::value::CowStrDeserializer as serde_core::de::EnumAccess>"
+                | "<serde_core::de::value::StrDeserializer as serde_core::de::EnumAccess>"
+                | "<serde_core::de::value::U32Deserializer as serde_core::de::EnumAccess>"
+                | "<serde_core::de::value::Error as serde_core::ser::Error>"
+                | "<serde_core::de::value::MapDeserializer as serde_core::de::SeqAccess>"
+                | "serde_core::de::value::private::unit_only"
+                | "serde_core::de::value::private::UnitOnly"
+                | "serde_core::de::value::private::map_as_enum"
+                | "serde_core::de::value::private::MapAsEnum"
+                | "serde_core::de::impls::ArrayVisitor"
+                | "serde_core::de::impls::ArrayInPlaceVisitor"
+                | "serde_core::ser::impossible"
+        )
+    ) && !cfg_disabled(adt.attrs(db), adt.krate(db), db)
+}
+
+fn cfg_disabled(attrs: hir::AttrsWithOwner, krate: hir::Crate, db: &dyn HirDatabase) -> bool {
+    match attrs.cfgs(db) {
+        Some(cfg_expr) => krate.cfg(db).check(cfg_expr) == Some(false),
+        None => false,
+    }
+}
