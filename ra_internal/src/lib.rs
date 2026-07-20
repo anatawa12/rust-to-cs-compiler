@@ -15,6 +15,7 @@ pub mod adt;
 mod assoc_item;
 mod debug;
 pub mod function;
+pub mod generic_def;
 mod impl_;
 mod lang_items;
 mod trait_;

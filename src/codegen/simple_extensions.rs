@@ -10,6 +10,7 @@ use ide_db::base_db::salsa_macros;
 use itertools::Either;
 use ra_internal::adt::AdtExt;
 use ra_internal::function::FunctionExt;
+use ra_internal::generic_def::GenericDefExt as _;
 use ra_internal::*;
 use std::collections::HashSet;
 
@@ -249,8 +250,8 @@ impl TypeParamExt for hir::TypeParam {
                             impl_self_args: &[Option<hir::Type<'db>>],
                             db: &'db dyn HirDatabase,
                         ) -> Option<Vec<Option<hir::Type<'db>>>> {
-                            let mut generic_args =
-                                vec![None; GenericDef::from(impl_).params0(db).len()];
+                            let impl_params = GenericDef::from(impl_).params0(db);
+                            let mut generic_args = vec![None; impl_params.len()];
                             let adt_args = GenericDef::from(adt).params0(db);
                             for (i, arg) in impl_self_args.iter().enumerate() {
                                 if let Some(type_arg) = arg {
@@ -266,6 +267,31 @@ impl TypeParamExt for hir::TypeParam {
                                             .unwrap()
                                             .ty(db),
                                     )
+                                }
+                            }
+                            for (i, arg) in impl_params.iter().enumerate() {
+                                if generic_args[i].is_none() {
+                                    generic_args[i] = match arg {
+                                        hir::GenericParam::TypeParam(type_param) => {
+                                            let back_resolved = hir::GenericDef::from(impl_)
+                                                .back_resolve_projection(type_param.ty(db), db);
+                                            if back_resolved.len() > 1 {
+                                                tracing::info!(
+                                                    "multi back_resolved: {back_resolved:?}",
+                                                    back_resolved = back_resolved
+                                                        .iter()
+                                                        .map(|ty| ty.debug_display(db))
+                                                        .collect::<Vec<_>>()
+                                                );
+                                            }
+                                            if back_resolved.is_empty() {
+                                                Some(hir::Type::error(db, adt.krate(db)))
+                                            } else {
+                                                Some({ back_resolved }.swap_remove(0))
+                                            }
+                                        }
+                                        _ => None,
+                                    };
                                 }
                             }
                             Some(generic_args)
