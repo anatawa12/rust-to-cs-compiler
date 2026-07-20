@@ -45,6 +45,9 @@ impl<'db> CodeGenerator<'db> {
             && self.with_self_in_cs(trait_)
         {
             type_params.insert(0, CsTypeParamSource::TypeParam(0));
+            if trait_.needs_statics(db) {
+                type_params.insert(1, CsTypeParamSource::TraitStaticTypeParam(0));
+            }
         }
 
         for (index, param) in generic_types(&def.params0(db)).enumerate() {
