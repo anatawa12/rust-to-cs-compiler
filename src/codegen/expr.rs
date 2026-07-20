@@ -2,6 +2,7 @@
 
 use super::{CodeGenerator, generic_args, names, output::Code};
 use crate::codegen::constructable::{Constructable, ConstructableDef};
+use crate::codegen::decl::CsFunctionType;
 use crate::codegen::function_resolution::ResolvedFunction;
 use crate::codegen::simple_extensions::*;
 use crate::codegen::ty::CsTypeOption;
@@ -27,6 +28,7 @@ pub struct BodyGen<'g, 'db> {
     /// Whether we're inside an async fn (controls .GetAwaiter()/.GetResult() vs await).
     #[allow(dead_code)]
     is_async: bool,
+    cs_type: CsFunctionType,
 
     // internals
     match_index: AtomicUsize,
@@ -66,7 +68,7 @@ impl<'g, 'db> std::ops::Deref for BodyGen<'g, 'db> {
 }
 
 impl<'g, 'db> BodyGen<'g, 'db> {
-    pub fn new(cg: &'g CodeGenerator<'db>, is_async: bool) -> Self {
+    pub fn new(cg: &'g CodeGenerator<'db>, is_async: bool, cs_type: CsFunctionType) -> Self {
         Self {
             cg,
             locals: RefCell::new(HashMap::new()),
@@ -74,6 +76,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
             is_async,
             match_index: AtomicUsize::new(0),
             deferred: RefCell::new(Vec::new()),
+            cs_type,
         }
     }
 
@@ -133,7 +136,14 @@ impl<'g, 'db> BodyGen<'g, 'db> {
     pub fn emit_function_body(&self, f: ast::Fn, out: &mut Code) {
         let params = f.param_list().unwrap();
         if let Some(self_param) = params.self_param() {
-            self.add_local(self.sem.to_def(&self_param).unwrap(), "this".into());
+            match self.cs_type {
+                CsFunctionType::TraitDefaultImpl => {
+                    self.add_local(self.sem.to_def(&self_param).unwrap(), "self".into());
+                }
+                _ => {
+                    self.add_local(self.sem.to_def(&self_param).unwrap(), "this".into());
+                }
+            }
         }
         for param in params.params() {
             match param.pat().unwrap() {

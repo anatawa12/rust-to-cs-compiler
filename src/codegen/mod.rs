@@ -29,7 +29,7 @@ mod simple_extensions {
 
 use self::output::Code;
 use crate::codegen::constructable::ConstructableDef;
-use crate::codegen::decl::is_adt_r2cs_native;
+use crate::codegen::decl::{CsFunctionType, is_adt_r2cs_native};
 use crate::codegen::id_map::IdMap;
 use crate::codegen::item_exclusion::should_emit;
 use crate::codegen::ty::generic_types;
@@ -431,8 +431,13 @@ impl<'db> CodeGenerator<'db> {
                     | "Deserializer"
                     | "Serializer"
                     | "SeqAccess"
+                    | "MapAccess"
                     | "Deserialize"
                     | "EnumAccess"
+                    | "VariantAccess"
+                    | "SerializeMap"
+                    | "SerializeStruct"
+                    | "SerializeStructVariant"
             )
         {
             // implement inherited default methods
@@ -454,7 +459,7 @@ impl<'db> CodeGenerator<'db> {
                 .filter_map(|x| x.as_function())
                 .filter(|f| !implemented_fns.contains(f.name(db).symbol()))
             {
-                self.emit_wrapper_fn(out, &trait_ref, f, &declared_class, false);
+                self.emit_wrapper_fn(out, &trait_ref, f, &declared_class, CsFunctionType::Normal);
             }
         }
 
@@ -506,7 +511,13 @@ impl<'db> CodeGenerator<'db> {
             out.indent();
 
             for f in static_fns {
-                self.emit_wrapper_fn(out, &trait_ref, f, cs_name, true);
+                self.emit_wrapper_fn(
+                    out,
+                    &trait_ref,
+                    f,
+                    cs_name,
+                    CsFunctionType::TraitStaticStruct,
+                );
             }
             out.dedent();
             out.wln(fcode!("}}"));
@@ -520,7 +531,7 @@ impl<'db> CodeGenerator<'db> {
         trait_ref: &hir::TraitRef<'db>,
         f: hir::Function,
         declared_class: &str,
-        static_wrapper: bool,
+        function_type: CsFunctionType,
     ) {
         let db = self.db;
         let self_def = hir::GenericDef::from(f);
@@ -549,7 +560,7 @@ impl<'db> CodeGenerator<'db> {
             })
             .collect::<Vec<_>>()
             .join(", ");
-        self.emit_function_signature(out, f, "public ", "", static_wrapper, |x| {
+        self.emit_function_signature(out, f, "public ", "", function_type, |x| {
             x.instantiate(f.into(), &type_args, db)
         });
         out.wln("");

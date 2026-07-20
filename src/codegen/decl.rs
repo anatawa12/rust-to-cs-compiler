@@ -1,4 +1,4 @@
-use super::{CodeGenerator, expr::BodyGen, names, output::Code};
+use super::{CodeGenerator, expr::BodyGen, generic_args, names, output::Code};
 use crate::codegen::expr::ItemInBody;
 use crate::codegen::item_exclusion::should_emit;
 use crate::codegen::simple_extensions::*;
@@ -6,9 +6,11 @@ use crate::codegen::ty::generic_types;
 use cfg::CfgExpr;
 /// Generates C# type declarations from Rust HIR types.
 use hir::{Adt, AssocItem, HasContainer, HasSource, Impl, Trait, db::HirDatabase};
+use itertools::Itertools;
 use ra_internal::function::FunctionExt;
 use ra_internal::*;
 use std::collections::HashMap;
+use std::io::Read;
 use syntax::ast::HasAttrs as AstHasAttrs;
 
 /// Returns true if the item carries `#[r2cs_native]` or `#[r2cs::native]`.
@@ -114,7 +116,7 @@ impl<'db> CodeGenerator<'db> {
             match item {
                 AssocItem::Function(f) => {
                     if f.has_self_param(db) {
-                        self.emit_function_signature(out, f, "", "", false, |x| x);
+                        self.emit_function_signature(out, f, "", "", CsFunctionType::Normal, |x| x);
                         out.wln(";");
                     }
                 }
@@ -154,20 +156,50 @@ impl<'db> CodeGenerator<'db> {
                     && !f.has_self_param(db)
                     && !f.is_explicit_sized_self(db)
                 {
-                    self.emit_function_signature(out, f, "", "", true, |x| x);
+                    self.emit_function_signature(
+                        out,
+                        f,
+                        "",
+                        "",
+                        CsFunctionType::TraitStaticStruct,
+                        |x| x,
+                    );
                     out.wln(";");
                 }
             }
             out.close_brace();
         }
 
+        out.wln("public static class Defaults");
+        out.open_brace();
+
+        for item in t.items(db) {
+            let AssocItem::Function(f) = item else {
+                continue;
+            };
+            if !f.has_body(db) {
+                continue;
+            }
+            self.emit_function_inner(out, f, None, CsFunctionType::TraitDefaultImpl);
+        }
+        out.close_brace();
+
         out.close_brace();
         out.blank_line();
     }
 
-    /// Emit a function/method with a stub body (TODO: real body generation).
-    #[tracing::instrument(skip(self, out), fields(function = %f.debug_display(self.db)))]
     pub fn emit_function(&self, out: &mut Code, f: hir::Function, impl_ctx: Option<Impl>) {
+        self.emit_function_inner(out, f, impl_ctx, CsFunctionType::Normal);
+    }
+
+    #[tracing::instrument(skip(self, out), fields(function = %f.debug_display(self.db)))]
+    pub fn emit_function_inner(
+        &self,
+        out: &mut Code,
+        f: hir::Function,
+        impl_ctx: Option<Impl>,
+        cs_type: CsFunctionType,
+    ) {
         let db = self.db;
         let _scope = tracing::info_span!(
             "emit_function",
@@ -186,7 +218,7 @@ impl<'db> CodeGenerator<'db> {
 
         if is_fn_r2cs_native(f, self.krate, db) {
             writeln!(out, "// [r2cs_native] - add implementation in r2CsNative/",);
-            self.emit_function_signature(out, f, "public ", "partial ", false, |x| x);
+            self.emit_function_signature(out, f, "public ", "partial ", cs_type, |x| x);
             out.wln(";");
             return;
         }
@@ -199,14 +231,14 @@ impl<'db> CodeGenerator<'db> {
             f,
             "public ",
             if is_async { "async " } else { "" },
-            false,
+            cs_type,
             |x| x,
         );
         out.wln("");
         out.open_brace();
 
         // Try to generate a real body using BodyGen
-        let mut body_gen = BodyGen::new(self, is_async);
+        let mut body_gen = BodyGen::new(self, is_async, cs_type);
         body_gen.emit_function_body(self.sem.source(f).unwrap().value, out);
 
         out.dedent();
@@ -222,7 +254,7 @@ impl<'db> CodeGenerator<'db> {
         f: hir::Function,
         access: &str,
         additional_modifier: &str,
-        always_instance: bool,
+        function_type: CsFunctionType,
         type_mapper: impl Fn(hir::Type<'db>) -> hir::Type<'db>,
     ) {
         let db = self.db;
@@ -235,12 +267,13 @@ impl<'db> CodeGenerator<'db> {
         let cs_ret = self.cs_ret_type(is_async, &ret_ty);
         let m_name = self.function_name(f);
         let has_self = f.has_self_param(db);
-        let is_static_kw = if !has_self && !always_instance {
-            "static "
-        } else {
-            ""
+        let is_static = match function_type {
+            CsFunctionType::Normal => !has_self,
+            CsFunctionType::TraitStaticStruct => false,
+            CsFunctionType::TraitDefaultImpl => true,
         };
-        let params = self.build_param_list(f, type_mapper);
+        let is_static_kw = if is_static { "static " } else { "" };
+        let params = self.build_param_list(f, type_mapper, function_type);
 
         write!(
             out,
@@ -383,22 +416,34 @@ impl<'db> CodeGenerator<'db> {
         &self,
         f: hir::Function,
         type_mapper: impl Fn(hir::Type<'db>) -> hir::Type<'db>,
+        function_type: CsFunctionType,
     ) -> String {
         let db = self.db;
 
         let params = f.params_without_self(db);
-        params
-            .iter()
-            .enumerate()
-            .map(|(i, param)| {
-                let cs_ty = self.rust_type_to_cs(&type_mapper(param.ty().clone()));
-                let p_name = param
-                    .name(db)
-                    .map(|n| names::local_name(n.as_str(), 0))
-                    .unwrap_or_else(|| format!("p_{}", i));
-                format!("{} {}", cs_ty, p_name)
+        let params = params.iter().enumerate().map(|(i, param)| {
+            let cs_ty = self.rust_type_to_cs(&type_mapper(param.ty().clone()));
+            let p_name = param
+                .name(db)
+                .map(|n| names::local_name(n.as_str(), 0))
+                .unwrap_or_else(|| format!("p_{}", i));
+            format!("{} {}", cs_ty, p_name)
+        });
+        (matches!(function_type, CsFunctionType::TraitDefaultImpl) && f.has_self_param(db))
+            .then(|| {
+                let hir::ItemContainer::Trait(trait_) = f.container(db) else {
+                    unreachable!()
+                };
+
+                let (all_params, _) = self.generic_def_params_cs(trait_.into());
+
+                format!(
+                    "{} self",
+                    generic_args(self.trait_itf_cs(trait_), all_params)
+                )
             })
-            .collect::<Vec<_>>()
+            .into_iter()
+            .chain(params)
             .join(", ")
     }
 
@@ -409,4 +454,11 @@ impl<'db> CodeGenerator<'db> {
             format!("<{}>", tp_names.join(", "))
         }
     }
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum CsFunctionType {
+    Normal,
+    TraitStaticStruct,
+    TraitDefaultImpl,
 }
