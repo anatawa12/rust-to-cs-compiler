@@ -5,15 +5,18 @@ use super::internal::{TyExt, TyFromType};
 use crate::DebugDisplay;
 use crate::ty::type_to_string::TypeToString;
 use hir::HasContainer;
-use hir_def::HasModule;
+use hir_def::{GenericParamId, HasModule, TypeAliasId};
 use hir_ty::db::HirDatabase;
 use hir_ty::next_solver::{
     AliasTy, Clause, ClauseKind, DbInterner, EarlyBinder, ErrorGuaranteed, GenericArg, GenericArgs,
     SolverDefId, TraitRef, Ty, TyKind,
 };
 use rustc_type_ir::inherent::{GenericArg as _, IntoKind};
-use rustc_type_ir::{AliasTyKind, Upcast};
+use rustc_type_ir::{AliasTyKind, Interner, Upcast};
 use std::hash::Hash;
+
+type BoundsProvider<'db> =
+    fn(&hir::Type<'db>, &'db dyn HirDatabase) -> Vec<(hir::Trait, Vec<hir::Type<'db>>)>;
 
 pub trait TypeExt<'db> {
     fn error(db: &'db dyn HirDatabase, krate: hir::Crate) -> Self;
@@ -34,6 +37,7 @@ pub trait TypeExt<'db> {
         &self,
         aliases: &[hir::TypeAlias],
         db: &'db dyn HirDatabase,
+        bounds_provider: BoundsProvider<'db>,
     ) -> hir::Type<'db>;
 
     /// Returns if this type is a array type. This doesn't require the length to be known unlike [`Type::as_array`]
@@ -101,25 +105,69 @@ impl<'db> TypeExt<'db> for hir::Type<'db> {
         &self,
         aliases: &[hir::TypeAlias],
         db: &'db dyn HirDatabase,
+        bounds_provider: BoundsProvider<'db>,
     ) -> hir::Type<'db> {
         let interner = DbInterner::new_with(db, self.env().krate);
         let self_ty = self.ns_ty();
+        let env = self.env();
+        let mut clauses = env.param_env.clauses().to_vec();
         let mut ty = self_ty;
         for &alias in aliases {
-            let alias_id = alias.into();
-            ty = Ty::new(
-                interner,
-                TyKind::Alias(
-                    AliasTy::new_from_args(
+            let alias_id = TypeAliasId::from(alias);
+            let hir::ItemContainer::Trait(container) = alias.container(db) else {
+                unreachable!();
+            };
+            if let traits = bounds_provider(&self.derived(ty), db)
+                .into_iter()
+                .filter(|&(trait_, _)| trait_ == container)
+                .collect::<Vec<_>>()
+                && !traits.is_empty()
+            {
+                assert!(traits.len() == 1);
+                let (_trait, trait_args) = { traits }.swap_remove(0);
+                let mut parsed_iter = trait_args.iter().map(|x| x.ns_ty());
+                let generic_args = GenericArgs::for_item(interner, alias_id.into(), |_, y, _| {
+                    if let GenericParamId::TypeParamId(_) = y {
+                        if let Some(ty) = parsed_iter.next() {
+                            ty.into()
+                        } else {
+                            GenericArg::error_from_id(interner, y)
+                        }
+                    } else {
+                        GenericArg::error_from_id(interner, y)
+                    }
+                });
+                ty = Ty::new(
+                    interner,
+                    TyKind::Alias(AliasTy::new_from_args(
                         interner,
                         AliasTyKind::Projection {
                             def_id: SolverDefId::TypeAliasId(alias_id),
                         },
-                        GenericArgs::error_for_item(interner, alias_id.into()),
-                    )
-                    .with_replaced_self_ty(interner, ty),
-                ),
-            );
+                        generic_args,
+                    )),
+                );
+                // We need to find bounds from impl
+                clauses.extend(
+                    interner
+                        .item_self_bounds(alias_id.into())
+                        .iter_instantiated(interner, generic_args),
+                );
+            } else {
+                ty = Ty::new(
+                    interner,
+                    TyKind::Alias(
+                        AliasTy::new_from_args(
+                            interner,
+                            AliasTyKind::Projection {
+                                def_id: SolverDefId::TypeAliasId(alias_id),
+                            },
+                            GenericArgs::error_for_item(interner, alias_id.into()),
+                        )
+                        .with_replaced_self_ty(interner, ty),
+                    ),
+                )
+            }
         }
         self.derived(ty)
     }

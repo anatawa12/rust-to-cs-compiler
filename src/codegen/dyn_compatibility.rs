@@ -1,5 +1,5 @@
-use crate::codegen::CodeGenerator;
 use crate::codegen::ty::{generic_types, includes_type_in_type};
+use crate::codegen::{CodeGenerator, bounds_provider};
 use hir::db::HirDatabase;
 use itertools::Either;
 use ra_internal::*;
@@ -187,7 +187,9 @@ fn includes_type_in_generic_params_cs_constraints<'db>(
             })
         })
         .flat_map(|(param, aliases)| {
-            let param_type = param.ty(db).new_associated_type(&aliases, db);
+            let param_type = param
+                .ty(db)
+                .new_associated_type(&aliases, db, bounds_provider);
 
             match param.trait_bounds_of_nested_type_with_args(&param_type, db) {
                 Either::Right(_) => Vec::new(),

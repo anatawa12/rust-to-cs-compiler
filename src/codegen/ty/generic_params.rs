@@ -1,7 +1,7 @@
-use crate::codegen::CodeGenerator;
 use crate::codegen::simple_extensions::*;
 use crate::codegen::ty::trait_assoc_types::collect_assoc_type_params;
 use crate::codegen::ty::{CsTypeOption, generic_types};
+use crate::codegen::{CodeGenerator, bounds_provider};
 use hir::db::HirDatabase;
 use ra_internal::type_alias::TypeAliasExt;
 use ra_internal::*;
@@ -118,7 +118,7 @@ pub fn resolve_cs_type_param_source<'db>(
         }
         CsTypeParamSource::AliasOfParam(i, ref alias)
         | CsTypeParamSource::TraitStaticAliasOfParam(i, ref alias) => {
-            generic_types[i].new_associated_type(alias, db)
+            generic_types[i].new_associated_type(alias, db, bounds_provider)
         }
     }
 }

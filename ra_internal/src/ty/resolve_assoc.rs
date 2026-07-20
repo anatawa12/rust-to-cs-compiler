@@ -167,7 +167,7 @@ fn resolve_assoc_of_impl_impl<'db>(
                 resolve_assoc_of_impl_impl(
                     &assoc_type
                         .derived(inner)
-                        .new_associated_type(rest_alias, db),
+                        .new_associated_type(rest_alias, db, |_, _| vec![]),
                     db,
                 )
             }

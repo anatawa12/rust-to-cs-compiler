@@ -17,7 +17,9 @@ impl TypeAliasExt for hir::TypeAlias {
                     .flat_map(|x| variant_or_none!(x, hir::GenericParam::TypeParam))
                     .next()
                     .unwrap();
-                self_ty.ty(db).new_associated_type(&[self], db)
+                self_ty
+                    .ty(db)
+                    .new_associated_type(&[self], db, |_, _| vec![])
             }
             _ => unreachable!(),
         };
