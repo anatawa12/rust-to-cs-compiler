@@ -29,11 +29,15 @@ impl TraitExt for Trait {
     }
 
     fn needs_statics(self, db: &dyn HirDatabase) -> bool {
-        self.items(db).iter().any(|item| match *item {
-            hir::AssocItem::Function(f) => !f.has_self_param(db) && !f.is_explicit_sized_self(db),
-            hir::AssocItem::Const(_) => false,
-            hir::AssocItem::TypeAlias(_) => false,
-        })
+        self.items_with_supertraits(db)
+            .iter()
+            .any(|item| match *item {
+                hir::AssocItem::Function(f) => {
+                    !f.has_self_param(db) && !f.is_explicit_sized_self(db)
+                }
+                hir::AssocItem::Const(_) => false,
+                hir::AssocItem::TypeAlias(_) => false,
+            })
     }
 }
 
