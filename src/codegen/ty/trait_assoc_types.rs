@@ -27,15 +27,20 @@ fn collect_assoc_type_params_impl<'db>(
     traits
         .into_iter()
         .filter(|&(trait_, _)| !ignored_trait(trait_, db))
-        .flat_map(move |(trait_, _)| trait_.assoc_types_for_cs(db))
-        .flat_map(move |alias| {
+        .flat_map(move |(trait_, args)| {
+            trait_
+                .assoc_types_for_cs(db)
+                .into_iter()
+                .map(move |alias| (alias, args.clone()))
+        })
+        .flat_map(move |(alias, args)| {
             let _scope = tracing::info_span!(
                 parent: &span,
                 "alias",
                 alias = alias.name(db).as_str(),
             )
             .entered();
-            let Some(instance) = outer_instance.normalize_trait_assoc_type(db, &[], alias) else {
+            let Some(instance) = outer_instance.normalize_trait_assoc_type(db, &args, alias) else {
                 let target = alias.module(db).krate(db).to_display_target(db);
                 panic!("unable to resolve {alias:?} of {type}",
                        alias = alias.name(db).as_str(),
