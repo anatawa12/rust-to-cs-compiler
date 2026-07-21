@@ -52,3 +52,6 @@ salsa-macros = "0.26.2"
 # other utils
 itertools = "0.14.0"
 tracing = "0.1.44"
+
+[profile.release]
+debug = true
