@@ -482,15 +482,18 @@ impl<'db> CodeGenerator<'db> {
             out.wln(fcode!(
                 "public int CompareTo({self_ty_cs} other) => this.m_Cmp(other).CsOrder();"
             ));
-        } else if impl_
-            .trait_(db)
-            .is_some_and(|x| self.lang_items.PartialEq() == Some(x))
+        } else if let Some(trait_ref) = impl_.trait_ref(db)
+            && self.lang_items.PartialEq() == Some(trait_ref.trait_())
         {
             let self_ty = impl_.self_ty(db);
+            let arg_ty = trait_ref.get_type_argument(1).unwrap().to_type(db);
             let self_ty_cs = self.rust_type_to_cs(&self_ty);
-            out.wln(fcode!("public static bool operator==({self_ty_cs} self, {self_ty_cs} right) => self.m_Eq(right);"));
-            out.wln(fcode!("public static bool operator!=({self_ty_cs} self, {self_ty_cs} right) => !self.m_Eq(right);"));
-            out.wln(fcode!("public override bool Equals(object? obj) => obj is {self_ty_cs} cast && this == cast;"));
+            let arg_ty_cs = self.rust_type_to_cs(&arg_ty);
+            out.wln(fcode!("public static bool operator==({self_ty_cs} self, {arg_ty_cs} right) => self.m_Eq(right);"));
+            out.wln(fcode!("public static bool operator!=({self_ty_cs} self, {arg_ty_cs} right) => !self.m_Eq(right);"));
+            if self_ty == arg_ty {
+                out.wln(fcode!("public override bool Equals(object? obj) => obj is {self_ty_cs} cast && this == cast;"));
+            }
         }
 
         if let Some(trait_ref) = impl_.trait_ref(db)
