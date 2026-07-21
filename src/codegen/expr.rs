@@ -1229,7 +1229,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
         match lit.kind() {
             ast::LiteralKind::Bool(b) => b.to_string().into(),
             ast::LiteralKind::IntNumber(v) => v.value().unwrap().to_string().into(),
-            ast::LiteralKind::FloatNumber(v) => v.to_string().into(),
+            ast::LiteralKind::FloatNumber(v) => v.value_string().into(),
             ast::LiteralKind::Char(c) => fcode!("'{}'", c.value().unwrap().escape_default()),
             ast::LiteralKind::String(s) => fcode!("\"{}\"", s.value().unwrap().escape_default(),),
             ast::LiteralKind::Byte(b) => b.value().unwrap().to_string().into(),
