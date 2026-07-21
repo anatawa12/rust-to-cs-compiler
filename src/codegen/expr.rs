@@ -7,7 +7,7 @@ use crate::codegen::function_resolution::ResolvedFunction;
 use crate::codegen::simple_extensions::*;
 use crate::codegen::ty::CsTypeOption;
 use hir::db::HirDatabase;
-use hir::{HasCrate, InFile, Local, ModuleDef, PathResolution, StructKind, sym};
+use hir::{HasCrate, InFile, Local, ModuleDef, PathResolution, StructKind, TypeInfo, sym};
 use itertools::Either;
 use ra_internal::*;
 use std::cell::RefCell;
@@ -131,6 +131,45 @@ impl<'g, 'db> BodyGen<'g, 'db> {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     }
 
+    fn check_cfg(&self, value: &impl ast::HasAttrs) -> bool {
+        fn check_meta(meta: ast::Meta, krate: hir::Crate, db: &dyn HirDatabase) -> Option<bool> {
+            match meta {
+                ast::Meta::CfgMeta(meta) => {
+                    let cfg_predicate = meta.cfg_predicate()?;
+                    let cfg_predicate = hir::CfgExpr::parse_from_ast(cfg_predicate);
+                    krate.cfg(db).check(&cfg_predicate)
+                }
+                ast::Meta::CfgAttrMeta(meta) => {
+                    let cfg_predicate = meta.cfg_predicate()?;
+                    let cfg_predicate = hir::CfgExpr::parse_from_ast(cfg_predicate);
+                    if krate.cfg(db).check(&cfg_predicate)? {
+                        for meta in meta.metas() {
+                            if check_meta(meta, krate, db) == Some(false) {
+                                return Some(false);
+                            }
+                        }
+                        None
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            }
+        }
+
+        value.attrs().all(|attr| {
+            let Some(meta) = attr.meta() else { return true };
+            check_meta(meta, self.krate, self.db).unwrap_or(true)
+        })
+    }
+
+    #[track_caller]
+    fn type_of_expr(&self, expr: &ast::Expr) -> TypeInfo<'db> {
+        self.sem
+            .type_of_expr(expr)
+            .unwrap_or_else(|| panic!("unknown type expr at {}", self.expr_location_ast(expr)))
+    }
+
     /// Emit the full function body block.
     #[tracing::instrument(skip_all)]
     pub fn emit_function_body(&self, f: ast::Fn, out: &mut Code) {
@@ -170,6 +209,9 @@ impl<'g, 'db> BodyGen<'g, 'db> {
         is_tail: bool,
         returning: bool,
     ) {
+        if !self.check_cfg(&expr) {
+            return;
+        }
         match expr {
             ast::Expr::BlockExpr(block_expr) => {
                 let statements = block_expr.statements();
@@ -427,6 +469,9 @@ impl<'g, 'db> BodyGen<'g, 'db> {
 
         if let Some(tail_expr) = tail {
             if returning {
+                if !self.check_cfg(&tail_expr) {
+                    return;
+                }
                 let tail_str = self.emit_expr_str_ast(&tail_expr);
                 if is_tail {
                     if tail_str != "()".into() && !tail_str.is_empty() {
@@ -511,7 +556,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 Some((hir::PathResolution::Def(module_def), _))
                     if let Some(def) = ConstructableDef::from_module_def(module_def) =>
                 {
-                    let expr_type = self.sem.type_of_expr(expr).unwrap().original;
+                    let expr_type = self.type_of_expr(expr).original;
                     match def.kind(self.db) {
                         StructKind::Unit => {
                             let ty_args = expr_type.expect_adt_of(def.adt(self.db));
@@ -573,7 +618,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
             ast::Expr::FieldExpr(field_expr) => {
                 let _name = field_expr.name_ref().unwrap();
                 let receiver_part = field_expr.expr().unwrap();
-                let receiver_type = self.sem.type_of_expr(&receiver_part).unwrap();
+                let receiver_type = self.type_of_expr(&receiver_part);
                 let receiver = self.emit_expr_str_ast(&receiver_part);
                 let adjuster = if let Some(adjusted) = receiver_type.adjusted
                     && std::iter::successors(receiver_type.original.remove_ref(), |c| {
@@ -675,7 +720,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         Some((PathResolution::Def(def), _))
                             if let Some(def) = ConstructableDef::from_module_def(def) =>
                         {
-                            let expr_type = self.sem.type_of_expr(expr).unwrap().original;
+                            let expr_type = self.type_of_expr(expr).original;
                             let generic_args = expr_type.expect_adt_of(def.adt(self.db));
                             let callee_type =
                                 self.constructable_name_cs(&Constructable::new(def, generic_args));
@@ -840,8 +885,8 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         );
                     }
                     Some(variant) if let Some(def) = ConstructableDef::from_variant(variant) => {
-                        let ty_args = (self.sem.type_of_expr(expr).unwrap().original)
-                            .expect_adt_of(def.adt(self.db));
+                        let ty_args =
+                            (self.type_of_expr(expr).original).expect_adt_of(def.adt(self.db));
 
                         Constructable::new(def, ty_args)
                     }
@@ -860,6 +905,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     .record_expr_field_list()
                     .unwrap()
                     .fields()
+                    .filter(|f| self.check_cfg(f))
                     .map(|f| {
                         let cs_f = names::field_name(f.field_name().unwrap().text().as_str());
                         let field = c.fields(self.db).into_iter().find(|x| {
@@ -922,12 +968,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     code!("new object[", len, "] /* fill ", val, "*/")
                 }
                 ast::ArrayExprKind::ElementList(elements) => {
-                    let Some((element, _len)) = self
-                        .sem
-                        .type_of_expr(expr)
-                        .unwrap()
-                        .original
-                        .as_array(self.db)
+                    let Some((element, _len)) = self.type_of_expr(expr).original.as_array(self.db)
                     else {
                         panic!("");
                     };
@@ -1107,6 +1148,9 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 out.indent();
 
                 for arm in arms.arms() {
+                    if !self.check_cfg(&arm) {
+                        continue;
+                    }
                     // Emit pattern check
                     let pat_cs = self.emit_pattern_ast(&arm.pat().unwrap());
 

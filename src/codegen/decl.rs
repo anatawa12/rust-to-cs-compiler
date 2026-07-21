@@ -10,7 +10,6 @@ use itertools::Itertools;
 use ra_internal::function::FunctionExt;
 use ra_internal::*;
 use std::collections::HashMap;
-use std::io::Read;
 use syntax::ast::HasAttrs as AstHasAttrs;
 
 /// Returns true if the item carries `#[r2cs_native]` or `#[r2cs::native]`.
