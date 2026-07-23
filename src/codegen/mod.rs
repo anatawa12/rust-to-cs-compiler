@@ -181,6 +181,13 @@ impl<'db> CodeGenerator<'db> {
             }
         }
 
+        // Emit consts first (no impl needed)
+        for def in module.declarations(db) {
+            if let ModuleDef::Const(c) = def {
+                self.emit_const(out, c);
+            }
+        }
+
         // Emit type aliases and free functions
         for def in module.declarations(db) {
             if let ModuleDef::Function(f) = def {

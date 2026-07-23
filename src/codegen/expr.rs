@@ -42,15 +42,17 @@ pub struct BodyGen<'g, 'db> {
 pub enum ItemInBody {
     Function(hir::Function),
     Adt(hir::Adt),
+    Const(hir::Const),
     Impl(hir::Impl),
 }
 
-impl_from!(hir::Function, hir::Adt(hir::Enum, hir::Struct), hir::Impl for ItemInBody);
+impl_from!(hir::Function, hir::Adt(hir::Enum, hir::Struct), hir::Impl, hir::Const for ItemInBody);
 
 impl hir::HasContainer for ItemInBody {
     fn container(&self, db: &dyn HirDatabase) -> hir::ItemContainer {
         match self {
             ItemInBody::Function(i) => hir::HasContainer::container(i, db),
+            ItemInBody::Const(i) => hir::HasContainer::container(i, db),
             ItemInBody::Adt(hir::Adt::Struct(i)) => hir::HasContainer::container(i, db),
             ItemInBody::Adt(hir::Adt::Enum(i)) => hir::HasContainer::container(i, db),
             ItemInBody::Adt(hir::Adt::Union(i)) => hir::HasContainer::container(i, db),
@@ -458,6 +460,11 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     let f = self.sem.to_def(&impl_).unwrap();
                     out.wln("// impl");
                     self.add_deferred(f);
+                }
+                ast::Stmt::Item(ast::Item::Const(c)) => {
+                    let c = self.sem.to_def(&c).unwrap();
+                    out.wln("// const");
+                    self.add_deferred(c);
                 }
                 // TODO: impl
                 // TODO: use, type alias: remove with comment?

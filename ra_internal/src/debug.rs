@@ -15,6 +15,7 @@ impl SharedImplDebugDisplay for hir::Function {}
 impl SharedImplDebugDisplay for hir::Trait {}
 impl SharedImplDebugDisplay for hir::Impl {}
 impl SharedImplDebugDisplay for hir::Adt {}
+impl SharedImplDebugDisplay for hir::Const {}
 impl SharedImplDebugDisplay for hir::TypeAlias {}
 
 impl<'db, T> DebugDisplay<'db> for T

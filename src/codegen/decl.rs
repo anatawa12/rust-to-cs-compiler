@@ -341,6 +341,9 @@ impl<'db> CodeGenerator<'db> {
                             adt_impls.get(&adt).map(Vec::as_slice).unwrap_or(&[]),
                         );
                     }
+                    ItemInBody::Const(c) => {
+                        this.emit_const(out, c);
+                    }
                     ItemInBody::Impl(_) => {}
                 }
             }
@@ -403,6 +406,36 @@ impl<'db> CodeGenerator<'db> {
         } else {
             format!("<{}>", tp_names.join(", "))
         }
+    }
+}
+
+impl<'db> CodeGenerator<'db> {
+    /// Emit a trait → C# interface (non-dyn form, with Self F-bound).
+    #[tracing::instrument(skip(self, out), fields(const = %c.debug_display(self.db)))]
+    pub fn emit_const(&self, out: &mut Code, c: hir::Const) {
+        let db = self.db;
+
+        let source = self.sem.source(c).unwrap();
+
+        let ty = self.rust_type_to_cs(&c.ty(db));
+        let Some(name) = c.name(db) else {
+            out.wln("// unnamed const skipped");
+            return;
+        };
+        let name = names::const_name(name.as_str());
+
+        let mut body_gen = BodyGen::new(self, false, CsFunctionType::Normal);
+        let expr = body_gen.emit_expr_str_ast(&source.value.body().unwrap());
+
+        out.w("public static readonly ")
+            .w(ty)
+            .w(" ")
+            .w(name)
+            .w(" = ")
+            .w(expr)
+            .wln(";");
+
+        self.deferred(out, body_gen.deferred(), c.module(self.db));
     }
 }
 
