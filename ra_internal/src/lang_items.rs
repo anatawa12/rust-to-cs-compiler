@@ -12,6 +12,7 @@ pub struct LangItems {
     cow: Option<hir::Enum>,
     cow_owned: Option<hir::EnumVariant>,
     cow_borrowed: Option<hir::EnumVariant>,
+    os_str: Option<hir::Struct>,
 }
 
 impl LangItems {
@@ -23,6 +24,7 @@ impl LangItems {
             let cow: Option<hir::Enum>;
             let cow_owned: Option<hir::EnumVariant>;
             let cow_borrowed: Option<hir::EnumVariant>;
+            let os_str: Option<hir::Struct>;
 
             {
                 trait ItemInNsConvert: Sized {
@@ -45,6 +47,9 @@ impl LangItems {
                 );
                 item_in_ns_convert_impl!(
                     hir::Enum as (hir::ItemInNs::Types, hir::ModuleDef::Adt, hir::Adt::Enum)
+                );
+                item_in_ns_convert_impl!(
+                    hir::Struct as (hir::ItemInNs::Types, hir::ModuleDef::Adt, hir::Adt::Struct)
                 );
                 item_in_ns_convert_impl!(
                     hir::EnumVariant as (hir::ItemInNs::Types, hir::ModuleDef::EnumVariant)
@@ -91,12 +96,16 @@ impl LangItems {
                 let alloc = find_crate!(|origin| {
                     matches!(origin, CrateOrigin::Lang(LangCrateOrigin::Alloc))
                 });
+                let std = find_crate!(|origin| {
+                    matches!(origin, CrateOrigin::Lang(LangCrateOrigin::Std))
+                });
 
                 send = resolve_item!(core::marker::Send as hir::Trait);
                 into = resolve_item!(core::convert::Into as hir::Trait);
                 cow = resolve_item!(alloc::borrow::Cow as hir::Enum);
                 cow_borrowed = resolve_item!(alloc::borrow::Cow::Borrowed as hir::EnumVariant);
                 cow_owned = resolve_item!(alloc::borrow::Cow::Owned as hir::EnumVariant);
+                os_str = resolve_item!(std::ffi::OsStr as hir::Struct);
             }
 
             LangItems {
@@ -106,6 +115,7 @@ impl LangItems {
                 cow,
                 cow_owned,
                 cow_borrowed,
+                os_str,
             }
         }
 
@@ -176,5 +186,9 @@ impl LangItems {
 
     pub fn CowBorrowed(&self) -> Option<hir::EnumVariant> {
         self.cow_borrowed
+    }
+
+    pub fn OsStr(&self) -> Option<hir::Struct> {
+        self.os_str
     }
 }
