@@ -1,64 +1,15 @@
 use super::{CodeGenerator, expr::BodyGen, generic_args, names, output::Code};
 use crate::codegen::expr::ItemInBody;
-use crate::codegen::item_exclusion::should_emit;
+use crate::codegen::item_exclusion::{is_r2cs_native, should_emit};
 use crate::codegen::simple_extensions::*;
 use crate::codegen::ty::generic_types;
-use cfg::CfgExpr;
-/// Generates C# type declarations from Rust HIR types.
-use hir::{Adt, AssocItem, HasContainer, HasSource, Impl, Trait, db::HirDatabase};
+use hir::{AssocItem, HasContainer, Impl, Trait};
 use itertools::Itertools;
 use ra_internal::function::FunctionExt;
 use ra_internal::*;
 use std::collections::HashMap;
-use syntax::ast::HasAttrs as AstHasAttrs;
 
-/// Returns true if the item carries `#[r2cs_native]` or `#[r2cs::native]`.
-/// Checks the raw source AST so that `#[cfg_attr(r2cs, r2cs_native)]` —
-/// which rust-analyzer resolves to `#[r2cs_native]` when cfg(r2cs) is active —
-/// is detected correctly.
-pub fn is_adt_r2cs_native(adt: Adt, krate: hir::Crate, db: &dyn HirDatabase) -> bool {
-    adt.source(db)
-        .is_some_and(|src| ast_has_r2cs_native(&src.value, krate, db))
-}
-
-pub fn is_fn_r2cs_native(f: hir::Function, krate: hir::Crate, db: &dyn HirDatabase) -> bool {
-    f.source(db)
-        .is_some_and(|src| ast_has_r2cs_native(&src.value, krate, db))
-}
-
-fn ast_has_r2cs_native(node: &impl AstHasAttrs, krate: hir::Crate, db: &dyn HirDatabase) -> bool {
-    use syntax::ast::Meta;
-    node.attrs().any(|attr| {
-        let attrs = match attr.meta() {
-            Some(Meta::CfgAttrMeta(cfg))
-                if let Some(cfg_predicate) = cfg.cfg_predicate()
-                    && krate.cfg(db).check(&CfgExpr::parse_from_ast(cfg_predicate))
-                        == Some(true) =>
-            {
-                cfg.metas().collect::<Vec<_>>()
-            }
-            Some(meta) => vec![meta],
-            None => vec![],
-        };
-
-        attrs.iter().any(|attr| {
-            attr.path().is_some_and(|path| {
-                let segs: Vec<_> = path.segments().collect();
-                match segs.len() {
-                    1 => segs[0]
-                        .name_ref()
-                        .is_some_and(|n| n.text() == "r2cs_native"),
-                    2 => {
-                        segs[0].name_ref().is_some_and(|n| n.text() == "r2cs")
-                            && segs[1].name_ref().is_some_and(|n| n.text() == "native")
-                    }
-                    _ => false,
-                }
-            })
-        })
-    })
-}
-
+/// Generates C# type declarations from Rust HIR types.
 impl<'db> CodeGenerator<'db> {
     /// Emit a trait → C# interface (non-dyn form, with Self F-bound).
     #[tracing::instrument(skip(self, out), fields(trait = %t.debug_display(self.db)))]
@@ -215,7 +166,7 @@ impl<'db> CodeGenerator<'db> {
             .map(|i| self.rust_type_to_cs(&i.self_ty(db)))
             .unwrap_or_else(|| "/* top-level */".to_string());
 
-        if is_fn_r2cs_native(f, self.krate, db) {
+        if is_r2cs_native(f, db) {
             writeln!(out, "// [r2cs_native] - add implementation in r2CsNative/",);
             self.emit_function_signature(out, f, "public ", "partial ", cs_type, |x| x);
             out.wln(";");

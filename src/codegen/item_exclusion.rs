@@ -1,7 +1,8 @@
 //! This module handles removing specific portion of crate from output.
 
+use cfg::CfgExpr;
 use hir::db::HirDatabase;
-use hir::{HasAttrs, HasContainer, HasCrate};
+use hir::{HasAttrs, HasContainer, HasCrate, ModuleSource};
 
 pub trait RustPath: Copy {
     fn rust_path(self, db: &dyn HirDatabase) -> Option<String>;
@@ -116,4 +117,79 @@ fn cfg_disabled(attrs: hir::AttrsWithOwner, krate: hir::Crate, db: &dyn HirDatab
         Some(cfg_expr) => krate.cfg(db).check(cfg_expr) == Some(false),
         None => false,
     }
+}
+
+pub trait R2csHasAttr: hir::HasCrate {
+    fn attrs(self, db: &dyn HirDatabase) -> Option<impl Iterator<Item = syntax::ast::Attr>>;
+}
+trait R2csHasAttrBlanket {}
+
+impl R2csHasAttrBlanket for hir::Function {}
+impl R2csHasAttrBlanket for hir::Adt {}
+
+impl<T> R2csHasAttr for T
+where
+    T: hir::HasSource + hir::HasCrate + R2csHasAttrBlanket + Copy,
+    <T as hir::HasSource>::Ast: syntax::ast::HasAttrs,
+{
+    fn attrs(self, db: &dyn HirDatabase) -> Option<impl Iterator<Item = syntax::ast::Attr>> {
+        use syntax::ast::HasAttrs;
+        Some(self.source(db)?.value.attrs())
+    }
+}
+
+impl R2csHasAttr for hir::Module {
+    fn attrs(self, db: &dyn HirDatabase) -> Option<impl Iterator<Item = syntax::ast::Attr>> {
+        use syntax::ast::HasAttrs;
+
+        let definition = match self.definition_source(db).value {
+            ModuleSource::SourceFile(s) => s.attrs(),
+            ModuleSource::Module(m) => m.attrs(),
+            ModuleSource::BlockExpr(b) => b.attrs(),
+        };
+        let declaration = self.declaration_source(db).map(|x| x.value.attrs());
+
+        Some(definition.chain(declaration.into_iter().flatten()))
+    }
+}
+
+pub fn is_r2cs_native<T>(f: T, db: &dyn HirDatabase) -> bool
+where
+    T: R2csHasAttr,
+{
+    use syntax::ast::Meta;
+    let krate = f.krate(db);
+    let Some(mut attrs) = f.attrs(db) else {
+        return false;
+    };
+
+    attrs.any(|attr| {
+        let attrs = match attr.meta() {
+            Some(Meta::CfgAttrMeta(cfg))
+                if let Some(cfg_predicate) = cfg.cfg_predicate()
+                    && krate.cfg(db).check(&CfgExpr::parse_from_ast(cfg_predicate))
+                        == Some(true) =>
+            {
+                cfg.metas().collect::<Vec<_>>()
+            }
+            Some(meta) => vec![meta],
+            None => vec![],
+        };
+
+        attrs.iter().any(|attr| {
+            attr.path().is_some_and(|path| {
+                let segs: Vec<_> = path.segments().collect();
+                match segs.len() {
+                    1 => segs[0]
+                        .name_ref()
+                        .is_some_and(|n| n.text() == "r2cs_native"),
+                    2 => {
+                        segs[0].name_ref().is_some_and(|n| n.text() == "r2cs")
+                            && segs[1].name_ref().is_some_and(|n| n.text() == "native")
+                    }
+                    _ => false,
+                }
+            })
+        })
+    })
 }

@@ -29,9 +29,9 @@ mod simple_extensions {
 
 use self::output::Code;
 use crate::codegen::constructable::ConstructableDef;
-use crate::codegen::decl::{CsFunctionType, is_adt_r2cs_native};
+use crate::codegen::decl::CsFunctionType;
 use crate::codegen::id_map::IdMap;
-use crate::codegen::item_exclusion::should_emit;
+use crate::codegen::item_exclusion::{is_r2cs_native, should_emit};
 use crate::codegen::ty::generic_types;
 use hir::{
     Adt, AssocItem, Crate, Impl, InFile, Module, ModuleDef, Semantics, StructKind, TypeParam,
@@ -164,6 +164,13 @@ impl<'db> CodeGenerator<'db> {
         }
 
         let module_name = self.mod_simple_name(module);
+
+        if is_r2cs_native(module, db) {
+            out.wln("// r2cs native, manual implementation expected");
+            out.wln(format!("public static partial class {} {{}}", module_name));
+            return;
+        }
+
         out.w(format!("public static partial class {} ", module_name));
         out.open_brace();
 
@@ -215,7 +222,7 @@ impl<'db> CodeGenerator<'db> {
             return;
         }
 
-        if is_adt_r2cs_native(adt, self.krate, db) {
+        if is_r2cs_native(adt, db) {
             let cs_name = match adt {
                 Adt::Struct(s) => names::struct_name(s.name(db).as_str()),
                 Adt::Enum(e) => names::struct_name(e.name(db).as_str()),
