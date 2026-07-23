@@ -727,16 +727,24 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                             let args_str = args.map(|a| self.emit_expr_str_ast(&a));
                             return code!(callee_type, ".ctor(", join(args_str, ", "), ")");
                         }
-                        Some((PathResolution::Def(ModuleDef::Function(f)), _))
-                            if let Some(_self_param) = f.self_param(self.db) =>
-                        {
-                            let mut args = args;
-                            let receiver = args.nth(0).unwrap();
-
-                            let receiver = self.emit_expr_str_ast(&receiver);
-                            let method_cs = self.function_name(f);
-                            let args = args.map(|a| self.emit_expr_str_ast(&a));
-                            return code!(receiver, ".", method_cs, "(", join(args, ", "), ")");
+                        Some((PathResolution::Def(ModuleDef::Function(f)), subst)) => {
+                            let generics =
+                                subst.map(|args| args.types(self.db)).unwrap_or_else(|| {
+                                    // this is builtin derive. all except for Hash::hash implementation
+                                    if *f.name(self.db).symbol() == sym::hash {
+                                        vec![(
+                                            hir::Symbol::intern("H"),
+                                            hir::Type::error(self.db, f.krate(self.db)),
+                                        )]
+                                    } else {
+                                        vec![]
+                                    }
+                                });
+                            let resolved = self.resolve_function(f, generics);
+                            return self.emit_call_expr(
+                                resolved,
+                                args.map(|a| self.emit_expr_str_ast(&a)),
+                            );
                         }
                         _ => {}
                     }
