@@ -3,11 +3,12 @@ pub mod trait_assoc_types;
 
 use super::{CodeGenerator, generic_args, names};
 use crate::codegen::constructable::{Constructable, ConstructableDef};
+use crate::codegen::names::const_name;
 use crate::codegen::simple_extensions::*;
 use crate::codegen::ty::generic_params::resolve_cs_type_param_source;
 /// Converts Rust HIR types to C# type strings.
 use hir::db::HirDatabase;
-use hir::{Adt, BuiltinType, GenericDef, ItemContainer, Module, Name, Symbol, Trait, Type};
+use hir::{Adt, BuiltinType, GenericDef, ItemContainer, Module, Symbol, Trait, Type};
 use hir::{HasContainer, HasCrate, sym};
 use ra_internal::*;
 use std::iter;
@@ -636,19 +637,22 @@ impl<'db> CodeGenerator<'db> {
         (parent_def.map(|_| parent_type_args), self_type_args)
     }
 
-    pub fn const_path_cs(&self, adt: hir::Const) -> String {
-        let mut path = self.module_class_cs(adt.module(self.db));
-        path.push('.');
-        path.push_str(&names::const_name(
-            adt.name(self.db)
-                .as_ref()
-                .map(Name::as_str)
-                .unwrap_or_else(|| {
-                    eprintln!("Unnamed const at of {}", path);
-                    "(unnamed_const)"
-                }),
-        ));
-        path
+    pub fn const_path_cs(&self, const_: hir::Const) -> String {
+        match const_.container(self.db) {
+            ItemContainer::Impl(i) => {
+                let mut path = self.rust_type_to_cs(&i.self_ty(self.db));
+                path.push('.');
+                path.push_str(&const_name(const_.name(self.db).unwrap().as_str()));
+                path
+            }
+            ItemContainer::Module(module) => {
+                let mut path = self.module_class_cs(module);
+                path.push('.');
+                path.push_str(&const_name(const_.name(self.db).unwrap().as_str()));
+                path
+            }
+            container => unreachable!("{container:?}"),
+        }
     }
 
     pub fn adt_name_cs(&self, adt: hir::Adt) -> String {
