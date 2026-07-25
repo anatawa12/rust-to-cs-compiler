@@ -1,4 +1,5 @@
 use crate::codegen::CodeGenerator;
+use crate::codegen::output::Code;
 use crate::codegen::simple_extensions::*;
 use crate::codegen::ty::generic_params::CsTypeParamSource;
 use hir::db::HirDatabase;
@@ -15,7 +16,7 @@ pub enum ResolvedFunction<'db> {
         function_name: String,
         generic_sources: Vec<CsTypeParamSource>,
         generic_args: Vec<hir::Type<'db>>,
-        args_map: Option<Vec<usize>>,
+        args_map: Option<Vec<ArgSource>>,
     },
     Method {
         self_ty: hir::Type<'db>,
@@ -23,17 +24,22 @@ pub enum ResolvedFunction<'db> {
         function_name: String,
         generic_sources: Vec<CsTypeParamSource>,
         generic_args: Vec<hir::Type<'db>>,
-        args_map: Option<(usize, Vec<usize>)>,
+        args_map: Option<(ArgSource, Vec<ArgSource>)>,
     },
     ModuleFunction {
         function_path: String,
         generic_sources: Vec<CsTypeParamSource>,
         generic_args: Vec<hir::Type<'db>>,
-        args_map: Option<Vec<usize>>,
+        args_map: Option<Vec<ArgSource>>,
     },
     OmitCall {
         comment: String,
     },
+}
+
+pub enum ArgSource {
+    Source(usize),
+    CustomExpr(Code),
 }
 
 impl<'db> CodeGenerator<'db> {
@@ -134,7 +140,7 @@ impl<'db> CodeGenerator<'db> {
                 function_name: "ToString/*converted from encode_utf8*/".into(),
                 generic_sources: vec![],
                 generic_args: vec![],
-                args_map: Some((0, vec![])),
+                args_map: Some((ArgSource::Source(0), vec![])),
             };
         }
 

@@ -3,7 +3,7 @@
 use super::{CodeGenerator, generic_args, names, output::Code};
 use crate::codegen::constructable::{Constructable, ConstructableDef};
 use crate::codegen::decl::CsFunctionType;
-use crate::codegen::function_resolution::ResolvedFunction;
+use crate::codegen::function_resolution::{ArgSource, ResolvedFunction};
 use crate::codegen::simple_extensions::*;
 use crate::codegen::ty::CsTypeOption;
 use hir::db::HirDatabase;
@@ -1258,6 +1258,13 @@ impl<'g, 'db> BodyGen<'g, 'db> {
         function: ResolvedFunction<'db>,
         mut args: impl Iterator<Item = Code>,
     ) -> Code {
+        fn code_solver<'a>(args: &'a [Code]) -> impl Fn(&'a ArgSource) -> &'a Code {
+            |source| match *source {
+                ArgSource::Source(i) => &args[i],
+                ArgSource::CustomExpr(ref e) => e,
+            }
+        }
+
         match function {
             ResolvedFunction::Static {
                 self_ty,
@@ -1281,7 +1288,12 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     }
                     Some(map) => {
                         let args = args.collect::<Vec<_>>();
-                        code!(path, "(", join(map.iter().map(|&i| &args[i]), ", "), ")")
+                        code!(
+                            path,
+                            "(",
+                            join(map.iter().map(code_solver(&args)), ", "),
+                            ")"
+                        )
                     }
                 }
             }
@@ -1345,11 +1357,11 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     Some((self_i, map)) => {
                         let args = args.collect::<Vec<_>>();
                         code!(
-                            args[self_i],
+                            code_solver(&args)(&self_i),
                             ".",
                             reference,
                             "(",
-                            join(map.iter().map(|&i| &args[i]), ", "),
+                            join(map.iter().map(code_solver(&args)), ", "),
                             ")"
                         )
                     }
@@ -1372,7 +1384,12 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     }
                     Some(map) => {
                         let args = args.collect::<Vec<_>>();
-                        code!(path, "(", join(map.iter().map(|&i| &args[i]), ", "), ")")
+                        code!(
+                            path,
+                            "(",
+                            join(map.iter().map(code_solver(&args)), ", "),
+                            ")"
+                        )
                     }
                 }
             }
