@@ -229,6 +229,9 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     .unwrap_or_else(|| "0".into());
                 out.w("return ").w(val).wln(";");
             }
+            ast::Expr::TupleExpr(tuple_expr) if tuple_expr.fields().next().is_none() => {
+                out.wln("/* () unit expr */");
+            }
             ast::Expr::IfExpr(if_expr) => {
                 let condition = if_expr.condition().unwrap();
                 let then_branch = if_expr.then_branch().unwrap();
