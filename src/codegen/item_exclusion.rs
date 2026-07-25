@@ -3,6 +3,7 @@
 use cfg::CfgExpr;
 use hir::db::HirDatabase;
 use hir::{HasAttrs, HasContainer, HasCrate, ModuleSource};
+use std::collections::VecDeque;
 
 pub trait RustPath: Copy {
     fn rust_path(self, db: &dyn HirDatabase) -> Option<String>;
@@ -126,6 +127,7 @@ trait R2csHasAttrBlanket {}
 
 impl R2csHasAttrBlanket for hir::Function {}
 impl R2csHasAttrBlanket for hir::Adt {}
+impl R2csHasAttrBlanket for hir::Trait {}
 
 impl<T> R2csHasAttr for T
 where
@@ -153,43 +155,62 @@ impl R2csHasAttr for hir::Module {
     }
 }
 
-pub fn is_r2cs_native<T>(f: T, db: &dyn HirDatabase) -> bool
+fn collect_attrs<T>(f: T, db: &dyn HirDatabase) -> Vec<syntax::ast::Meta>
 where
     T: R2csHasAttr,
 {
     use syntax::ast::Meta;
     let krate = f.krate(db);
-    let Some(mut attrs) = f.attrs(db) else {
-        return false;
+    let Some(attrs) = f.attrs(db) else {
+        eprintln!("collect_attrs: attrs none",);
+        return vec![];
     };
 
-    attrs.any(|attr| {
-        let attrs = match attr.meta() {
-            Some(Meta::CfgAttrMeta(cfg))
-                if let Some(cfg_predicate) = cfg.cfg_predicate()
-                    && krate.cfg(db).check(&CfgExpr::parse_from_ast(cfg_predicate))
-                        == Some(true) =>
-            {
-                cfg.metas().collect::<Vec<_>>()
-            }
-            Some(meta) => vec![meta],
-            None => vec![],
-        };
+    let mut result = vec![];
 
-        attrs.iter().any(|attr| {
-            attr.path().is_some_and(|path| {
-                let segs: Vec<_> = path.segments().collect();
-                match segs.len() {
-                    1 => segs[0]
-                        .name_ref()
-                        .is_some_and(|n| n.text() == "r2cs_native"),
-                    2 => {
-                        segs[0].name_ref().is_some_and(|n| n.text() == "r2cs")
-                            && segs[1].name_ref().is_some_and(|n| n.text() == "native")
+    let mut queue = attrs.map(|x| x.meta().unwrap()).collect::<VecDeque<_>>();
+
+    while let Some(meta) = queue.pop_front() {
+        match meta {
+            Meta::CfgAttrMeta(cfg_attr) => {
+                if krate
+                    .cfg(db)
+                    .check(&CfgExpr::parse_from_ast(cfg_attr.cfg_predicate().unwrap()))
+                    != Some(false)
+                {
+                    for meta in cfg_attr.metas() {
+                        queue.push_back(meta);
                     }
-                    _ => false,
                 }
-            })
-        })
+            }
+            Meta::CfgMeta(_) => {} // remove
+            _ => result.push(meta),
+        }
+    }
+
+    result
+}
+
+pub fn has_attr<T>(f: T, path: &str, db: &dyn HirDatabase) -> bool
+where
+    T: R2csHasAttr,
+{
+    collect_attrs(f, db).into_iter().any(|attr| match attr {
+        syntax::ast::Meta::PathMeta(path_meta) => {
+            let segments: Vec<_> = path_meta.path().unwrap().segments().collect();
+            if let [segment] = segments.as_slice() {
+                segment.name_ref().unwrap().text() == path
+            } else {
+                false
+            }
+        }
+        _ => false,
     })
+}
+
+pub fn is_r2cs_native<T>(f: T, db: &dyn HirDatabase) -> bool
+where
+    T: R2csHasAttr,
+{
+    has_attr(f, "r2cs_native", db)
 }

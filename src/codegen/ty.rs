@@ -11,6 +11,7 @@ use hir::db::HirDatabase;
 use hir::{Adt, BuiltinType, GenericDef, ItemContainer, Module, Symbol, Trait, Type};
 use hir::{HasContainer, HasCrate, sym};
 use ra_internal::*;
+use std::collections::HashSet;
 use std::iter;
 use tracing::*;
 
@@ -66,6 +67,19 @@ impl<'db> CodeGenerator<'db> {
         let mapped = self.type_map.map_type_recursively(ty, db);
         let ty = mapped.as_ref().unwrap_or(ty);
         let ty = &ty.resolve_associated_type(db);
+
+        if !option.is_static_access && !option.is_static_container
+        //&& let Some(adt) = ty.as_adt()
+        {
+            let traits = (hir::Impl::all_for_type(db, ty.clone()).into_iter())
+                .flat_map(|x| x.trait_(db))
+                .collect::<HashSet<_>>();
+            for &trait_ in &self.trait_first_traits {
+                if traits.contains(&trait_) {
+                    return self.cs_path_with_args(trait_, [None; 0]);
+                }
+            }
+        }
 
         // Primitives
         if let Some(builtin) = ty.as_builtin() {

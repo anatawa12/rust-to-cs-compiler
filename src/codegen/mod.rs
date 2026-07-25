@@ -50,6 +50,7 @@ pub struct CodeGenerator<'db> {
     krate: Crate,
     sem: Semantics<'db, dyn HirDatabase>,
     lang_items: &'db LangItems,
+    trait_first_traits: Vec<hir::Trait>,
     // some internal information that hard is to determine
     impl_ty_param_id: IdMap<TypeParam>,
     // This map holds specially handled types like type arguments mirroring impl Fn()
@@ -61,12 +62,23 @@ pub struct CodeGenerator<'db> {
 
 impl<'db> CodeGenerator<'db> {
     pub fn new(db: &'db dyn HirDatabase, vfs: &'db Vfs, krate: Crate) -> Self {
+        let trait_first_traits = (krate.modules(db).into_iter())
+            .flat_map(|m| m.declarations(db))
+            .filter_map(|def| variant_or_none!(def, hir::ModuleDef::Trait))
+            .filter(|&t| item_exclusion::has_attr(t, "r2cs_trait_first", db))
+            .collect::<Vec<_>>();
+        eprintln!("trait_first_traits: ");
+        for &trait_ in &trait_first_traits {
+            eprintln!("  {}", trait_.debug_display(db));
+        }
+
         Self {
             db,
             vfs,
             krate,
             sem: Semantics::new_dyn(db),
             lang_items: LangItems::new(db, krate),
+            trait_first_traits,
 
             impl_ty_param_id: IdMap::new("impl_"),
             special_types: RefCell::new(HashMap::new()),
