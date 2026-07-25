@@ -603,7 +603,44 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         }
                     }
                 }
-                Some((hir::PathResolution::SelfType(_impl_), _)) => {
+                Some((hir::PathResolution::SelfType(impl_), _))
+                    if let self_ty = impl_.self_ty(self.db)
+                        && let Some(hir::Adt::Struct(struct_)) = self_ty.as_adt() =>
+                {
+                    let def = ConstructableDef::from(struct_);
+                    let expr_type = self.type_of_expr(expr).original;
+                    match def.kind(self.db) {
+                        StructKind::Unit => {
+                            let ty_args = expr_type.expect_adt_of(def.adt(self.db));
+                            fcode!(
+                                "{}.instance",
+                                self.constructable_name_cs(&Constructable::new(def, ty_args))
+                            )
+                        }
+                        StructKind::Tuple => {
+                            let ret_ty = expr_type.as_callable(self.db).unwrap().return_type();
+                            let ty_args = ret_ty.expect_adt_of(def.adt(self.db));
+                            fcode!(
+                                "{}.ctor",
+                                self.constructable_name_cs(&Constructable::new(def, ty_args))
+                            )
+                        }
+                        kind => {
+                            eprintln!(
+                                "Unexpected struct kind and infer for enum variant path at {loc}\n\
+                                    \tkind: {kind:?}",
+                                loc = self.expr_location_ast(path),
+                                //type = self.new_type(infer).display(
+                                //    self.db,
+                                //    self.krate.to_display_target(self.db)
+                                //)
+                            );
+
+                            fcode!("new /* unexpected struct/enum kind and infer */ UnknownType")
+                        }
+                    }
+                }
+                Some((hir::PathResolution::SelfType(_), _)) => {
                     eprintln!("ImplSelf at {}", self.expr_location_ast(expr));
                     "(ImplSelf)".into()
                 }
