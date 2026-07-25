@@ -200,6 +200,17 @@ impl<'g, 'db> BodyGen<'g, 'db> {
         }
         if let Some(body) = f.body() {
             self.emit_expr_as_stmt_ast(out, ast::Expr::BlockExpr(body), true, true);
+            if self
+                .sem
+                .to_def(&f)
+                .unwrap()
+                .ret_type(self.db)
+                .future_output(self.db)
+                .is_some_and(|x| x.is_unit())
+                && self.is_async
+            {
+                out.wln("return default;");
+            }
         } else {
             out.wln("throw new System.NotImplementedException(\"builtin-derive\");");
         }
