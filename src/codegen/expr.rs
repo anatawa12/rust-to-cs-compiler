@@ -223,11 +223,21 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 self.emit_block_contents(out, statements, tail, is_tail, returning);
             }
             ast::Expr::ReturnExpr(ret_expr) => {
-                let val = ret_expr
-                    .expr()
-                    .map(|e| self.emit_expr_str_ast(&e))
-                    .unwrap_or_else(|| "0".into());
-                out.w("return ").w(val).wln(";");
+                if let Some(value_expr) = ret_expr.expr() {
+                    if self
+                        .sem
+                        .type_of_expr(&value_expr)
+                        .is_some_and(|x| x.adjusted().is_unit())
+                    {
+                        self.emit_expr_as_stmt_ast(out, value_expr, true, true);
+                        out.wln("return;");
+                    } else {
+                        let val = self.emit_expr_str_ast(&value_expr);
+                        out.w("return ").w(val).wln(";");
+                    }
+                } else {
+                    out.wln("return;");
+                }
             }
             ast::Expr::TupleExpr(tuple_expr) if tuple_expr.fields().next().is_none() => {
                 out.wln("/* () unit expr */");
