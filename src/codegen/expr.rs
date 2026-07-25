@@ -477,7 +477,10 @@ impl<'g, 'db> BodyGen<'g, 'db> {
         }
 
         if let Some(tail_expr) = tail {
-            if returning {
+            let has_value = (self.sem.type_of_expr(&tail_expr))
+                .map(|x| x.adjusted.unwrap_or(x.original))
+                .is_some_and(|ty| !ty.is_unit());
+            if returning && has_value {
                 if !self.check_cfg(&tail_expr) {
                     return;
                 }
