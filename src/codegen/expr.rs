@@ -1620,6 +1620,18 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 let parts = or_pat.pats().map(|p| self.emit_pattern_ast(&p));
                 code!("(", join(parts, " or "), ")")
             }
+            ast::Pat::SlicePat(slice_pat) => {
+                let components = slice_pat.components();
+                assert!(components.slice.is_none());
+                code!(
+                    "[",
+                    join(
+                        components.prefix.iter().map(|p| self.emit_pattern_ast(p)),
+                        ","
+                    ),
+                    "]"
+                )
+            }
             ast::Pat::TuplePat(tuple_pat) => {
                 let type_ = self.sem.type_of_pat(pat).unwrap();
                 let field_count = type_.original.tuple_fields(self.db).len();
