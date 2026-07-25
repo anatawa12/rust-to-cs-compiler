@@ -451,6 +451,12 @@ impl<'db> CodeGenerator<'db> {
                 self.emit_function(out, f, Some(impl_));
             } else if let AssocItem::Const(c) = item {
                 self.emit_const(out, c);
+            } else if let AssocItem::TypeAlias(alias) = item {
+                out.w("// Alias ")
+                    .w(alias.name(db).as_str())
+                    .w(" = ")
+                    .w(self.rust_type_to_cs(&alias.ty(db)))
+                    .wln("");
             }
         }
 
