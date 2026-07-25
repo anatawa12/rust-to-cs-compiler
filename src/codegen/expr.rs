@@ -7,7 +7,9 @@ use crate::codegen::function_resolution::{ArgSource, ResolvedFunction};
 use crate::codegen::simple_extensions::*;
 use crate::codegen::ty::CsTypeOption;
 use hir::db::HirDatabase;
-use hir::{HasCrate, InFile, Local, ModuleDef, PathResolution, StructKind, TypeInfo, sym};
+use hir::{
+    HasContainer, HasCrate, InFile, Local, ModuleDef, PathResolution, StructKind, TypeInfo, sym,
+};
 use itertools::Either;
 use ra_internal::*;
 use std::cell::RefCell;
@@ -659,7 +661,32 @@ impl<'g, 'db> BodyGen<'g, 'db> {
             ast::Expr::MethodCallExpr(method_call) => {
                 let receiver = self.emit_expr_str_ast(&method_call.receiver().unwrap());
 
+                let db = self.db;
+
                 match self.sem.resolve_method_call_fallback(method_call) {
+                    Some((Either::Left(f), _))
+                        if f.name(db).symbol().as_str() == "push"
+                            && let hir::ItemContainer::Impl(impl_) = f.container(db)
+                            && let Some(hir::Adt::Struct(struct_)) = impl_.self_ty(db).as_adt()
+                            && let None = impl_.trait_(db)
+                            && (Some(struct_) == self.lang_items.OsString()
+                                || Some(struct_) == self.lang_items.String())
+                            && let ast::Expr::PathExpr(receiver_path) =
+                                method_call.receiver().unwrap()
+                            && let Some(hir::PathResolution::Local(receiver_var)) =
+                                self.sem.resolve_path(&receiver_path.path().unwrap())
+                            && let Some(hir::Adt::Struct(struct_of_reciver_var)) =
+                                receiver_var.ty(db).as_adt()
+                            && struct_of_reciver_var == struct_
+                            && statement =>
+                    {
+                        let mut code: Code = (self.binding_name_ast(receiver_var)).into();
+                        code.w(" += ");
+                        code.w(self.emit_expr_str_ast(
+                            &method_call.arg_list().unwrap().args().next().unwrap(),
+                        ));
+                        code
+                    }
                     Some((Either::Left(f), args)) => {
                         let args = args.map(|args| args.types(self.db)).unwrap_or_else(|| {
                             // this is builtin derive. all except for Hash::hash implementation
