@@ -84,7 +84,7 @@ impl<'db> CodeGenerator<'db> {
 
         // Slice
         if let Some(inner) = ty.as_slice() {
-            return format!("System.Memory<{}>", self.rust_type_to_cs(&inner));
+            return format!("Slice<{}>", self.rust_type_to_cs(&inner));
         }
 
         // Array
