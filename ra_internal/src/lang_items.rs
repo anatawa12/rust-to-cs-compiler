@@ -156,6 +156,7 @@ lang_item_wrapper! {
         Copy: Trait,
         Clone: Trait,
         Sync: Trait,
+        Default: Trait,
 
         Iterator: Trait,
 

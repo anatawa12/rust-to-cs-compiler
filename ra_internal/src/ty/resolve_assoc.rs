@@ -1,3 +1,4 @@
+use crate::adt::AdtExt;
 use crate::debug::DebugDisplay;
 use crate::internal::{ParsedProjection, TyFromType, parse_bounds_for};
 use crate::ty::TypeExt;
@@ -30,8 +31,8 @@ fn resolve_assoc_of_impl_impl<'db>(
     let mut self_type_slot;
     let self_type = {
         let mut cur = assoc_type;
-        while let Some((self_type, alias_id)) = cur.as_associated_type() {
-            alias_list.push(alias_id);
+        while let Some((self_type, args, alias_id)) = cur.as_associated_type() {
+            alias_list.push((alias_id, args));
             self_type_slot = self_type;
             cur = &self_type_slot;
         }
@@ -97,10 +98,12 @@ fn resolve_assoc_of_impl_impl<'db>(
         TyKind::Adt(adt, _args) => {
             let interner =
                 DbInterner::new_with(db, hir::Adt::from(adt.def_id()).module(db).krate(db).base());
-            let alias_id = TypeAliasId::from(alias_list[0]);
+            let &(alias, ref args) = &alias_list[0];
+            let alias_id = TypeAliasId::from(alias);
             let rest_alias = &alias_list[1..];
 
             let mut resolved_impl_assoc = None;
+            let mut resolved_impl_assoc_low_priority = None;
 
             let trait_ = match alias_id.lookup(db).container {
                 ItemContainerId::TraitId(t) => t,
@@ -116,6 +119,23 @@ fn resolve_assoc_of_impl_impl<'db>(
                     // Builtin derive traits don't have type/consts assoc items.
                     return;
                 };
+
+                let impl_ = hir::Impl::from(impl_id);
+                let low_priority;
+                if let Some((adt_from_self, adt_args)) = impl_.self_ty(db).as_adt_with_args() {
+                    assert!(adt_from_self == hir::Adt::from(adt.def_id()));
+                    let mapped_generics = hir::Adt::from(adt.def_id())
+                        .map_generics_to_impl_generics(impl_, adt_args.as_slice(), db)
+                        .unwrap();
+                    low_priority = !mapped_generics.iter().zip(args).all(|(lhs, rhs)| {
+                        lhs.as_ref().map(|x| x.ns_ty()) == rhs.as_ref().map(|x| x.ns_ty())
+                    });
+                } else if let Some(_param) = impl_.self_ty(db).as_type_param(db) {
+                    // it's blanket
+                    low_priority = true;
+                } else {
+                    panic!("unexpected self ty");
+                }
 
                 let Some(alias) = impl_id
                     .impl_items(db)
@@ -141,7 +161,11 @@ fn resolve_assoc_of_impl_impl<'db>(
                 let ty = db.ty(alias.into());
                 //let args = create_impl_generic_args_for(self_ty, impl_id, interner, db);
                 //assert!(interner.check_args_compatible(AnyImplId::ImplId(impl_id).into(), args));
-                resolved_impl_assoc = Some(ty.skip_binder());
+                if low_priority {
+                    resolved_impl_assoc_low_priority = Some(ty.skip_binder());
+                } else {
+                    resolved_impl_assoc = Some(ty.skip_binder());
+                }
             });
 
             trace!(
@@ -158,16 +182,20 @@ fn resolve_assoc_of_impl_impl<'db>(
             // Intener::has_item_definition が true なとき、ちゃんと定義されてて、
             // EvalCtxt::translate_args Intener::check_args_compatible や　Intener::type_of (db::ty) で最終的に解決する
 
-            let inner = resolved_impl_assoc.expect("No impl found for assoc type trait");
+            let inner = resolved_impl_assoc
+                .or(resolved_impl_assoc_low_priority)
+                .expect("No impl found for assoc type trait");
 
             if rest_alias.is_empty() {
                 assoc_type.derived(inner)
             } else {
                 // we only have resolved the innermost impl block. We continue resolving remaining assoc types.
                 resolve_assoc_of_impl_impl(
-                    &assoc_type
-                        .derived(inner)
-                        .new_associated_type(rest_alias, db, |_, _| vec![]),
+                    &assoc_type.derived(inner).new_associated_type(
+                        &rest_alias.iter().map(|x| x.0).collect::<Vec<_>>(),
+                        db,
+                        |_, _| vec![],
+                    ),
                     db,
                 )
             }

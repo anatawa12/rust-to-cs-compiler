@@ -47,7 +47,7 @@ fn collect_assoc_type_params_impl<'db>(
                        type = outer_instance.display(db, target),
                 );
             };
-            if let Some((param_instance, alias_instance)) = instance.as_associated_type()
+            if let Some((param_instance, _, alias_instance)) = instance.as_associated_type()
                 && param_instance == outer_instance
                 && alias_instance == alias
             {

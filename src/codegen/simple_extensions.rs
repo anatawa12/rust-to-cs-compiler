@@ -75,7 +75,7 @@ impl<'db> TypeExt<'db> for Type<'db> {
         let mut cur = self.clone();
         let mut aliases = vec![];
 
-        while let Some((self_ty, alias)) = cur.as_associated_type() {
+        while let Some((self_ty, _, alias)) = cur.as_associated_type() {
             aliases.push(alias);
             cur = self_ty;
         }
@@ -195,7 +195,7 @@ impl TypeParamExt for hir::TypeParam {
                             && let impl_as_def = GenericDef::from(impl_)
                             && adt_as_def.params0(db).len() == impl_self_args.len()
                             && let Some(impl_args_maps_adt) =
-                                map_impl_to_adt(adt, impl_, &impl_self_args, db)
+                                adt.map_generics_to_impl_generics(impl_, &impl_self_args, db)
                             && let Some(type_param) = impl_self_args[self.param_index(db)]
                                 .as_ref()
                                 .unwrap()
@@ -245,60 +245,6 @@ impl TypeParamExt for hir::TypeParam {
                                     }
                                 }
                             }
-                        }
-
-                        fn map_impl_to_adt<'db>(
-                            adt: hir::Adt,
-                            impl_: hir::Impl,
-                            impl_self_args: &[Option<hir::Type<'db>>],
-                            db: &'db dyn HirDatabase,
-                        ) -> Option<Vec<Option<hir::Type<'db>>>> {
-                            let impl_params = GenericDef::from(impl_).params0(db);
-                            let mut generic_args = vec![None; impl_params.len()];
-                            let adt_args = GenericDef::from(adt).params0(db);
-                            for (i, arg) in impl_self_args.iter().enumerate() {
-                                if let Some(arg_as_impl_type_param) =
-                                    arg.as_ref().and_then(|arg| arg.as_type_param(db))
-                                {
-                                    // Single generic argument is used for multiple type parameters
-                                    if generic_args[arg_as_impl_type_param.param_index(db)]
-                                        .is_some()
-                                    {
-                                        return None;
-                                    }
-                                    generic_args[arg_as_impl_type_param.param_index(db)] = Some(
-                                        variant_or_none!(adt_args[i], hir::GenericParam::TypeParam)
-                                            .unwrap()
-                                            .ty(db),
-                                    )
-                                }
-                            }
-                            for (i, arg) in impl_params.iter().enumerate() {
-                                if generic_args[i].is_none() {
-                                    generic_args[i] = match arg {
-                                        hir::GenericParam::TypeParam(type_param) => {
-                                            let back_resolved = hir::GenericDef::from(impl_)
-                                                .back_resolve_projection(type_param.ty(db), db);
-                                            if back_resolved.len() > 1 {
-                                                tracing::info!(
-                                                    "multi back_resolved: {back_resolved:?}",
-                                                    back_resolved = back_resolved
-                                                        .iter()
-                                                        .map(|ty| ty.debug_display(db))
-                                                        .collect::<Vec<_>>()
-                                                );
-                                            }
-                                            if back_resolved.is_empty() {
-                                                Some(hir::Type::error(db, adt.krate(db)))
-                                            } else {
-                                                Some({ back_resolved }.swap_remove(0))
-                                            }
-                                        }
-                                        _ => None,
-                                    };
-                                }
-                            }
-                            Some(generic_args)
                         }
                     }
                     if !impl_bounds.is_empty() && impl_bounds.iter().all(|x| x.is_left()) {

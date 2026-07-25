@@ -30,7 +30,9 @@ pub trait TypeExt<'db> {
     fn resolve_associated_type(&self, db: &'db dyn HirDatabase) -> hir::Type<'db>;
 
     /// Returns Some if the type is `<SomeT as SomeTrait>::AssociatedType`
-    fn as_associated_type(&self) -> Option<(hir::Type<'db>, hir::TypeAlias)>;
+    fn as_associated_type(
+        &self,
+    ) -> Option<(hir::Type<'db>, Vec<Option<hir::Type<'db>>>, hir::TypeAlias)>;
 
     /// Returns `self::{$alias[N]}` associated type
     fn new_associated_type(
@@ -95,10 +97,20 @@ impl<'db> TypeExt<'db> for hir::Type<'db> {
         resolve_assoc::resolve_associated_type(self, db)
     }
 
-    fn as_associated_type(&self) -> Option<(hir::Type<'db>, hir::TypeAlias)> {
+    fn as_associated_type(
+        &self,
+    ) -> Option<(hir::Type<'db>, Vec<Option<hir::Type<'db>>>, hir::TypeAlias)> {
         self.ns_ty()
             .as_associated_type()
-            .map(|(ty, _, alias_id)| (self.derived(ty), hir::TypeAlias::from(alias_id)))
+            .map(|(ty, args, alias_id)| {
+                (
+                    self.derived(ty),
+                    args.into_iter()
+                        .map(|x| x.ty().map(|ty| self.derived(ty)))
+                        .collect::<Vec<_>>(),
+                    hir::TypeAlias::from(alias_id),
+                )
+            })
     }
 
     fn new_associated_type(
