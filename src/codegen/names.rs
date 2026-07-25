@@ -1,6 +1,7 @@
 use crate::codegen::CodeGenerator;
 use hir::ModuleSource;
 use hir::{HasContainer, ItemContainer};
+use itertools::Itertools;
 use syntax::AstNode;
 
 /// Converts a Rust identifier to a C# identifier per the naming conventions.
@@ -179,7 +180,10 @@ impl CodeGenerator<'_> {
                     base_name
                 }
             } else if let ModuleSource::BlockExpr(block) = module.definition_source(self.db).value {
-                format!("block_{}", block.syntax().index())
+                format!(
+                    "block_{}",
+                    block.syntax().ancestors().map(|x| x.index()).join("_")
+                )
             } else {
                 eprintln!(
                     "Unsupported: module (crate) does not have a name at {:?} ({module:?}, source = {source:?})",
