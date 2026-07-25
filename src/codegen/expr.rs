@@ -606,7 +606,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 Some((hir::PathResolution::Def(hir::ModuleDef::Static(static_)), _)) => {
                     let mut path = self.module_class_cs(static_.module(self.db));
                     path.push('.');
-                    path.push_str(static_.name(self.db).as_str());
+                    path.push_str(&names::static_name(static_.name(self.db).as_str()));
                     path.into()
                 }
                 Some((hir::PathResolution::TypeParam(_param), _)) => {

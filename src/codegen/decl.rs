@@ -410,7 +410,6 @@ impl<'db> CodeGenerator<'db> {
 }
 
 impl<'db> CodeGenerator<'db> {
-    /// Emit a trait → C# interface (non-dyn form, with Self F-bound).
     #[tracing::instrument(skip(self, out), fields(const = %c.debug_display(self.db)))]
     pub fn emit_const(&self, out: &mut Code, c: hir::Const) {
         let db = self.db;
@@ -436,6 +435,30 @@ impl<'db> CodeGenerator<'db> {
             .wln(";");
 
         self.deferred(out, body_gen.deferred(), c.module(self.db));
+    }
+
+    #[tracing::instrument(skip(self, out), fields(const = %s.debug_display(self.db)))]
+    pub fn emit_static(&self, out: &mut Code, s: hir::Static) {
+        let db = self.db;
+
+        let source = self.sem.source(s).unwrap();
+
+        let ty = self.rust_type_to_cs(&s.ty(db));
+        let name = s.name(db);
+        let name = names::static_name(name.as_str());
+
+        let mut body_gen = BodyGen::new(self, false, CsFunctionType::Normal);
+        let expr = body_gen.emit_expr_str_ast(&source.value.body().unwrap());
+
+        out.w("public static readonly ")
+            .w(ty)
+            .w(" ")
+            .w(name)
+            .w(" = ")
+            .w(expr)
+            .wln(";");
+
+        self.deferred(out, body_gen.deferred(), s.module(self.db));
     }
 }
 

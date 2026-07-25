@@ -49,6 +49,11 @@ pub fn const_name(rust_name: &str) -> String {
     format!("c_{}", rust_name)
 }
 
+/// Static
+pub fn static_name(rust_name: &str) -> String {
+    format!("s_{}", rust_name)
+}
+
 /// Local variable name with uniqueness index.
 pub fn local_name(rust_name: &str, index: usize) -> String {
     format!("l_{}_{}", camel(rust_name), index)

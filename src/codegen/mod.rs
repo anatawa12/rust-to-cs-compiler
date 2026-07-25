@@ -185,6 +185,8 @@ impl<'db> CodeGenerator<'db> {
         for def in module.declarations(db) {
             if let ModuleDef::Const(c) = def {
                 self.emit_const(out, c);
+            } else if let ModuleDef::Static(s) = def {
+                self.emit_static(out, s);
             }
         }
 
