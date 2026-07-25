@@ -77,6 +77,35 @@ impl<'db> CodeGenerator<'db> {
             };
         }
 
+        // str::parse<U> => replace with U::from_str()
+        if *f.name(db).symbol() == sym::parse
+            && let hir::ItemContainer::Impl(impl_) = f.container(self.db)
+            && let ref self_ty = impl_.self_ty(self.db)
+            && let Some(type_) = self_ty.as_builtin()
+            && type_.is_str()
+        {
+            let [target_ty] = f_args.as_slice() else {
+                panic!("Into trait type params (self)");
+            };
+
+            return if target_ty == self_ty
+                || self.rust_type_to_cs(target_ty) == self.rust_type_to_cs(self_ty)
+            {
+                ResolvedFunction::OmitCall {
+                    comment: "/*omit str::parse method*/".into(),
+                }
+            } else {
+                ResolvedFunction::Static {
+                    self_ty: target_ty.clone(),
+                    trait_: None,
+                    function_name: "m_FromStr/*convert from str::parse method*/".into(),
+                    generic_sources: Vec::new(),
+                    generic_args: Vec::new(),
+                    args_map: None,
+                }
+            };
+        }
+
         // T::collect<B>() => B::from_iter
         if f.name(db).as_str() == "collect"
             && let Some(iterator_trait) = lang_items.Iterator()
