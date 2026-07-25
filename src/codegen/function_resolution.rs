@@ -191,10 +191,7 @@ impl<'db> CodeGenerator<'db> {
                     vec![ArgSource::CustomExpr(
                         format!(
                             "{}.m_Default",
-                            self.rust_type_to_cs_options(
-                                type_,
-                                CsTypeOption::default().static_access(true)
-                            )
+                            self.rust_type_to_cs_options(type_, CsTypeOption::static_access())
                         )
                         .into(),
                     )],

@@ -104,7 +104,7 @@ impl<'db> CodeGenerator<'db> {
         (params.iter()).map(|x| {
             self.rust_type_to_cs_options(
                 &resolve_cs_type_param_source(x, instances, self.db),
-                CsTypeOption::default().static_container(x.is_static_container()),
+                CsTypeOption::static_container(x.is_static_container()),
             )
         })
     }

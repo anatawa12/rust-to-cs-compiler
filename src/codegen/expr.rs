@@ -532,10 +532,8 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                             generic_args: args,
                             args_map: None,
                         } => {
-                            let mut path = self.rust_type_to_cs_options(
-                                &self_ty,
-                                CsTypeOption::default().static_access(true),
-                            );
+                            let mut path = self
+                                .rust_type_to_cs_options(&self_ty, CsTypeOption::static_access());
                             path.push('.');
                             path.push_str(&function_name);
                             path = generic_args(
@@ -1344,8 +1342,8 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 generic_args: generics,
                 args_map,
             } => {
-                let mut path = self
-                    .rust_type_to_cs_options(&self_ty, CsTypeOption::default().static_access(true));
+                let mut path =
+                    self.rust_type_to_cs_options(&self_ty, CsTypeOption::static_access());
                 path.push('.');
                 path.push_str(&function_name);
                 path = generic_args(

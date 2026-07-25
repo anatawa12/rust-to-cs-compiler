@@ -20,6 +20,7 @@ pub struct CsTypeOption {
     pub apply_special: bool,
     pub is_static_container: bool,
     pub is_static_access: bool,
+    pub is_constructing: bool,
 }
 
 impl Default for CsTypeOption {
@@ -28,24 +29,38 @@ impl Default for CsTypeOption {
             apply_special: true,
             is_static_container: false,
             is_static_access: false,
+            is_constructing: false,
         }
     }
 }
 
 impl CsTypeOption {
-    pub fn no_special(mut self) -> Self {
-        self.apply_special = false;
-        self
+    pub fn no_special() -> Self {
+        CsTypeOption {
+            apply_special: false,
+            ..Default::default()
+        }
     }
 
-    pub fn static_container(mut self, static_container: bool) -> Self {
-        self.is_static_container = static_container;
-        self
+    pub fn static_container(is_static_container: bool) -> Self {
+        CsTypeOption {
+            is_static_container,
+            ..Default::default()
+        }
     }
 
-    pub fn static_access(mut self, is_static_access: bool) -> Self {
-        self.is_static_access = is_static_access;
-        self
+    pub fn static_access() -> Self {
+        CsTypeOption {
+            is_static_access: true,
+            ..Default::default()
+        }
+    }
+
+    pub fn constructing() -> Self {
+        CsTypeOption {
+            is_constructing: true,
+            ..Default::default()
+        }
     }
 }
 
@@ -68,9 +83,7 @@ impl<'db> CodeGenerator<'db> {
         let ty = mapped.as_ref().unwrap_or(ty);
         let ty = &ty.resolve_associated_type(db);
 
-        if !option.is_static_access && !option.is_static_container
-        //&& let Some(adt) = ty.as_adt()
-        {
+        if !option.is_static_access && !option.is_static_container && !option.is_constructing {
             let traits = (hir::Impl::all_for_type(db, ty.clone()).into_iter())
                 .flat_map(|x| x.trait_(db))
                 .collect::<HashSet<_>>();
@@ -175,7 +188,7 @@ impl<'db> CodeGenerator<'db> {
             let mut type_name = if param.is_implicit(db) && param.name(db) == sym::Self_ {
                 "A".to_string()
             } else {
-                self.rust_type_to_cs_options(&param.ty(db), CsTypeOption::default().no_special())
+                self.rust_type_to_cs_options(&param.ty(db), CsTypeOption::no_special())
             };
 
             for alias in aliases {
@@ -434,7 +447,7 @@ impl<'db> CodeGenerator<'db> {
 
             let name = self.rust_type_to_cs_options(
                 &param_type,
-                CsTypeOption::default().static_container(source.is_static_container()),
+                CsTypeOption::static_container(source.is_static_container()),
             );
 
             let traits = param
@@ -683,8 +696,10 @@ impl<'db> CodeGenerator<'db> {
     }
 
     pub fn enum_variant_cs2(&self, v: hir::EnumVariant, generic: Vec<Type<'db>>) -> String {
-        let mut path =
-            self.rust_type_to_cs(&Adt::Enum(v.parent_enum(self.db)).ty_with_args(self.db, generic));
+        let mut path = self.rust_type_to_cs_options(
+            &Adt::Enum(v.parent_enum(self.db)).ty_with_args(self.db, generic),
+            CsTypeOption::constructing(),
+        );
         path.push('.');
         path.push_str(&names::variant_name(v.name(self.db).as_str()));
         path
@@ -692,9 +707,10 @@ impl<'db> CodeGenerator<'db> {
 
     pub fn constructable_name_cs(&self, c: &Constructable<'db>) -> String {
         match c.def {
-            ConstructableDef::Struct(s) => {
-                self.rust_type_to_cs(&Adt::Struct(s).ty_with_args(self.db, c.args.clone()))
-            }
+            ConstructableDef::Struct(s) => self.rust_type_to_cs_options(
+                &Adt::Struct(s).ty_with_args(self.db, c.args.clone()),
+                CsTypeOption::constructing(),
+            ),
             ConstructableDef::EnumVariant(v) => self.enum_variant_cs2(v, c.args.clone()),
             //hir::Variant::Union(u) => {
             //    self.rust_type_to_cs(&Adt::Union(u).ty_with_args(self.db, c.args.clone()))
