@@ -312,7 +312,7 @@ impl<'db> CodeGenerator<'db> {
 
         out.wln("// function local items");
         for module in root.children {
-            emit_module(self, out, &module, &adt_impls, true);
+            emit_module(self, out, &module, &adt_impls);
         }
 
         fn emit_module(
@@ -320,14 +320,9 @@ impl<'db> CodeGenerator<'db> {
             out: &mut Code,
             module: &BlockModule,
             adt_impls: &HashMap<hir::Adt, Vec<hir::Impl>>,
-            root: bool,
         ) {
             let module_name = this.mod_simple_name(module.module);
-            out.wln(format!(
-                "{access} static partial class {} {{",
-                module_name,
-                access = if root { "private" } else { "public" }
-            ));
+            out.wln(format!("public static partial class {} {{", module_name,));
             out.indent();
             for item in &module.items {
                 match *item {
@@ -348,7 +343,7 @@ impl<'db> CodeGenerator<'db> {
                 }
             }
             for child in &module.children {
-                emit_module(this, out, child, adt_impls, false);
+                emit_module(this, out, child, adt_impls);
             }
             out.dedent();
             out.wln("}");
