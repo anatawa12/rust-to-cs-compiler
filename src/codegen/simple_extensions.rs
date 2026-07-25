@@ -180,9 +180,6 @@ impl TypeParamExt for hir::TypeParam {
                     let mut impl_bounds = vec![];
                     let adt_as_def = self.parent(db);
                     let mut bounds_set = None;
-                    if adt.name(db).as_str() == "DedupForwarder" {
-                        print!("");
-                    }
 
                     let lang_items = LangItems::new(db, adt.krate(db));
                     for &impl_ in adt.impls(db) {
@@ -193,18 +190,17 @@ impl TypeParamExt for hir::TypeParam {
                             && impl_.trait_(db).is_none_or(|trait_| {
                                 Some(trait_) != lang_items.Debug()
                                     && Some(trait_) != lang_items.Clone()
+                                    && Some(trait_) != lang_items.Default()
                             })
                             && let impl_as_def = GenericDef::from(impl_)
                             && adt_as_def.params0(db).len() == impl_self_args.len()
                             && let Some(impl_args_maps_adt) =
                                 map_impl_to_adt(adt, impl_, &impl_self_args, db)
-                        {
-                            let type_param = impl_self_args[self.param_index(db)]
+                            && let Some(type_param) = impl_self_args[self.param_index(db)]
                                 .as_ref()
                                 .unwrap()
                                 .as_type_param(db)
-                                .unwrap();
-
+                        {
                             let t_as_impl = t.instantiate(
                                 self_def,
                                 &impl_self_args.into_iter().flatten().collect::<Vec<_>>(),
@@ -241,7 +237,10 @@ impl TypeParamExt for hir::TypeParam {
                                     this_impl_bounds.retain(|&(t, ref types)| {
                                         !bounds_set.contains(&(t, TyEq::wrap(types)))
                                     });
-                                    if !this_impl_bounds.is_empty() {
+                                    if !this_impl_bounds.is_empty()
+                                        && !(this_impl_bounds.iter())
+                                            .all(|&(t, _)| Some(t) == lang_items.Default())
+                                    {
                                         impl_bounds.push(Either::Left(this_impl_bounds));
                                     }
                                 }
@@ -258,8 +257,9 @@ impl TypeParamExt for hir::TypeParam {
                             let mut generic_args = vec![None; impl_params.len()];
                             let adt_args = GenericDef::from(adt).params0(db);
                             for (i, arg) in impl_self_args.iter().enumerate() {
-                                if let Some(type_arg) = arg {
-                                    let arg_as_impl_type_param = type_arg.as_type_param(db)?;
+                                if let Some(arg_as_impl_type_param) =
+                                    arg.as_ref().and_then(|arg| arg.as_type_param(db))
+                                {
                                     // Single generic argument is used for multiple type parameters
                                     if generic_args[arg_as_impl_type_param.param_index(db)]
                                         .is_some()
