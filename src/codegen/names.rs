@@ -57,7 +57,7 @@ pub fn static_name(rust_name: &str) -> String {
 
 /// Local variable name with uniqueness index.
 pub fn local_name(rust_name: &str, index: usize) -> String {
-    format!("l_{}_{}", camel(rust_name), index)
+    format!("l_{rust_name}_{index}")
 }
 
 /// Generic type parameter.
