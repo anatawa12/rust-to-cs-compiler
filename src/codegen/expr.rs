@@ -657,7 +657,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         code!(receiver, adjuster, ".", self.field_name(&field))
                     }
                     Some(Either::Right(field)) => {
-                        code!(receiver, adjuster, ".f_", field.index + 1)
+                        code!(receiver, adjuster, ".Item", field.index + 1)
                     }
                 }
             }
