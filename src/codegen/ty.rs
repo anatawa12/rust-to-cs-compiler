@@ -528,6 +528,12 @@ impl<'db> CodeGenerator<'db> {
         if Some(t) == self.lang_items.Future() {
             return "r2CsRuntime.RustTask".into();
         }
+        if Some(t) == self.lang_items.IntoIterator() {
+            return "System.Collections.Generic.IEnumerable".into();
+        }
+        if Some(t) == self.lang_items.Iterator() {
+            return "System.Collections.Generic.IEnumerator".into();
+        }
         let mut path = self.module_class_cs(t.module(self.db));
         path.push('.');
         path.push_str(&names::trait_name(t.name(self.db).as_str()));
