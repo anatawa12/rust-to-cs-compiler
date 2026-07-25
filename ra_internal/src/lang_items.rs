@@ -14,6 +14,7 @@ pub struct LangItems {
     cow_borrowed: Option<hir::EnumVariant>,
     os_str: Option<hir::Struct>,
     into_iterator: Option<hir::Trait>,
+    result: Option<hir::Enum>,
 }
 
 impl LangItems {
@@ -27,6 +28,7 @@ impl LangItems {
             let cow_borrowed: Option<hir::EnumVariant>;
             let os_str: Option<hir::Struct>;
             let into_iterator: Option<hir::Trait>;
+            let result: Option<hir::Enum>;
 
             {
                 trait ItemInNsConvert: Sized {
@@ -109,6 +111,7 @@ impl LangItems {
                 cow_owned = resolve_item!(alloc::borrow::Cow::Owned as hir::EnumVariant);
                 os_str = resolve_item!(std::ffi::OsStr as hir::Struct);
                 into_iterator = resolve_item!(std::iter::IntoIterator as hir::Trait);
+                result = resolve_item!(std::result::Result as hir::Enum);
             }
 
             LangItems {
@@ -120,6 +123,7 @@ impl LangItems {
                 cow_borrowed,
                 os_str,
                 into_iterator,
+                result,
             }
         }
 
@@ -166,6 +170,8 @@ lang_item_wrapper! {
         PartialOrd: Trait,
         Ord: Trait,
 
+        Option: Enum,
+
         Debug: Trait,
         Hash: Trait,
     }
@@ -198,5 +204,9 @@ impl LangItems {
 
     pub fn IntoIterator(&self) -> Option<hir::Trait> {
         self.into_iterator
+    }
+
+    pub fn Result(&self) -> Option<hir::Enum> {
+        self.result
     }
 }

@@ -1,6 +1,7 @@
 use crate::codegen::CodeGenerator;
 use crate::codegen::output::Code;
 use crate::codegen::simple_extensions::*;
+use crate::codegen::ty::CsTypeOption;
 use crate::codegen::ty::generic_params::CsTypeParamSource;
 use hir::db::HirDatabase;
 use hir::{HasContainer, HasCrate, sym};
@@ -165,6 +166,39 @@ impl<'db> CodeGenerator<'db> {
         {
             return ResolvedFunction::OmitCall {
                 comment: "/*omit OsStr::new method*/".into(),
+            };
+        }
+
+        // Option<T>::unwrap_or_default() => Option<T>::unwrap_or_else(T::default)
+        if f.name(self.db).as_str() == "unwrap_or_default"
+            && let hir::ItemContainer::Impl(impl_) = f.container(self.db)
+            && let self_ty = impl_.self_ty(self.db)
+            && let Some(adt) = self_ty.as_adt()
+            && let hir::Adt::Enum(enum_) = adt
+            && (Some(enum_) == lang_items.Option() || Some(enum_) == lang_items.Result())
+        {
+            let Some([type_] | [type_, _]) = parent_args.as_deref() else {
+                panic!("Into enum type params (self)");
+            };
+            return ResolvedFunction::Method {
+                self_ty,
+                trait_: None,
+                function_name: "m_UnwrapOrElse".into(),
+                generic_sources: vec![],
+                generic_args: vec![],
+                args_map: Some((
+                    ArgSource::Source(0),
+                    vec![ArgSource::CustomExpr(
+                        format!(
+                            "{}.m_Default",
+                            self.rust_type_to_cs_options(
+                                type_,
+                                CsTypeOption::default().static_access(true)
+                            )
+                        )
+                        .into(),
+                    )],
+                )),
             };
         }
 
