@@ -22,3 +22,11 @@ namespace System.Runtime.CompilerServices
         }
     }
 }
+
+namespace System
+{
+    public struct Index
+    {
+        public Index(int value, bool fromEnd = false) => throw null;
+    }
+}
