@@ -8,7 +8,8 @@ use crate::codegen::simple_extensions::*;
 use crate::codegen::ty::CsTypeOption;
 use hir::db::HirDatabase;
 use hir::{
-    HasContainer, HasCrate, InFile, Local, ModuleDef, PathResolution, StructKind, TypeInfo, sym,
+    HasContainer, HasCrate, InFile, Local, ModuleDef, PathResolution, Semantics, StructKind, Type,
+    TypeInfo, sym,
 };
 use itertools::Either;
 use ra_internal::*;
@@ -1038,29 +1039,80 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 code!(base_str, "[", idx_str, "]")
             }
             ast::Expr::RangeExpr(range_expr) => {
-                let start_code = range_expr
-                    .start()
-                    .map(|e| self.emit_expr_str_ast(&e))
-                    .unwrap_or(code!("unspecified"));
-                let end_code = range_expr
-                    .end()
-                    .map(|e| self.emit_expr_str_ast(&e))
-                    .unwrap_or(code!("unspecified"));
-                let dots = match range_expr.op_kind().unwrap() {
-                    RangeOp::Exclusive => "..",
-                    RangeOp::Inclusive => "..=",
-                };
-                code!(
-                    "/* range ",
-                    start_code,
-                    dots,
-                    end_code,
-                    " */ new s_Range(",
-                    start_code,
-                    ", ",
-                    end_code,
-                    ")"
-                )
+                fn single_generics<'db>(
+                    sem: &Semantics<'db, dyn HirDatabase>,
+                    expr: &ast::Expr,
+                ) -> Type<'db> {
+                    let [type_] = <[_; 1]>::try_from(
+                        sem.type_of_expr(expr)
+                            .unwrap()
+                            .original
+                            .as_adt_with_args()
+                            .unwrap()
+                            .1,
+                    )
+                    .unwrap();
+                    type_.unwrap()
+                }
+
+                match (
+                    range_expr.start(),
+                    range_expr.op_kind().unwrap(),
+                    range_expr.end(),
+                ) {
+                    (Some(start), RangeOp::Exclusive, Some(end)) => {
+                        code!(
+                            "Range<",
+                            self.rust_type_to_cs(&single_generics(&self.sem, expr)),
+                            ">.NewRange(",
+                            self.emit_expr_str_ast(&start),
+                            ", ",
+                            self.emit_expr_str_ast(&end),
+                            ")"
+                        )
+                    }
+                    (Some(start), RangeOp::Inclusive, Some(end)) => {
+                        code!(
+                            "Range<",
+                            self.rust_type_to_cs(&single_generics(&self.sem, expr)),
+                            ">.NewRangeInclusive(",
+                            self.emit_expr_str_ast(&start),
+                            ", ",
+                            self.emit_expr_str_ast(&end),
+                            ")"
+                        )
+                    }
+                    (Some(start), _, None) => {
+                        code!(
+                            "Range<",
+                            self.rust_type_to_cs(&single_generics(&self.sem, expr)),
+                            ">.NewRangeFrom(",
+                            self.emit_expr_str_ast(&start),
+                            ")"
+                        )
+                    }
+                    (None, _, None) => {
+                        code!("RangeFull.NewRangeFull()")
+                    }
+                    (None, RangeOp::Exclusive, Some(end)) => {
+                        code!(
+                            "Range<",
+                            self.rust_type_to_cs(&single_generics(&self.sem, expr)),
+                            ">.NewRangeTo(",
+                            self.emit_expr_str_ast(&end),
+                            ")"
+                        )
+                    }
+                    (None, RangeOp::Inclusive, Some(end)) => {
+                        code!(
+                            "Range<",
+                            self.rust_type_to_cs(&single_generics(&self.sem, expr)),
+                            ">.NewRangeToInclusive(",
+                            self.emit_expr_str_ast(&end),
+                            ")"
+                        )
+                    }
+                }
             }
             ast::Expr::ArrayExpr(array) => match array.kind() {
                 ast::ArrayExprKind::Repeat {
