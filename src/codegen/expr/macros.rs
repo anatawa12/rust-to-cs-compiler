@@ -16,7 +16,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
         };
         let tt = macro_call.token_tree().unwrap();
 
-        if Some(macro_) == self.lang_items.matches() {
+        if Some(macro_) == self.lang_items.matches() || Some(macro_) == self.lang_items.ready() {
             // Macro that expands
             let macro_call = self.sem.expand_macro_call(macro_call).unwrap().value;
             let expr = ast::MacroStmts::cast(macro_call.clone())

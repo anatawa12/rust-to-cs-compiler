@@ -19,6 +19,7 @@ pub struct LangItems {
     unreachable: Option<hir::Macro>,
     panic: Option<hir::Macro>,
     matches: Option<hir::Macro>,
+    ready: Option<hir::Macro>,
     vec: Option<hir::Macro>,
 }
 
@@ -38,6 +39,7 @@ impl LangItems {
             let unreachable: Option<hir::Macro>;
             let panic: Option<hir::Macro>;
             let matches: Option<hir::Macro>;
+            let ready: Option<hir::Macro>;
             let vec: Option<hir::Macro>;
 
             {
@@ -127,6 +129,7 @@ impl LangItems {
                 unreachable = resolve_item!(core::unreachable as hir::Macro);
                 panic = resolve_item!(std::panic as hir::Macro);
                 matches = resolve_item!(core::matches as hir::Macro);
+                ready = resolve_item!(core::task::ready as hir::Macro);
                 vec = resolve_item!(alloc::vec as hir::Macro);
             }
 
@@ -144,6 +147,7 @@ impl LangItems {
                 unreachable,
                 panic,
                 matches,
+                ready,
                 vec,
             }
         }
@@ -247,6 +251,10 @@ impl LangItems {
 
     pub fn matches(&self) -> Option<hir::Macro> {
         self.matches
+    }
+
+    pub fn ready(&self) -> Option<hir::Macro> {
+        self.ready
     }
 
     pub fn vec(&self) -> Option<hir::Macro> {
