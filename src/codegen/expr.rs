@@ -10,7 +10,7 @@ use crate::codegen::simple_extensions::*;
 use crate::codegen::ty::CsTypeOption;
 use hir::db::HirDatabase;
 use hir::{
-    HasContainer, HasCrate, InFile, Local, ModuleDef, PathResolution, Semantics, StructKind, Type,
+    HasContainer, HasCrate, Local, ModuleDef, PathResolution, Semantics, StructKind, Type,
     TypeInfo, sym,
 };
 use itertools::Either;

@@ -7,7 +7,6 @@ use syntax::{AstNode, NodeOrToken, SyntaxKind, SyntaxToken, T, ast};
 
 impl<'g, 'db> BodyGen<'g, 'db> {
     pub(super) fn emit_expr_macro(&self, expr: &ast::Expr, macro_call: &ast::MacroCall) -> Code {
-        let path = macro_call.path().unwrap();
         let Some(macro_) = self.sem.resolve_macro_call(macro_call) else {
             panic!(
                 "Unresolved macro call at {}",
@@ -38,7 +37,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
 
             if let Some(first_expr) = parser.next_expr() {
                 if parser.take_token(T![;]) {
-                    let count = parser.next_expr().unwrap();
+                    //let count = parser.next_expr().unwrap();
                     panic!(
                         "Unsupported vec![T; N] call at {}",
                         self.expr_location_ast(expr)
@@ -84,6 +83,7 @@ type TokenTreeElement = NodeOrToken<ast::TokenTree, SyntaxToken>;
 
 struct MacroParser<'g, 'db, I: Iterator<Item = TokenTreeElement>> {
     cg: &'g CodeGenerator<'db>,
+    #[allow(dead_code)]
     surrounding: SyntaxToken,
     iterator: iter::Peekable<I>,
 }
