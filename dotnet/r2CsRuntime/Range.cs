@@ -12,6 +12,8 @@ public struct Range<T>
     public static Range<T> NewRangeTo(T end) => throw null;
     // ..=end
     public static Range<T> NewRangeToInclusive(T end) => throw null;
+
+    public static implicit operator Range<T>(RangeFull full) => throw null;
 }
 
 public struct RangeFull

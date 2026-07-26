@@ -1033,7 +1033,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
             ast::Expr::IndexExpr(index_expr) => {
                 let base_str = self.emit_expr_str_ast(&index_expr.base().unwrap());
                 let idx_str = self.emit_expr_str_ast(&index_expr.index().unwrap());
-                code!(base_str, "[", idx_str, "]")
+                code!(base_str, ".Index(", idx_str, ")")
             }
             ast::Expr::RangeExpr(range_expr) => {
                 fn single_generics<'db>(

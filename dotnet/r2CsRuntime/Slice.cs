@@ -47,4 +47,6 @@ public partial struct Slice<T> : IEnumerable<T>
     }
 
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+    public Slice<T> Index(Range<nuint> range) => throw null;
+    public T Index(nuint index) => m_Get(index).m_Unwrap();
 }
