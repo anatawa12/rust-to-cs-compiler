@@ -16,6 +16,10 @@ pub struct LangItems {
     os_string: Option<hir::Struct>,
     into_iterator: Option<hir::Trait>,
     result: Option<hir::Enum>,
+    unreachable: Option<hir::Macro>,
+    panic: Option<hir::Macro>,
+    matches: Option<hir::Macro>,
+    vec: Option<hir::Macro>,
 }
 
 impl LangItems {
@@ -31,6 +35,10 @@ impl LangItems {
             let os_string: Option<hir::Struct>;
             let into_iterator: Option<hir::Trait>;
             let result: Option<hir::Enum>;
+            let unreachable: Option<hir::Macro>;
+            let panic: Option<hir::Macro>;
+            let matches: Option<hir::Macro>;
+            let vec: Option<hir::Macro>;
 
             {
                 trait ItemInNsConvert: Sized {
@@ -60,6 +68,7 @@ impl LangItems {
                 item_in_ns_convert_impl!(
                     hir::EnumVariant as (hir::ItemInNs::Types, hir::ModuleDef::EnumVariant)
                 );
+                item_in_ns_convert_impl!(hir::Macro as (hir::ItemInNs::Macros));
 
                 macro_rules! resolve_item {
                     ($crate_:ident ::$($path:ident)::+ as $ty: ty) => {{
@@ -115,6 +124,10 @@ impl LangItems {
                 os_string = resolve_item!(std::ffi::OsString as hir::Struct);
                 into_iterator = resolve_item!(std::iter::IntoIterator as hir::Trait);
                 result = resolve_item!(std::result::Result as hir::Enum);
+                unreachable = resolve_item!(core::unreachable as hir::Macro);
+                panic = resolve_item!(std::panic as hir::Macro);
+                matches = resolve_item!(core::matches as hir::Macro);
+                vec = resolve_item!(alloc::vec as hir::Macro);
             }
 
             LangItems {
@@ -128,6 +141,10 @@ impl LangItems {
                 os_string,
                 into_iterator,
                 result,
+                unreachable,
+                panic,
+                matches,
+                vec,
             }
         }
 
@@ -218,5 +235,21 @@ impl LangItems {
 
     pub fn Result(&self) -> Option<hir::Enum> {
         self.result
+    }
+
+    pub fn unreachable(&self) -> Option<hir::Macro> {
+        self.unreachable
+    }
+
+    pub fn panic(&self) -> Option<hir::Macro> {
+        self.panic
+    }
+
+    pub fn matches(&self) -> Option<hir::Macro> {
+        self.matches
+    }
+
+    pub fn vec(&self) -> Option<hir::Macro> {
+        self.vec
     }
 }

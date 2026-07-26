@@ -42,6 +42,7 @@ use ra_internal::function::FunctionExt;
 use ra_internal::*;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use syntax::{SyntaxNode, ast};
 use vfs::Vfs;
 
 pub struct CodeGenerator<'db> {
@@ -97,6 +98,14 @@ impl<'db> CodeGenerator<'db> {
         let line_col = line_index.line_col(loc.range.start());
 
         format!("{}:{}:{}", path, line_col.line + 1, line_col.col + 1)
+    }
+
+    pub fn expr_location_ast(&self, expr: &impl ast::AstNode) -> String {
+        self.node_location_ast(expr.syntax())
+    }
+
+    pub fn node_location_ast(&self, node: &SyntaxNode) -> String {
+        self.location_with_file(InFile::new(self.sem.hir_file_for(node), node.clone()))
     }
 }
 

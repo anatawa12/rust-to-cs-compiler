@@ -1,5 +1,7 @@
 //! Generates C# expressions and statements from Rust HIR bodies.
 
+mod macros;
+
 use super::{CodeGenerator, generic_args, names, output::Code};
 use crate::codegen::constructable::{Constructable, ConstructableDef};
 use crate::codegen::decl::CsFunctionType;
@@ -83,11 +85,6 @@ impl<'g, 'db> BodyGen<'g, 'db> {
             deferred: RefCell::new(Vec::new()),
             cs_type,
         }
-    }
-
-    pub fn expr_location_ast(&self, expr: &impl ast::AstNode) -> String {
-        let node = expr.syntax();
-        self.location_with_file(InFile::new(self.sem.hir_file_for(node), node.clone()))
     }
 
     fn alloc_binding_ast(&self, local: &Local) -> String {
@@ -503,8 +500,8 @@ impl<'g, 'db> BodyGen<'g, 'db> {
 
         if let Some(tail_expr) = tail {
             let has_value = (self.sem.type_of_expr(&tail_expr))
-                .map(|x| x.adjusted.unwrap_or(x.original))
-                .is_some_and(|ty| !ty.is_unit());
+                .map(|x| x.original)
+                .is_some_and(|ty| !ty.is_unit() && !ty.is_never());
             if returning && has_value {
                 if !self.check_cfg(&tail_expr) {
                     return;
@@ -1356,17 +1353,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 // TODO
                 "/* FormatArgsExpr */ default!".into()
             }
-            ast::Expr::MacroExpr(m) => {
-                // TODO
-                let macro_call = m.macro_call().unwrap();
-                fcode!(
-                    "/* macro name {macro_path} */ macro_{short_name}()",
-                    macro_path = macro_call.path().unwrap().syntax().text(),
-                    short_name = (macro_call.path().unwrap().segments().last().unwrap())
-                        .syntax()
-                        .text(),
-                )
-            }
+            ast::Expr::MacroExpr(m) => self.emit_expr_macro(expr, &m.macro_call().unwrap()),
 
             ast::Expr::YeetExpr(_) => {
                 panic!("yeet not supported at {}", self.expr_location_ast(expr))
