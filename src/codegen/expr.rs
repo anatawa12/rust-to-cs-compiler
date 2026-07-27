@@ -197,7 +197,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
             }
         }
         if let Some(body) = f.body() {
-            self.emit_expr_as_stmt_ast(out, ast::Expr::BlockExpr(body), true, true);
+            self.emit_expr_as_stmt_ast(out, ast::Expr::BlockExpr(body), true);
             if self
                 .sem
                 .to_def(&f)
@@ -215,13 +215,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
     }
 
     /// Emit an expression as a statement (with semicolon if needed).
-    fn emit_expr_as_stmt_ast(
-        &self,
-        out: &mut Code,
-        expr: ast::Expr,
-        is_tail: bool,
-        returning: bool,
-    ) {
+    fn emit_expr_as_stmt_ast(&self, out: &mut Code, expr: ast::Expr, returning: bool) {
         if !self.check_cfg(&expr) {
             return;
         }
@@ -229,7 +223,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
             ast::Expr::BlockExpr(block_expr) => {
                 let statements = block_expr.statements();
                 let tail = block_expr.tail_expr();
-                self.emit_block_contents(out, statements, tail, is_tail, returning);
+                self.emit_block_contents(out, statements, tail, returning);
             }
             ast::Expr::ReturnExpr(ret_expr) => {
                 if let Some(value_expr) = ret_expr.expr() {
@@ -238,7 +232,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         .type_of_expr(&value_expr)
                         .is_some_and(|x| x.adjusted().is_unit())
                     {
-                        self.emit_expr_as_stmt_ast(out, value_expr, true, true);
+                        self.emit_expr_as_stmt_ast(out, value_expr, true);
                         out.wln("return;");
                     } else {
                         let val = self.emit_expr_str_ast(&value_expr);
@@ -259,18 +253,18 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 let cond = self.emit_expr_str_ast(&condition);
                 out.w("if (").w(cond).wln(") {");
                 out.indent();
-                self.emit_expr_as_stmt_ast(out, then_branch.into(), is_tail, returning);
+                self.emit_expr_as_stmt_ast(out, then_branch.into(), returning);
                 out.dedent();
                 match else_branch {
                     Some(ast::ElseBranch::IfExpr(else_if)) => {
                         out.w("} else ");
-                        self.emit_expr_as_stmt_ast(out, else_if.into(), is_tail, returning);
+                        self.emit_expr_as_stmt_ast(out, else_if.into(), returning);
                     }
                     Some(ast::ElseBranch::Block(else_e)) => {
                         out.w("} else {");
                         out.wln("");
                         out.indent();
-                        self.emit_expr_as_stmt_ast(out, else_e.into(), is_tail, returning);
+                        self.emit_expr_as_stmt_ast(out, else_e.into(), returning);
                         out.dedent();
                         out.wln("}");
                     }
@@ -288,7 +282,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     .unwrap_or_default();
                 out.w(label_str).wln("while (true) {");
                 out.indent();
-                self.emit_expr_as_stmt_ast(out, body.into(), false, false);
+                self.emit_expr_as_stmt_ast(out, body.into(), false);
                 out.dedent();
                 out.wln("}");
             }
@@ -305,7 +299,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     .w(self.emit_expr_str_ast(&condition))
                     .wln(") {");
                 out.indent();
-                self.emit_expr_as_stmt_ast(out, body.into(), false, false);
+                self.emit_expr_as_stmt_ast(out, body.into(), false);
                 out.dedent();
                 out.wln("}");
             }
@@ -327,7 +321,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     .wln(") {");
                 out.indent();
                 self.emit_let_stmt(out, &pat, code!(&temp_name), Self::emit_unreachable);
-                self.emit_expr_as_stmt_ast(out, body.into(), false, false);
+                self.emit_expr_as_stmt_ast(out, body.into(), false);
                 out.dedent();
                 out.wln("}");
             }
@@ -350,7 +344,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     }
                     out.wln(":{");
                     out.indent();
-                    self.emit_expr_as_stmt_ast(out, arm.expr().unwrap(), is_tail, returning);
+                    self.emit_expr_as_stmt_ast(out, arm.expr().unwrap(), returning);
                     out.wln("break;");
                     out.dedent();
                     out.wln("}");
@@ -425,7 +419,6 @@ impl<'g, 'db> BodyGen<'g, 'db> {
         out: &mut Code,
         statements: impl IntoIterator<Item = ast::Stmt>,
         tail: Option<ast::Expr>,
-        is_tail: bool,
         returning: bool,
     ) {
         for stmt in statements {
@@ -441,12 +434,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         if let Some(else_branch) = else_branch {
                             self.emit_let_stmt(out, &pat, init_str, |this, out| {
                                 out.wln("{").indent();
-                                this.emit_expr_as_stmt_ast(
-                                    out,
-                                    else_branch.into(),
-                                    is_tail,
-                                    returning,
-                                );
+                                this.emit_expr_as_stmt_ast(out, else_branch.into(), returning);
                                 out.dedent();
                                 out.wln("}");
                             });
@@ -463,7 +451,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     }
                 }
                 ast::Stmt::ExprStmt(expr_stmt) => {
-                    self.emit_expr_as_stmt_ast(out, expr_stmt.expr().unwrap(), false, returning);
+                    self.emit_expr_as_stmt_ast(out, expr_stmt.expr().unwrap(), returning);
                 }
                 ast::Stmt::Item(ast::Item::Fn(fn_)) => {
                     let f = self.sem.to_def(&fn_).unwrap();
@@ -506,16 +494,11 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 if !self.check_cfg(&tail_expr) {
                     return;
                 }
-                let tail_str = self.emit_expr_str_ast(&tail_expr);
-                if is_tail {
-                    if tail_str != "()".into() && !tail_str.is_empty() {
-                        out.w("return ").w(&tail_str).wln(";");
-                    }
-                } else if tail_str != "()".into() && !tail_str.is_empty() {
-                    out.w(&tail_str).wln(";");
-                }
+                out.w("return ")
+                    .w(self.emit_expr_str_ast(&tail_expr))
+                    .wln(";");
             } else {
-                self.emit_expr_as_stmt_ast(out, tail_expr, true, false);
+                self.emit_expr_as_stmt_ast(out, tail_expr, returning);
             }
         }
     }
@@ -1170,7 +1153,6 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         &mut body_block,
                         block.statements(),
                         block.tail_expr(),
-                        true,
                         true,
                     );
                     code!(
