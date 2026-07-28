@@ -381,7 +381,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     }
                 };
 
-                then_part | else_part
+                then_part & else_part
             }
             ast::Expr::LoopExpr(loop_expr) => {
                 let label = loop_expr.label();
@@ -509,6 +509,19 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     EmittedExprInfo::diverging()
                 } else {
                     out.wln(code!("await ", inner_str, ";"));
+                    EmittedExprInfo::non_diverging()
+                }
+            }
+            ast::Expr::MacroExpr(ref m) => {
+                let (s, info) = self.emit_expr_macro(&expr, &m.macro_call().unwrap());
+                if info.diverging {
+                    out.w(s).wln(";");
+                    info
+                } else if option.returning && !self.returning_type().is_unit() {
+                    out.w("return ").w(s).wln(";");
+                    EmittedExprInfo::diverging()
+                } else {
+                    out.w(s).wln(";");
                     EmittedExprInfo::non_diverging()
                 }
             }
@@ -1488,7 +1501,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 // TODO
                 "/* FormatArgsExpr */ default!".into()
             }
-            ast::Expr::MacroExpr(m) => self.emit_expr_macro(expr, &m.macro_call().unwrap()),
+            ast::Expr::MacroExpr(m) => self.emit_expr_macro(expr, &m.macro_call().unwrap()).0,
 
             ast::Expr::YeetExpr(_) => {
                 panic!("yeet not supported at {}", self.expr_location_ast(expr))

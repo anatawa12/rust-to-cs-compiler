@@ -1,4 +1,4 @@
-use super::BodyGen;
+use super::{BodyGen, EmittedExprInfo};
 use crate::codegen::CodeGenerator;
 use crate::codegen::output::Code;
 use itertools::Itertools;
@@ -6,7 +6,11 @@ use std::iter;
 use syntax::{AstNode, NodeOrToken, SyntaxKind, SyntaxToken, T, ast};
 
 impl<'g, 'db> BodyGen<'g, 'db> {
-    pub(super) fn emit_expr_macro(&self, expr: &ast::Expr, macro_call: &ast::MacroCall) -> Code {
+    pub(super) fn emit_expr_macro(
+        &self,
+        expr: &ast::Expr,
+        macro_call: &ast::MacroCall,
+    ) -> (Code, EmittedExprInfo) {
         let Some(macro_) = self.sem.resolve_macro_call(macro_call) else {
             panic!(
                 "Unresolved macro call at {}",
@@ -22,11 +26,20 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 .and_then(|x| x.expr())
                 .or_else(|| ast::Expr::cast(macro_call.clone()))
                 .unwrap_or_else(|| panic!("{:?}", macro_call));
-            self.emit_expr_str_ast(&expr)
+            (
+                self.emit_expr_str_ast(&expr),
+                EmittedExprInfo::non_diverging(),
+            )
         } else if Some(macro_) == self.lang_items.unreachable() {
-            fcode!(r#"throw new PanicException("unreachable")"#)
+            (
+                fcode!(r#"throw new PanicException("unreachable")"#),
+                EmittedExprInfo::diverging(),
+            )
         } else if Some(macro_) == self.lang_items.panic() {
-            fcode!(r#"throw new PanicException("panic")"#)
+            (
+                fcode!(r#"throw new PanicException("panic")"#),
+                EmittedExprInfo::diverging(),
+            )
         } else if Some(macro_) == self.lang_items.vec() {
             let ty = (self.sem.type_of_expr(expr)).unwrap_or_else(|| {
                 panic!("Unresolved macro call at {}", self.expr_location_ast(expr))
@@ -57,7 +70,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     }
 
                     code.w("} ");
-                    code
+                    (code, EmittedExprInfo::non_diverging())
                 } else {
                     panic!(
                         "Unsupported vec![] call at {}",
@@ -65,15 +78,21 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     )
                 }
             } else {
-                fcode!("new List<{}>()", self.rust_type_to_cs(&element_ty))
+                (
+                    fcode!("new List<{}>()", self.rust_type_to_cs(&element_ty)),
+                    EmittedExprInfo::non_diverging(),
+                )
             }
         } else {
-            fcode!(
-                "/* macro name {macro_path} */ macro_{short_name}()",
-                macro_path = macro_call.path().unwrap().syntax().text(),
-                short_name = (macro_call.path().unwrap().segments().last().unwrap())
-                    .syntax()
-                    .text(),
+            (
+                fcode!(
+                    "/* macro name {macro_path} */ macro_{short_name}()",
+                    macro_path = macro_call.path().unwrap().syntax().text(),
+                    short_name = (macro_call.path().unwrap().segments().last().unwrap())
+                        .syntax()
+                        .text(),
+                ),
+                EmittedExprInfo::non_diverging(),
             )
         }
     }
