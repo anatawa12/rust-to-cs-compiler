@@ -1352,7 +1352,9 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     returning: output,
                 });
 
-                if let ast::Expr::BlockExpr(block) = closure.body().unwrap() {
+                if let ast::Expr::BlockExpr(block) = closure.body().unwrap()
+                    && block.modifier().is_none()
+                {
                     self.emit_block_contents(
                         &mut body_block,
                         block.statements(),
