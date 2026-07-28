@@ -499,6 +499,16 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     EmittedExprInfo::non_diverging()
                 }
             }
+            ast::Expr::MacroExpr(ref m) if self.should_inline_macro(&m.macro_call().unwrap()) => {
+                let macro_call = self
+                    .sem
+                    .expand_macro_call(&m.macro_call().unwrap())
+                    .unwrap()
+                    .value;
+                let expr = ast::MacroStmts::cast(macro_call.clone())
+                    .unwrap_or_else(|| panic!("{:?}", macro_call));
+                self.emit_block_contents(out, expr.statements(), expr.expr(), option)
+            }
             ast::Expr::MacroExpr(ref m) => {
                 let (s, info) = self.emit_expr_macro(&expr, &m.macro_call().unwrap());
                 if info.diverging {

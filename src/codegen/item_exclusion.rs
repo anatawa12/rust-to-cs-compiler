@@ -128,6 +128,7 @@ trait R2csHasAttrBlanket {}
 impl R2csHasAttrBlanket for hir::Function {}
 impl R2csHasAttrBlanket for hir::Adt {}
 impl R2csHasAttrBlanket for hir::Trait {}
+impl R2csHasAttrBlanket for hir::Macro {}
 
 impl<T> R2csHasAttr for T
 where

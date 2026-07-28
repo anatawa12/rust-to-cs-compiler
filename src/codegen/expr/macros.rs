@@ -1,6 +1,6 @@
 use super::{BodyGen, EmittedExprInfo};
-use crate::codegen::CodeGenerator;
 use crate::codegen::output::Code;
+use crate::codegen::{CodeGenerator, item_exclusion};
 use itertools::Itertools;
 use std::iter;
 use syntax::{AstNode, NodeOrToken, SyntaxKind, SyntaxToken, T, ast};
@@ -19,13 +19,11 @@ impl<'g, 'db> BodyGen<'g, 'db> {
         };
         let tt = macro_call.token_tree().unwrap();
 
-        if Some(macro_) == self.lang_items.matches() || Some(macro_) == self.lang_items.ready() {
+        if self.should_inline_macro(macro_call) {
             // Macro that expands
             let macro_call = self.sem.expand_macro_call(macro_call).unwrap().value;
-            let expr = ast::MacroStmts::cast(macro_call.clone())
-                .and_then(|x| x.expr())
-                .or_else(|| ast::Expr::cast(macro_call.clone()))
-                .unwrap_or_else(|| panic!("{:?}", macro_call));
+            let expr =
+                ast::Expr::cast(macro_call.clone()).unwrap_or_else(|| panic!("{:?}", macro_call));
             (
                 self.emit_expr_str_ast(&expr),
                 EmittedExprInfo::non_diverging(),
@@ -101,6 +99,19 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 EmittedExprInfo::non_diverging(),
             )
         }
+    }
+
+    pub(super) fn should_inline_macro(&self, macro_call: &ast::MacroCall) -> bool {
+        let Some(macro_) = self.sem.resolve_macro_call(macro_call) else {
+            panic!(
+                "Unresolved macro call at {}",
+                self.expr_location_ast(macro_call)
+            )
+        };
+        let is_inline = item_exclusion::has_attr(macro_, "r2cs_inline", self.db);
+        Some(macro_) == self.lang_items.matches()
+            || Some(macro_) == self.lang_items.ready()
+            || is_inline
     }
 }
 
