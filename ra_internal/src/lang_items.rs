@@ -21,6 +21,7 @@ pub struct LangItems {
     matches: Option<hir::Macro>,
     ready: Option<hir::Macro>,
     vec: Option<hir::Macro>,
+    pin: Option<hir::Macro>,
 }
 
 impl LangItems {
@@ -41,6 +42,7 @@ impl LangItems {
             let matches: Option<hir::Macro>;
             let ready: Option<hir::Macro>;
             let vec: Option<hir::Macro>;
+            let pin: Option<hir::Macro>;
 
             {
                 trait ItemInNsConvert: Sized {
@@ -131,6 +133,7 @@ impl LangItems {
                 matches = resolve_item!(core::matches as hir::Macro);
                 ready = resolve_item!(core::task::ready as hir::Macro);
                 vec = resolve_item!(alloc::vec as hir::Macro);
+                pin = resolve_item!(core::pin::pin as hir::Macro);
             }
 
             LangItems {
@@ -149,6 +152,7 @@ impl LangItems {
                 matches,
                 ready,
                 vec,
+                pin,
             }
         }
 
@@ -259,5 +263,9 @@ impl LangItems {
 
     pub fn vec(&self) -> Option<hir::Macro> {
         self.vec
+    }
+
+    pub fn pin(&self) -> Option<hir::Macro> {
+        self.pin
     }
 }

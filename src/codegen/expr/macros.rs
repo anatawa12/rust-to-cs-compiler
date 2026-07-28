@@ -83,6 +83,12 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     EmittedExprInfo::non_diverging(),
                 )
             }
+        } else if Some(macro_) == self.lang_items.pin() {
+            let mut parser = MacroParser::new(self.cg, &tt);
+            (
+                self.emit_expr_str_ast(&parser.next_expr().unwrap()),
+                EmittedExprInfo::non_diverging(),
+            )
         } else {
             (
                 fcode!(
@@ -112,7 +118,13 @@ impl<'g, 'db> MacroParser<'g, 'db, std::vec::IntoIter<TokenTreeElement>> {
         cg: &'g CodeGenerator<'db>,
         token: &ast::TokenTree,
     ) -> MacroParser<'g, 'db, impl Iterator<Item = TokenTreeElement>> {
-        let mut iterator = token.token_trees_and_tokens().peekable();
+        let mut iterator = token
+            .token_trees_and_tokens()
+            .filter(|x| {
+                x.as_token()
+                    .is_none_or(|t| !matches!(t.kind(), SyntaxKind::WHITESPACE))
+            })
+            .peekable();
         MacroParser {
             cg,
             surrounding: iterator.next().unwrap().into_token().unwrap(),
@@ -154,7 +166,7 @@ impl<'g, 'db, I: Iterator<Item = TokenTreeElement>> MacroParser<'g, 'db, I> {
                 })
             })
             .last();
-        let first_token = first_token(first);
+        let first_token = first_token(first.clone());
         let last_token = last.map(last_token);
         let first_descenders = self.cg.sem.descend_into_macros(first_token.clone());
         let last_descenders = last_token
@@ -170,7 +182,7 @@ impl<'g, 'db, I: Iterator<Item = TokenTreeElement>> MacroParser<'g, 'db, I> {
                 })
                 .unwrap_or_else(|| {
                     panic!(
-                        "failed to resolve expr {}",
+                        "failed to resolve expr {}, {first:?}",
                         self.cg.node_location_ast(&first_token.parent().unwrap()),
                     )
                 }),
