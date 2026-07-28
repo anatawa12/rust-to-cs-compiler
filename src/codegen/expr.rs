@@ -242,20 +242,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
             }
         }
         if let Some(body) = f.body() {
-            let emit_info = self.emit_expr_as_stmt_ast(
-                out,
-                ast::Expr::BlockExpr(body),
-                ExprGenOption::returning(),
-            );
-            if !emit_info.diverging && !self.returning_type().is_unit() {
-                tracing::error!(
-                    "Error emitting expr: non-void returning expr does not diverging at {}",
-                    self.expr_location_ast(&f)
-                );
-            }
-            if self.returning_type().is_unit() && self.is_async() && !emit_info.diverging {
-                out.wln("return default;");
-            }
+            self.emit_returning_block(out, &body);
         } else {
             out.wln("throw new System.NotImplementedException(\"builtin-derive\");");
         }
@@ -329,7 +316,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
         }
 
         match expr {
-            ast::Expr::BlockExpr(ref block_expr) => {
+            ast::Expr::BlockExpr(ref block_expr) if block_expr.modifier().is_none() => {
                 let statements = block_expr.statements();
                 let tail = block_expr.tail_expr();
                 self.emit_block_contents(out, statements, tail, option)
@@ -1090,15 +1077,56 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     code!("(", cond, " ? ", then_s, " : ValueTuple)")
                 }
             },
-            ast::Expr::BlockExpr(block_expr) => {
-                if block_expr.statements().count() == 0 {
-                    if let Some(t) = block_expr.tail_expr() {
-                        return self.emit_expr_str_ast(&t);
+            ast::Expr::BlockExpr(block_expr) => match block_expr.modifier() {
+                None => {
+                    if block_expr.statements().count() == 0 {
+                        if let Some(t) = block_expr.tail_expr() {
+                            return self.emit_expr_str_ast(&t);
+                        }
+                        return "default!".into();
                     }
-                    return "default!".into();
+                    "/* block expr */ default!".into()
                 }
-                "/* block expr */ default!".into()
-            }
+                Some(ast::BlockModifier::Async(_)) => {
+                    let mut body_code = Code::new();
+                    let return_type = (self.type_of_expr(&expr))
+                        .adjusted()
+                        .future_output(self.db)
+                        .unwrap();
+
+                    let return_type_cs = self.rust_type_to_cs(&return_type);
+                    {
+                        let _scope = self.new_ctx(CodeContext {
+                            is_async: true,
+                            returning: return_type,
+                        });
+                        self.emit_returning_block(&mut body_code, &block_expr);
+                    }
+
+                    code!(
+                        "RustTask.New<",
+                        return_type_cs,
+                        ">(async () => {\n",
+                        indent,
+                        body_code,
+                        dedent,
+                        "})"
+                    )
+                }
+                Some(modifier) => panic!(
+                    "Unsupported block modifier: {} at {}",
+                    match modifier {
+                        ast::BlockModifier::Async(_) => "async",
+                        ast::BlockModifier::Unsafe(_) => "unsafe",
+                        ast::BlockModifier::Try { .. } => "try",
+                        ast::BlockModifier::Const(_) => "const",
+                        ast::BlockModifier::AsyncGen(_) => "async gen",
+                        ast::BlockModifier::Gen(_) => "gen",
+                        ast::BlockModifier::Label(_) => "label",
+                    },
+                    self.expr_location_ast(expr)
+                ),
+            },
             ast::Expr::TupleExpr(tuple_expr) => {
                 if tuple_expr.fields().next().is_none() {
                     "default(global::System.ValueTuple)".into()
@@ -1513,6 +1541,21 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     ")"
                 )
             }
+        }
+    }
+
+    fn emit_returning_block(&self, out: &mut Code, block_expr: &ast::BlockExpr) {
+        let statements = block_expr.statements();
+        let tail = block_expr.tail_expr();
+        let emit_info = self.emit_block_contents(out, statements, tail, ExprGenOption::returning());
+        if !emit_info.diverging && !self.returning_type().is_unit() {
+            tracing::error!(
+                "Error emitting expr: non-void returning expr does not diverging at {}",
+                self.expr_location_ast(block_expr)
+            );
+        }
+        if self.returning_type().is_unit() && self.is_async() && !emit_info.diverging {
+            out.wln("return default;");
         }
     }
 

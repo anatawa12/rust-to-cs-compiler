@@ -193,6 +193,8 @@ public class RustCancellationException : Exception
 
 public static class RustTask
 {
+    public static RustTask<T> New<T>(Func<RustTask<T>> closure) => closure();
+
     public static async RustTask<T> FromTaskWithCancellationToken<T>(Func<CancellationToken, Task<T>> action)
     {
         var cts = new CancellationTokenSource();
