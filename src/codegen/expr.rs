@@ -17,6 +17,7 @@ use itertools::Either;
 use ra_internal::*;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::ops::{BitAnd, BitAndAssign, BitOr};
 use std::sync::atomic::AtomicUsize;
 use syntax::ast::{
     self, ArithOp, AstNode as _, HasArgList as _, HasLoopBody as _, LogicOp, RangeItem as _,
@@ -30,10 +31,8 @@ pub struct BodyGen<'g, 'db> {
     locals: RefCell<HashMap<Local, String>>,
     /// Counter per original Rust name for uniqueness.
     name_counts: RefCell<HashMap<String, usize>>,
-    /// Whether we're inside an async fn (controls .GetAwaiter()/.GetResult() vs await).
-    #[allow(dead_code)]
-    is_async: bool,
     cs_type: CsFunctionType,
+    ctx: RefCell<CodeContext<'db>>,
 
     // internals
     match_index: AtomicUsize,
@@ -74,13 +73,21 @@ impl<'g, 'db> std::ops::Deref for BodyGen<'g, 'db> {
     }
 }
 
+struct CodeContext<'db> {
+    is_async: bool,
+    returning: hir::Type<'db>,
+}
+
 impl<'g, 'db> BodyGen<'g, 'db> {
     pub fn new(cg: &'g CodeGenerator<'db>, is_async: bool, cs_type: CsFunctionType) -> Self {
         Self {
             cg,
             locals: RefCell::new(HashMap::new()),
             name_counts: RefCell::new(HashMap::new()),
-            is_async,
+            ctx: RefCell::new(CodeContext {
+                is_async,
+                returning: hir::Type::error(cg.db, cg.krate),
+            }),
             match_index: AtomicUsize::new(0),
             deferred: RefCell::new(Vec::new()),
             cs_type,
@@ -165,6 +172,34 @@ impl<'g, 'db> BodyGen<'g, 'db> {
         })
     }
 
+    fn is_async(&self) -> bool {
+        self.ctx.borrow().is_async
+    }
+
+    fn returning_type(&self) -> hir::Type<'db> {
+        self.ctx.borrow().returning.clone()
+    }
+
+    fn new_ctx(&self, new: CodeContext<'db>) -> impl Drop {
+        struct RestoreCtxScope<'a, 'db> {
+            cell: &'a RefCell<CodeContext<'db>>,
+            prev: Option<CodeContext<'db>>,
+        }
+
+        impl Drop for RestoreCtxScope<'_, '_> {
+            fn drop(&mut self) {
+                *self.cell.borrow_mut() = self.prev.take().unwrap();
+            }
+        }
+
+        let mut ctx = self.ctx.borrow_mut();
+        let prev = std::mem::replace(&mut *ctx, new);
+        RestoreCtxScope {
+            cell: &self.ctx,
+            prev: Some(prev),
+        }
+    }
+
     #[track_caller]
     fn type_of_expr(&self, expr: &ast::Expr) -> TypeInfo<'db> {
         self.sem
@@ -176,6 +211,16 @@ impl<'g, 'db> BodyGen<'g, 'db> {
     #[tracing::instrument(skip_all)]
     pub fn emit_function_body(&self, f: ast::Fn, out: &mut Code) {
         let params = f.param_list().unwrap();
+        let _scope = self.new_ctx(CodeContext {
+            is_async: self.is_async(),
+            returning: if self.is_async() {
+                (self.sem.to_def(&f).unwrap().ret_type(self.db))
+                    .future_output(self.db)
+                    .unwrap()
+            } else {
+                (self.sem.to_def(&f).unwrap()).ret_type(self.db)
+            },
+        });
         if let Some(self_param) = params.self_param() {
             match self.cs_type {
                 CsFunctionType::TraitDefaultImpl => {
@@ -197,53 +242,114 @@ impl<'g, 'db> BodyGen<'g, 'db> {
             }
         }
         if let Some(body) = f.body() {
-            self.emit_expr_as_stmt_ast(out, ast::Expr::BlockExpr(body), true);
-            if self
-                .sem
-                .to_def(&f)
-                .unwrap()
-                .ret_type(self.db)
-                .future_output(self.db)
-                .is_some_and(|x| x.is_unit())
-                && self.is_async
-            {
+            let emit_info = self.emit_expr_as_stmt_ast(
+                out,
+                ast::Expr::BlockExpr(body),
+                ExprGenOption::returning(),
+            );
+            if !emit_info.diverging && !self.returning_type().is_unit() {
+                tracing::error!(
+                    "Error emitting expr: non-void returning expr does not diverging at {}",
+                    self.expr_location_ast(&f)
+                );
+            }
+            if self.returning_type().is_unit() && self.is_async() && !emit_info.diverging {
                 out.wln("return default;");
             }
         } else {
             out.wln("throw new System.NotImplementedException(\"builtin-derive\");");
         }
     }
+}
 
-    /// Emit an expression as a statement (with semicolon if needed).
-    fn emit_expr_as_stmt_ast(&self, out: &mut Code, expr: ast::Expr, returning: bool) {
-        if !self.check_cfg(&expr) {
-            return;
+#[derive(Clone)]
+struct ExprGenOption {
+    returning: bool,
+}
+
+impl ExprGenOption {
+    fn returning() -> Self {
+        Self { returning: true }
+    }
+
+    fn non_last(&self) -> ExprGenOption {
+        Self { returning: false }
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+struct EmittedExprInfo {
+    diverging: bool,
+}
+
+impl EmittedExprInfo {
+    pub fn diverging() -> Self {
+        Self { diverging: true }
+    }
+
+    pub fn non_diverging() -> Self {
+        Self { diverging: false }
+    }
+}
+
+impl BitOr<EmittedExprInfo> for EmittedExprInfo {
+    type Output = EmittedExprInfo;
+    fn bitor(self, rhs: EmittedExprInfo) -> Self::Output {
+        Self {
+            diverging: self.diverging | rhs.diverging,
         }
+    }
+}
+
+impl BitAnd<EmittedExprInfo> for EmittedExprInfo {
+    type Output = EmittedExprInfo;
+    fn bitand(self, rhs: EmittedExprInfo) -> Self::Output {
+        Self {
+            diverging: self.diverging & rhs.diverging,
+        }
+    }
+}
+
+impl BitAndAssign for EmittedExprInfo {
+    fn bitand_assign(&mut self, rhs: Self) {
+        *self = *self & rhs
+    }
+}
+
+impl<'g, 'db> BodyGen<'g, 'db> {
+    /// Emit an expression as a statement (with semicolon if needed).
+    fn emit_expr_as_stmt_ast(
+        &self,
+        out: &mut Code,
+        expr: ast::Expr,
+        option: ExprGenOption,
+    ) -> EmittedExprInfo {
+        if !self.check_cfg(&expr) {
+            return EmittedExprInfo::non_diverging();
+        }
+
         match expr {
-            ast::Expr::BlockExpr(block_expr) => {
+            ast::Expr::BlockExpr(ref block_expr) => {
                 let statements = block_expr.statements();
                 let tail = block_expr.tail_expr();
-                self.emit_block_contents(out, statements, tail, returning);
+                self.emit_block_contents(out, statements, tail, option)
             }
             ast::Expr::ReturnExpr(ret_expr) => {
                 if let Some(value_expr) = ret_expr.expr() {
-                    if self
-                        .sem
-                        .type_of_expr(&value_expr)
-                        .is_some_and(|x| x.adjusted().is_unit())
-                    {
-                        self.emit_expr_as_stmt_ast(out, value_expr, true);
-                        out.wln("return;");
-                    } else {
-                        let val = self.emit_expr_str_ast(&value_expr);
-                        out.w("return ").w(val).wln(";");
+                    let info =
+                        self.emit_expr_as_stmt_ast(out, value_expr, ExprGenOption::returning());
+                    if !info.diverging {
+                        self.emit_return_void(out);
                     }
+                    EmittedExprInfo::diverging()
                 } else {
-                    out.wln("return;");
+                    self.emit_return_void(out);
+                    EmittedExprInfo::diverging()
                 }
             }
             ast::Expr::TupleExpr(tuple_expr) if tuple_expr.fields().next().is_none() => {
-                out.wln("/* () unit expr */");
+                out.wln("/* () unit expr */;");
+                EmittedExprInfo::non_diverging()
             }
             ast::Expr::IfExpr(if_expr) => {
                 let condition = if_expr.condition().unwrap();
@@ -253,25 +359,29 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 let cond = self.emit_expr_str_ast(&condition);
                 out.w("if (").w(cond).wln(") {");
                 out.indent();
-                self.emit_expr_as_stmt_ast(out, then_branch.into(), returning);
+                let then_part = self.emit_expr_as_stmt_ast(out, then_branch.into(), option.clone());
                 out.dedent();
-                match else_branch {
+                let else_part = match else_branch {
                     Some(ast::ElseBranch::IfExpr(else_if)) => {
                         out.w("} else ");
-                        self.emit_expr_as_stmt_ast(out, else_if.into(), returning);
+                        self.emit_expr_as_stmt_ast(out, else_if.into(), option.clone())
                     }
                     Some(ast::ElseBranch::Block(else_e)) => {
                         out.w("} else {");
                         out.wln("");
                         out.indent();
-                        self.emit_expr_as_stmt_ast(out, else_e.into(), returning);
+                        let part = self.emit_expr_as_stmt_ast(out, else_e.into(), option.clone());
                         out.dedent();
                         out.wln("}");
+                        part
                     }
                     None => {
                         out.wln("}");
+                        EmittedExprInfo::non_diverging()
                     }
-                }
+                };
+
+                then_part | else_part
             }
             ast::Expr::LoopExpr(loop_expr) => {
                 let label = loop_expr.label();
@@ -282,9 +392,10 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     .unwrap_or_default();
                 out.w(label_str).wln("while (true) {");
                 out.indent();
-                self.emit_expr_as_stmt_ast(out, body.into(), false);
+                self.emit_expr_as_stmt_ast(out, body.into(), option.non_last());
                 out.dedent();
                 out.wln("}");
+                EmittedExprInfo::diverging()
             }
             ast::Expr::WhileExpr(while_expr) => {
                 let label = while_expr.label();
@@ -299,9 +410,11 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     .w(self.emit_expr_str_ast(&condition))
                     .wln(") {");
                 out.indent();
-                self.emit_expr_as_stmt_ast(out, body.into(), false);
+                self.emit_expr_as_stmt_ast(out, body.into(), option.non_last());
                 out.dedent();
                 out.wln("}");
+
+                EmittedExprInfo::non_diverging()
             }
             ast::Expr::ForExpr(for_expr) => {
                 let label = for_expr.label();
@@ -321,9 +434,11 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     .wln(") {");
                 out.indent();
                 self.emit_let_stmt(out, &pat, code!(&temp_name), Self::emit_unreachable);
-                self.emit_expr_as_stmt_ast(out, body.into(), false);
+                self.emit_expr_as_stmt_ast(out, body.into(), option.non_last());
                 out.dedent();
                 out.wln("}");
+
+                EmittedExprInfo::non_diverging()
             }
             // TODO? While and For
             ast::Expr::MatchExpr(match_expr) => {
@@ -333,6 +448,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 out.w("switch (").w(scrutinee).wln(") {");
                 out.indent();
 
+                let mut result = EmittedExprInfo::diverging();
                 for arm in arms.arms() {
                     // Emit pattern check
                     let pat_cs = self.emit_pattern_ast(&arm.pat().unwrap());
@@ -344,14 +460,20 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     }
                     out.wln(":{");
                     out.indent();
-                    self.emit_expr_as_stmt_ast(out, arm.expr().unwrap(), returning);
-                    out.wln("break;");
+                    let arm_res =
+                        self.emit_expr_as_stmt_ast(out, arm.expr().unwrap(), option.clone());
+                    if !arm_res.diverging {
+                        out.wln("break;");
+                    }
+                    result &= arm_res;
                     out.dedent();
                     out.wln("}");
                 }
+                out.wln("default: throw new System.NullReferenceException();");
                 out.dedent();
 
                 out.wln("}");
+                result
             }
             ast::Expr::BreakExpr(break_expr) => {
                 let label = break_expr.lifetime();
@@ -364,8 +486,10 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 if let Some(e) = break_expr {
                     let val = self.emit_expr_str_ast(&e);
                     out.w("/* break ").w(val).wln(" */"); // TODO: break-with-value
+                    EmittedExprInfo::non_diverging()
                 } else {
                     out.wln(format!("break{};", label_str));
+                    EmittedExprInfo::diverging()
                 }
             }
             ast::Expr::ContinueExpr(continue_expr) => {
@@ -375,19 +499,38 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     .map(|l| format!(" /*{}*/", self.label_name(l)))
                     .unwrap_or_default();
                 out.wln(format!("continue{};", label_str));
+                EmittedExprInfo::diverging()
             }
 
             ast::Expr::AwaitExpr(await_expr) => {
                 let inner_str = self.emit_expr_str_ast(&await_expr.expr().unwrap());
-                out.wln(code!("await ", inner_str, ";"));
+                if option.returning {
+                    out.wln(code!("return await ", inner_str, ";"));
+                    EmittedExprInfo::diverging()
+                } else {
+                    out.wln(code!("await ", inner_str, ";"));
+                    EmittedExprInfo::non_diverging()
+                }
             }
             _ => {
                 // Generic expression: emit as expression statement
                 let s = self.emit_expr_str_ast_inner(&expr, true);
-                if !s.is_empty() && s != "()".into() {
+                if option.returning && !self.returning_type().is_unit() {
+                    out.w("return ").w(s).wln(";");
+                    EmittedExprInfo::diverging()
+                } else {
                     out.w(s).wln(";");
+                    EmittedExprInfo::non_diverging() // TODO: emit_expr_str_ast_inner's diverging
                 }
             }
+        }
+    }
+
+    fn emit_return_void(&self, out: &mut Code) {
+        if self.is_async() {
+            out.wln("return default(global::System.ValueTuple); // void");
+        } else {
+            out.wln("return;");
         }
     }
 
@@ -419,8 +562,8 @@ impl<'g, 'db> BodyGen<'g, 'db> {
         out: &mut Code,
         statements: impl IntoIterator<Item = ast::Stmt>,
         tail: Option<ast::Expr>,
-        returning: bool,
-    ) {
+        option: ExprGenOption,
+    ) -> EmittedExprInfo {
         for stmt in statements {
             match stmt {
                 ast::Stmt::LetStmt(let_stmt) => {
@@ -434,7 +577,11 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         if let Some(else_branch) = else_branch {
                             self.emit_let_stmt(out, &pat, init_str, |this, out| {
                                 out.wln("{").indent();
-                                this.emit_expr_as_stmt_ast(out, else_branch.into(), returning);
+                                this.emit_expr_as_stmt_ast(
+                                    out,
+                                    else_branch.into(),
+                                    option.non_last(),
+                                );
                                 out.dedent();
                                 out.wln("}");
                             });
@@ -451,8 +598,9 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     }
                 }
                 ast::Stmt::ExprStmt(expr_stmt) => {
-                    self.emit_expr_as_stmt_ast(out, expr_stmt.expr().unwrap(), returning);
+                    self.emit_expr_as_stmt_ast(out, expr_stmt.expr().unwrap(), option.non_last());
                 }
+
                 ast::Stmt::Item(ast::Item::Fn(fn_)) => {
                     let f = self.sem.to_def(&fn_).unwrap();
                     out.wln(format!("// inner fn: {}", f.name(self.db).as_str()));
@@ -487,19 +635,9 @@ impl<'g, 'db> BodyGen<'g, 'db> {
         }
 
         if let Some(tail_expr) = tail {
-            let has_value = (self.sem.type_of_expr(&tail_expr))
-                .map(|x| x.original)
-                .is_some_and(|ty| !ty.is_unit() && !ty.is_never());
-            if returning && has_value {
-                if !self.check_cfg(&tail_expr) {
-                    return;
-                }
-                out.w("return ")
-                    .w(self.emit_expr_str_ast(&tail_expr))
-                    .wln(";");
-            } else {
-                self.emit_expr_as_stmt_ast(out, tail_expr, returning);
-            }
+            self.emit_expr_as_stmt_ast(out, tail_expr, option)
+        } else {
+            EmittedExprInfo::non_diverging()
         }
     }
 
@@ -1148,12 +1286,27 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     }
                 }
 
+                let type_of_expr = self.type_of_expr(expr).adjusted();
+                assert!(type_of_expr.impls_fnonce(self.db));
+                let output = type_of_expr
+                    .normalize_trait_assoc_type(
+                        self.db,
+                        &[],
+                        self.lang_items.FnOnceOutput().unwrap(),
+                    )
+                    .expect("No output for fn");
+                let output = output.resolve_associated_type(self.db);
+                let _scope = self.new_ctx(CodeContext {
+                    is_async: false, // TODO
+                    returning: output,
+                });
+
                 if let ast::Expr::BlockExpr(block) = closure.body().unwrap() {
                     self.emit_block_contents(
                         &mut body_block,
                         block.statements(),
                         block.tail_expr(),
-                        true,
+                        ExprGenOption::returning(),
                     );
                     code!(
                         "(",
@@ -1513,7 +1666,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
     /// Emit a pattern as a condition check against a scrutinee expression.
     fn emit_pattern_ast(&self, pat: &ast::Pat) -> Code {
         match pat {
-            ast::Pat::WildcardPat(_w) => "var _".into(),
+            ast::Pat::WildcardPat(_w) => "{} _".into(),
             ast::Pat::IdentPat(ident_pat)
                 if let Some(const_ref) = self.sem.resolve_bind_pat_to_const(ident_pat) =>
             {
