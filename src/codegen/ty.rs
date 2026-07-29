@@ -89,7 +89,7 @@ impl<'db> CodeGenerator<'db> {
                 .collect::<HashSet<_>>();
             for &trait_ in &self.trait_first_traits {
                 if traits.contains(&trait_) {
-                    return self.cs_path_with_args(trait_, [None; 0]);
+                    return self.cs_path_with_args(trait_, [ty.clone()]);
                 }
             }
         }
