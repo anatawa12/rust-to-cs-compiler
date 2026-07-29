@@ -588,7 +588,7 @@ impl<'db> CodeGenerator<'db> {
         let generics = generic_args(
             "".into(),
             self.map_cs_type_param_source(
-                &self.generic_params_cs_sources(f.into()),
+                &self.generic_params_cs_sources(f.into(), &[]),
                 &generic_types(&self_def.params0(db))
                     .map(|param| param.ty(db))
                     .collect::<Vec<_>>(),
@@ -637,24 +637,4 @@ fn generic_args(mut base: String, args: impl IntoIterator<Item = impl AsRef<str>
     }
 
     base
-}
-
-/// The function to be used for new_associated_type
-fn bounds_provider<'db>(
-    ty: &hir::Type<'db>,
-    db: &'db dyn HirDatabase,
-) -> Vec<(hir::Trait, Vec<hir::Type<'db>>)> {
-    if let Some((param, _)) = ty.as_assoc_of_type_param(db) {
-        param
-            .trait_bounds_of_nested_type_with_args(ty, db)
-            .left()
-            .unwrap_or(vec![])
-    } else if let Some(param) = ty.as_type_param(db) {
-        param
-            .trait_bounds_of_nested_type_with_args(ty, db)
-            .left()
-            .unwrap_or(vec![])
-    } else {
-        vec![]
-    }
 }

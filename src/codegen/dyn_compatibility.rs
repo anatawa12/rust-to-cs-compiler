@@ -1,5 +1,5 @@
+use crate::codegen::CodeGenerator;
 use crate::codegen::ty::{generic_types, includes_type_in_type};
-use crate::codegen::{CodeGenerator, bounds_provider};
 use hir::db::HirDatabase;
 use itertools::Either;
 use ra_internal::*;
@@ -9,7 +9,7 @@ use tracing::trace;
 use crate::codegen::simple_extensions::*;
 use crate::codegen::ty::trait_assoc_types::collect_assoc_type_params;
 pub use hir::MethodViolationCode;
-use hir::{HasCrate, sym};
+use hir::{HasContainer, HasCrate, sym};
 
 impl<'db> CodeGenerator<'db> {
     pub fn with_self_in_cs(&self, trait_: hir::Trait) -> bool {
@@ -187,9 +187,26 @@ fn includes_type_in_generic_params_cs_constraints<'db>(
             })
         })
         .flat_map(|(param, aliases)| {
-            let param_type = param
-                .ty(db)
-                .new_associated_type(&aliases, db, bounds_provider);
+            let param_type = aliases
+                .iter()
+                .fold(param.ty(db), |ty, &(alias, ref generics)| {
+                    let generics = generics.iter().flatten().cloned().collect::<Vec<_>>();
+                    ty.normalize_trait_assoc_type(db, &generics, alias)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "Unable to resolve {}::{} of {} with {:?}",
+                                variant_or_none!(alias.container(db), hir::ItemContainer::Trait)
+                                    .unwrap()
+                                    .debug_display(db),
+                                alias.name(db).as_str(),
+                                ty.debug_display(db),
+                                generics
+                                    .iter()
+                                    .map(|x| x.debug_display(db))
+                                    .collect::<Vec<_>>()
+                            )
+                        })
+                });
 
             match param.trait_bounds_of_nested_type_with_args(&param_type, db) {
                 Either::Right(_) => Vec::new(),

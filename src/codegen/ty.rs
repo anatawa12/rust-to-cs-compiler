@@ -81,6 +81,24 @@ impl<'db> CodeGenerator<'db> {
 
         let mapped = self.type_map.map_type_recursively(ty, db);
         let ty = mapped.as_ref().unwrap_or(ty);
+        let ty = &{
+            fn resolve_associated_type<'db>(
+                ty: Type<'db>,
+                db: &'db dyn HirDatabase,
+            ) -> hir::Type<'db> {
+                let Some((self_ty, args, alias)) = ty.as_associated_type() else {
+                    return ty;
+                };
+                let args = args.into_iter().flatten().collect::<Vec<_>>();
+                resolve_associated_type(self_ty, db)
+                    .normalize_trait_assoc_type(db, &args[1..], alias)
+                    .unwrap_or(ty)
+            }
+            resolve_associated_type(ty.clone(), db)
+        };
+        // our resolve_associated_type is better than normalize_trait_assoc_type handling
+        // associated types of return place impl traits so we still use resolve_associated_type
+        // after resolve_associated_type
         let ty = &ty.resolve_associated_type(db);
 
         if !option.is_static_access && !option.is_static_container && !option.is_constructing {
@@ -176,7 +194,7 @@ impl<'db> CodeGenerator<'db> {
 
             cs_name
         } else if let Some((param, aliases)) = ty.as_assoc_of_type_param(db) {
-            if is_omit_trait_assoc_type(db, *aliases.last().unwrap()) {
+            if is_omit_trait_assoc_type(db, aliases.last().unwrap().0) {
                 let mut traits = param
                     .trait_bounds_of_nested_type_with_args(ty, db)
                     .expect_left("Bounds of ArgOnlyTrait is projection");
@@ -191,7 +209,7 @@ impl<'db> CodeGenerator<'db> {
                 self.rust_type_to_cs_options(&param.ty(db), CsTypeOption::no_special())
             };
 
-            for alias in aliases {
+            for (alias, _) in aliases {
                 type_name.push('_');
                 type_name.push_str(alias.name(db).as_str());
             }
@@ -229,15 +247,6 @@ impl<'db> CodeGenerator<'db> {
         } else if ty.is_fn() || ty.is_closure() {
             // Closure types, fn pointers, etc. — use Action/Func
             "Action".to_string()
-        } else if let normalized = ty.resolve_associated_type(db)
-            && &normalized != ty
-        {
-            tracing::debug!(
-                "Normalized! {} => {} ({normalized:?})\n",
-                ty.debug_display(self.db),
-                normalized.debug_display(self.db)
-            );
-            self.rust_type_to_cs(&normalized)
         } else {
             eprintln!(
                 "Unsupported type: {}: {ty:?}\n",
@@ -347,10 +356,10 @@ impl<'db> CodeGenerator<'db> {
         let db = self.db;
         let params = &def.params0(db);
         self.register_special_impls(params);
-        let sources = self.generic_params_cs_sources(def);
         let instances = generic_types(params)
             .map(|param| param.ty(db))
             .collect::<Vec<_>>();
+        let sources = self.generic_params_cs_sources(def, &instances);
         let type_params = self
             .map_cs_type_param_source(&sources, &instances)
             .collect();
@@ -431,7 +440,7 @@ impl<'db> CodeGenerator<'db> {
 
     pub fn generic_params_cs_constraints(
         &self,
-        cs_sources: &[generic_params::CsTypeParamSource],
+        cs_sources: &[generic_params::CsTypeParamSource<'db>],
         params: &[hir::GenericParam],
     ) -> Vec<String> {
         let db = self.db;
@@ -516,18 +525,16 @@ impl<'db> CodeGenerator<'db> {
                 let self_ty = &args[0];
                 let parameters = args[1].tuple_fields(db);
                 let output = self_ty
-                    .normalize_trait_assoc_type(db, args, lang_items.FnOnceOutput().unwrap())
+                    .normalize_trait_assoc_type(db, &args[1..], lang_items.FnOnceOutput().unwrap())
                     .expect("No output for fn");
-                let output = output.resolve_associated_type(db);
 
                 return SpecialImplBounds::Func(output, parameters);
             } else if Some(trait_) == lang_items.Future() {
                 assert_eq!(args.len(), 1); // one for self
                 let self_ty = &args[0];
                 let output = self_ty
-                    .normalize_trait_assoc_type(db, args, lang_items.FutureOutput().unwrap())
+                    .normalize_trait_assoc_type(db, &args[1..], lang_items.FutureOutput().unwrap())
                     .expect("No output for fn");
-                let output = output.resolve_associated_type(db);
 
                 return SpecialImplBounds::Future(output);
             }
@@ -743,15 +750,16 @@ impl<'db> CodeGenerator<'db> {
         args: impl IntoIterator<Item = impl Into<Option<hir::Type<'db>>>>,
     ) -> String {
         let as_def = value.into();
+        let generics = args
+            .into_iter()
+            .filter_map(|x| x.into())
+            .collect::<Vec<_>>();
 
         generic_args(
             value.cs_path(self),
             self.map_cs_type_param_source(
-                &self.generic_params_cs_sources(as_def),
-                &args
-                    .into_iter()
-                    .filter_map(|x| x.into())
-                    .collect::<Vec<_>>(),
+                &self.generic_params_cs_sources(as_def, &generics),
+                &generics,
             ),
         )
     }
@@ -762,8 +770,6 @@ pub fn includes_type_in_type<'db>(
     db: &'db dyn HirDatabase,
     cond: &impl Fn(&hir::Type<'db>) -> bool,
 ) -> bool {
-    let ty = &ty.resolve_associated_type(db);
-
     if cond(ty) {
         return true;
     }

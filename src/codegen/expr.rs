@@ -1346,7 +1346,6 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         self.lang_items.FnOnceOutput().unwrap(),
                     )
                     .expect("No output for fn");
-                let output = output.resolve_associated_type(self.db);
                 let _scope = self.new_ctx(CodeContext {
                     is_async: false, // TODO
                     returning: output,

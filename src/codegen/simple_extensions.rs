@@ -46,11 +46,14 @@ pub trait TypeExt<'db> {
     fn expect_adt_with_args(&self) -> (Adt, Vec<Option<Type<'db>>>);
     fn expect_adt_of(&self, adt: Adt) -> Vec<Type<'db>>;
 
-    /// Returns Some of this type is `<SomeParam as Trait>::AssociatedType` or nested it
+    /// Returns Some if this type is `<SomeParam as Trait>::AssociatedType` or nested it
     fn as_assoc_of_type_param(
         &self,
         db: &dyn HirDatabase,
-    ) -> Option<(hir::TypeParam, Vec<hir::TypeAlias>)>;
+    ) -> Option<(
+        hir::TypeParam,
+        Vec<(hir::TypeAlias, Vec<Option<hir::Type<'db>>>)>,
+    )>;
 }
 
 impl<'db> TypeExt<'db> for Type<'db> {
@@ -71,12 +74,15 @@ impl<'db> TypeExt<'db> for Type<'db> {
     fn as_assoc_of_type_param(
         &self,
         db: &dyn HirDatabase,
-    ) -> Option<(hir::TypeParam, Vec<hir::TypeAlias>)> {
+    ) -> Option<(
+        hir::TypeParam,
+        Vec<(hir::TypeAlias, Vec<Option<hir::Type<'db>>>)>,
+    )> {
         let mut cur = self.clone();
         let mut aliases = vec![];
 
-        while let Some((self_ty, _, alias)) = cur.as_associated_type() {
-            aliases.push(alias);
+        while let Some((self_ty, generics, alias)) = cur.as_associated_type() {
+            aliases.push((alias, generics));
             cur = self_ty;
         }
 

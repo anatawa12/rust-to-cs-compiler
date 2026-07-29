@@ -1,20 +1,33 @@
+use crate::codegen::CodeGenerator;
 use crate::codegen::simple_extensions::*;
 use crate::codegen::ty::trait_assoc_types::collect_assoc_type_params;
 use crate::codegen::ty::{CsTypeOption, generic_types};
-use crate::codegen::{CodeGenerator, bounds_provider};
 use hir::db::HirDatabase;
+use hir::{HasContainer, Type, TypeAlias};
 use ra_internal::type_alias::TypeAliasExt;
 use ra_internal::*;
 
 #[allow(clippy::enum_variant_names)]
-pub enum CsTypeParamSource {
+pub enum CsTypeParamSource<'db> {
     TypeParam(usize),
     TraitStaticTypeParam(usize),
-    AliasOfParam(usize, Vec<hir::TypeAlias>),
-    TraitStaticAliasOfParam(usize, Vec<hir::TypeAlias>),
+    AliasOfParam(usize, Vec<TraitTypeAlias<'db>>),
+    TraitStaticAliasOfParam(usize, Vec<TraitTypeAlias<'db>>),
 }
 
-impl CsTypeParamSource {
+#[derive(Clone)]
+pub struct TraitTypeAlias<'db> {
+    alias: hir::TypeAlias,
+    generics: Vec<hir::Type<'db>>,
+}
+
+impl<'db> TraitTypeAlias<'db> {
+    fn new(alias: TypeAlias, generics: Vec<hir::Type<'db>>) -> Self {
+        Self { alias, generics }
+    }
+}
+
+impl CsTypeParamSource<'_> {
     pub fn index(&self) -> usize {
         match *self {
             CsTypeParamSource::TypeParam(idx) => idx,
@@ -36,7 +49,11 @@ impl CsTypeParamSource {
 }
 
 impl<'db> CodeGenerator<'db> {
-    pub fn generic_params_cs_sources(&self, def: hir::GenericDef) -> Vec<CsTypeParamSource> {
+    pub fn generic_params_cs_sources(
+        &self,
+        def: hir::GenericDef,
+        generics: &[Type<'db>],
+    ) -> Vec<CsTypeParamSource<'db>> {
         let db = self.db;
 
         let mut type_params = Vec::new();
@@ -64,6 +81,12 @@ impl<'db> CodeGenerator<'db> {
 
             for instance in collect_assoc_type_params(param, param.ty(db), db) {
                 let (param_instance, aliases) = instance.as_assoc_of_type_param(db).unwrap();
+                let aliases = aliases
+                    .into_iter()
+                    .map(|(alias, generics)| {
+                        TraitTypeAlias::new(alias, generics.into_iter().flatten().collect())
+                    })
+                    .collect::<Vec<_>>();
 
                 assert_eq!(param_instance, param);
 
@@ -85,10 +108,16 @@ impl<'db> CodeGenerator<'db> {
 
         if let hir::GenericDef::Trait(trait_) = def {
             for alias in trait_.assoc_types_for_cs(db) {
-                type_params.push(CsTypeParamSource::AliasOfParam(0, vec![alias]));
+                type_params.push(CsTypeParamSource::AliasOfParam(
+                    0,
+                    vec![TraitTypeAlias::new(alias, generics[1..].to_vec())],
+                ));
 
                 if alias.bounds(db).iter().any(|&(t, _)| t.needs_statics(db)) {
-                    type_params.push(CsTypeParamSource::TraitStaticAliasOfParam(0, vec![alias]));
+                    type_params.push(CsTypeParamSource::TraitStaticAliasOfParam(
+                        0,
+                        vec![TraitTypeAlias::new(alias, generics[1..].to_vec())],
+                    ));
                 }
             }
         }
@@ -98,7 +127,7 @@ impl<'db> CodeGenerator<'db> {
 
     pub fn map_cs_type_param_source(
         &self,
-        params: &[CsTypeParamSource],
+        params: &[CsTypeParamSource<'db>],
         instances: &[hir::Type<'db>],
     ) -> impl Iterator<Item = String> {
         (params.iter()).map(|x| {
@@ -111,7 +140,7 @@ impl<'db> CodeGenerator<'db> {
 }
 
 pub fn resolve_cs_type_param_source<'db>(
-    source: &CsTypeParamSource,
+    source: &CsTypeParamSource<'db>,
     generic_types: &[hir::Type<'db>],
     db: &'db dyn HirDatabase,
 ) -> hir::Type<'db> {
@@ -119,9 +148,32 @@ pub fn resolve_cs_type_param_source<'db>(
         CsTypeParamSource::TypeParam(i) | CsTypeParamSource::TraitStaticTypeParam(i) => {
             generic_types[i].clone()
         }
-        CsTypeParamSource::AliasOfParam(i, ref alias)
-        | CsTypeParamSource::TraitStaticAliasOfParam(i, ref alias) => {
-            generic_types[i].new_associated_type(alias, db, bounds_provider)
+        CsTypeParamSource::AliasOfParam(i, ref aliases)
+        | CsTypeParamSource::TraitStaticAliasOfParam(i, ref aliases) => {
+            let mut ty = generic_types[i].clone();
+            for &TraitTypeAlias {
+                alias,
+                ref generics,
+            } in aliases
+            {
+                ty = ty
+                    .normalize_trait_assoc_type(db, generics, alias)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "Unable to resolve {}::{} of {} with {:?}",
+                            variant_or_none!(alias.container(db), hir::ItemContainer::Trait)
+                                .unwrap()
+                                .debug_display(db),
+                            alias.name(db).as_str(),
+                            ty.debug_display(db),
+                            generics
+                                .iter()
+                                .map(|x| x.debug_display(db))
+                                .collect::<Vec<_>>()
+                        )
+                    });
+            }
+            ty
         }
     }
 }

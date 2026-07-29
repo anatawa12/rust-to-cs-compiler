@@ -15,7 +15,7 @@ pub enum ResolvedFunction<'db> {
         self_ty: hir::Type<'db>,
         trait_: Option<TraitRef<'db>>,
         function_name: String,
-        generic_sources: Vec<CsTypeParamSource>,
+        generic_sources: Vec<CsTypeParamSource<'db>>,
         generic_args: Vec<hir::Type<'db>>,
         args_map: Option<Vec<ArgSource>>,
     },
@@ -23,13 +23,13 @@ pub enum ResolvedFunction<'db> {
         self_ty: hir::Type<'db>,
         trait_: Option<TraitRef<'db>>,
         function_name: String,
-        generic_sources: Vec<CsTypeParamSource>,
+        generic_sources: Vec<CsTypeParamSource<'db>>,
         generic_args: Vec<hir::Type<'db>>,
         args_map: Option<(ArgSource, Vec<ArgSource>)>,
     },
     ModuleFunction {
         function_path: String,
-        generic_sources: Vec<CsTypeParamSource>,
+        generic_sources: Vec<CsTypeParamSource<'db>>,
         generic_args: Vec<hir::Type<'db>>,
         args_map: Option<Vec<ArgSource>>,
     },
@@ -222,7 +222,7 @@ impl<'db> CodeGenerator<'db> {
                         self_ty,
                         trait_: None,
                         function_name: self.function_name(f),
-                        generic_sources: self.generic_params_cs_sources(f.into()),
+                        generic_sources: self.generic_params_cs_sources(f.into(), &f_args),
                         generic_args: f_args,
                         args_map: None,
                     }
@@ -231,7 +231,7 @@ impl<'db> CodeGenerator<'db> {
                         self_ty,
                         trait_: None,
                         function_name: self.function_name(f),
-                        generic_sources: self.generic_params_cs_sources(f.into()),
+                        generic_sources: self.generic_params_cs_sources(f.into(), &f_args),
                         generic_args: f_args,
                         args_map: None,
                     }
@@ -243,7 +243,7 @@ impl<'db> CodeGenerator<'db> {
                         self_ty: parent_args.as_ref().unwrap()[0].clone(),
                         trait_: Some((trait_, parent_args.unwrap())),
                         function_name: self.function_name(f),
-                        generic_sources: self.generic_params_cs_sources(f.into()),
+                        generic_sources: self.generic_params_cs_sources(f.into(), &f_args),
                         generic_args: f_args,
                         args_map: None,
                     }
@@ -252,7 +252,7 @@ impl<'db> CodeGenerator<'db> {
                         self_ty: parent_args.as_ref().unwrap()[0].clone(),
                         trait_: Some((trait_, parent_args.unwrap())),
                         function_name: self.function_name(f),
-                        generic_sources: self.generic_params_cs_sources(f.into()),
+                        generic_sources: self.generic_params_cs_sources(f.into(), &f_args),
                         generic_args: f_args,
                         args_map: None,
                     }
@@ -264,7 +264,7 @@ impl<'db> CodeGenerator<'db> {
                 path.push_str(&self.function_name(f));
                 ResolvedFunction::ModuleFunction {
                     function_path: path,
-                    generic_sources: self.generic_params_cs_sources(f.into()),
+                    generic_sources: self.generic_params_cs_sources(f.into(), &f_args),
                     generic_args: f_args,
                     args_map: None,
                 }
