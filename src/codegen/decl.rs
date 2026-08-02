@@ -3,7 +3,7 @@ use crate::codegen::expr::ItemInBody;
 use crate::codegen::item_exclusion::{is_r2cs_native, should_emit};
 use crate::codegen::simple_extensions::*;
 use crate::codegen::ty::generic_types;
-use hir::{AssocItem, HasContainer, Impl, Trait};
+use hir::{AssocItem, Crate, HasContainer, HasCrate, Impl, Trait, Type};
 use itertools::Itertools;
 use ra_internal::function::FunctionExt;
 use ra_internal::*;
@@ -66,7 +66,7 @@ impl<'db> CodeGenerator<'db> {
             match item {
                 AssocItem::Function(f) => {
                     if f.has_self_param(db) {
-                        self.emit_function_signature(out, f, "", "", CsFunctionType::Normal, |x| x);
+                        self.emit_function_signature(out, f, "", "", CsFunctionType::Normal, None);
                         out.wln(";");
                     }
                 }
@@ -112,7 +112,7 @@ impl<'db> CodeGenerator<'db> {
                         "",
                         "",
                         CsFunctionType::TraitStaticStruct,
-                        |x| x,
+                        None,
                     );
                     out.wln(";");
                 }
@@ -168,7 +168,7 @@ impl<'db> CodeGenerator<'db> {
 
         if is_r2cs_native(f, db) {
             writeln!(out, "// [r2cs_native] - add implementation in r2CsNative/",);
-            self.emit_function_signature(out, f, "public ", "partial ", cs_type, |x| x);
+            self.emit_function_signature(out, f, "public ", "partial ", cs_type, None);
             out.wln(";");
             return;
         }
@@ -182,7 +182,7 @@ impl<'db> CodeGenerator<'db> {
             "public ",
             if is_async { "async " } else { "" },
             cs_type,
-            |x| x,
+            None,
         );
         out.wln("");
         out.open_brace();
@@ -205,7 +205,7 @@ impl<'db> CodeGenerator<'db> {
         access: &str,
         additional_modifier: &str,
         function_type: CsFunctionType,
-        type_mapper: impl Fn(hir::Type<'db>) -> hir::Type<'db>,
+        instanciate: Option<(&[hir::Type<'db>], hir::Crate)>,
     ) {
         let db = self.db;
 
@@ -213,7 +213,25 @@ impl<'db> CodeGenerator<'db> {
         let generics = self.format_generics(&tp_names);
 
         let is_async = f.is_async(db);
-        let ret_ty = type_mapper(f.async_ret_type(db).unwrap_or(f.ret_type(db)));
+        //f.ret_type_with_args()
+        let ret_ty = if let Some((generics, _)) = instanciate {
+            f.ret_type_with_args(db, generics.iter().cloned())
+        } else {
+            f.ret_type(db)
+        };
+        let ret_ty = if f.is_async(db) {
+            ret_ty
+                .normalize_trait_assoc_type(db, &[], self.lang_items.FutureOutput().unwrap())
+                .unwrap()
+        } else {
+            ret_ty
+        };
+        let ret_ty = if let Some((_, krate)) = instanciate {
+            ret_ty.with_crate(krate, db)
+        } else {
+            ret_ty
+        };
+        //type_mapper(f.async_ret_type(db).unwrap_or(f.ret_type(db)));
         let cs_ret = self.cs_ret_type(is_async, &ret_ty);
         let m_name = self.function_name(f);
         let has_self = f.has_self_param(db);
@@ -223,7 +241,7 @@ impl<'db> CodeGenerator<'db> {
             CsFunctionType::TraitDefaultImpl => true,
         };
         let is_static_kw = if is_static { "static " } else { "" };
-        let params = self.build_param_list(f, type_mapper, function_type);
+        let params = self.build_param_list(f, function_type, instanciate);
 
         write!(
             out,
@@ -363,14 +381,23 @@ impl<'db> CodeGenerator<'db> {
     fn build_param_list(
         &self,
         f: hir::Function,
-        type_mapper: impl Fn(hir::Type<'db>) -> hir::Type<'db>,
         function_type: CsFunctionType,
+        instanciate: Option<(&[Type<'db>], Crate)>,
     ) -> String {
         let db = self.db;
 
-        let params = f.params_without_self(db);
+        let params = if let Some((generic_types, _)) = instanciate {
+            f.params_without_self_with_args(db, generic_types.iter().cloned())
+        } else {
+            f.params_without_self(db)
+        };
+        //let params = f.params_without_self(db);
         let params = params.iter().enumerate().map(|(i, param)| {
-            let cs_ty = self.rust_type_to_cs(&type_mapper(param.ty().clone()));
+            let cs_ty = if let Some((_, krate)) = instanciate {
+                self.rust_type_to_cs(&param.ty().with_crate(krate, db))
+            } else {
+                self.rust_type_to_cs(param.ty())
+            };
             let p_name = param
                 .name(db)
                 .map(|n| names::local_name(n.as_str(), 0))

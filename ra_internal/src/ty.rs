@@ -5,6 +5,7 @@ use super::internal::{TyExt, TyFromType};
 use crate::DebugDisplay;
 use crate::ty::type_to_string::TypeToString;
 use hir::HasContainer;
+use hir_def::resolver::HasResolver;
 use hir_def::{GenericParamId, HasModule, TypeAliasId};
 use hir_ty::db::HirDatabase;
 use hir_ty::next_solver::{
@@ -51,6 +52,10 @@ pub trait TypeExt<'db> {
         args: &[hir::Type<'db>],
         db: &'db dyn HirDatabase,
     ) -> hir::Type<'db>;
+
+    /// In some functions like [hir::Function::ret_type_with_args], type env krate
+    /// can be incorrect and fails to [hir::Type::normalize_trait_assoc_type]. This can fix by replacing krate part
+    fn with_crate(&self, krate: hir::Crate, db: &'db dyn HirDatabase) -> hir::Type<'db>;
 
     // you should add members above this line. below this line is the debug utility
     /// Debug display the type with much information as possible
@@ -262,6 +267,15 @@ impl<'db> TypeExt<'db> for hir::Type<'db> {
         } else {
             self.derived(EarlyBinder::bind(self.ns_ty()).instantiate(interner, def_args.as_slice()))
         }
+    }
+
+    fn with_crate(&self, krate: hir::Crate, db: &'db dyn HirDatabase) -> Self {
+        let mut env = self.env();
+        let ty = self.ns_ty();
+        if env.krate.transitive_rev_deps(db).contains(&krate.base()) {
+            env.krate = krate.base();
+        }
+        hir::Type::from_ty_env(ty, env)
     }
 
     fn ty_string(&self, db: &'db dyn HirDatabase) -> impl std::fmt::Debug {

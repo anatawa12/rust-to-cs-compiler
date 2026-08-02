@@ -608,9 +608,14 @@ impl<'db> CodeGenerator<'db> {
             })
             .collect::<Vec<_>>()
             .join(", ");
-        self.emit_function_signature(out, f, "public ", "", function_type, |x| {
-            x.instantiate(f.into(), &type_args, db)
-        });
+        self.emit_function_signature(
+            out,
+            f,
+            "public ",
+            "",
+            function_type,
+            Some((&type_args, self.krate)),
+        );
         out.wln("");
         out.indent();
         out.wln(fcode!("=> {declared_class}.{f_name}{generics}({params});"));
