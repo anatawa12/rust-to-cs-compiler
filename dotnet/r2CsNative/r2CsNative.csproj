@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <Compile Remove="Out.bak.cs" />
+    <Compile Remove="Out.bak*.cs" />
   </ItemGroup>
 
 </Project>
