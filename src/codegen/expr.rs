@@ -17,7 +17,7 @@ use itertools::Either;
 use ra_internal::*;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::ops::{BitAnd, BitAndAssign, BitOr};
+use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign};
 use std::sync::atomic::AtomicUsize;
 use syntax::ast::{
     self, ArithOp, AstNode as _, HasArgList as _, HasLoopBody as _, LogicOp, RangeItem as _,
@@ -303,6 +303,12 @@ impl BitAndAssign for EmittedExprInfo {
     }
 }
 
+impl BitOrAssign<EmittedExprInfo> for EmittedExprInfo {
+    fn bitor_assign(&mut self, rhs: EmittedExprInfo) {
+        *self = *self | rhs
+    }
+}
+
 impl<'g, 'db> BodyGen<'g, 'db> {
     /// Emit an expression as a statement (with semicolon if needed).
     fn emit_expr_as_stmt_ast(
@@ -574,6 +580,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
         tail: Option<ast::Expr>,
         option: ExprGenOption,
     ) -> EmittedExprInfo {
+        let mut info = EmittedExprInfo::non_diverging();
         for stmt in statements {
             match stmt {
                 ast::Stmt::LetStmt(let_stmt) => {
@@ -608,7 +615,11 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     }
                 }
                 ast::Stmt::ExprStmt(expr_stmt) => {
-                    self.emit_expr_as_stmt_ast(out, expr_stmt.expr().unwrap(), option.non_last());
+                    info |= self.emit_expr_as_stmt_ast(
+                        out,
+                        expr_stmt.expr().unwrap(),
+                        option.non_last(),
+                    );
                 }
 
                 ast::Stmt::Item(ast::Item::Fn(fn_)) => {
@@ -645,10 +656,10 @@ impl<'g, 'db> BodyGen<'g, 'db> {
         }
 
         if let Some(tail_expr) = tail {
-            self.emit_expr_as_stmt_ast(out, tail_expr, option)
-        } else {
-            EmittedExprInfo::non_diverging()
+            info |= self.emit_expr_as_stmt_ast(out, tail_expr, option);
         }
+
+        info
     }
 
     pub fn emit_expr_str_ast(&self, expr: &ast::Expr) -> Code {
