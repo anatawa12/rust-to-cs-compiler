@@ -23,34 +23,34 @@ tracing-panic = "0.1.2"
 workspace = true
 
 [workspace]
-members = [".", "ra_internal"]
+members = [".", "ra_internal", "test_ra_analyze_only"]
 
 [workspace.lints.clippy]
 disallowed_methods = "deny"
 
 [workspace.dependencies]
 # ra-ap
-hir = { package = "ra_ap_hir", version = "0.0.331" }
-hir_def = { package = "ra_ap_hir_def", version = "0.0.331" }
-hir_ty = { package = "ra_ap_hir_ty", version = "0.0.331" }
-syntax = { package = "ra_ap_syntax", version = "0.0.331" }
-cfg = { package = "ra_ap_cfg", version = "0.0.331" }
-ide_db = { package = "ra_ap_ide_db", version = "0.0.331" }
-base_db = { package = "ra_ap_base_db", version = "0.0.331" }
-load-cargo = { package = "ra_ap_load-cargo", version = "0.0.331" }
-vfs = { package = "ra_ap_vfs", version = "0.0.331" }
-project_model = { package = "ra_ap_project_model", version = "0.0.331" }
+hir = { package = "ra_ap_hir", version = "0.0.343" }
+hir_def = { package = "ra_ap_hir_def", version = "0.0.343" }
+hir_ty = { package = "ra_ap_hir_ty", version = "0.0.343" }
+syntax = { package = "ra_ap_syntax", version = "0.0.343" }
+cfg = { package = "ra_ap_cfg", version = "0.0.343" }
+ide_db = { package = "ra_ap_ide_db", version = "0.0.343" }
+base_db = { package = "ra_ap_base_db", version = "0.0.343" }
+load-cargo = { package = "ra_ap_load-cargo", version = "0.0.343" }
+vfs = { package = "ra_ap_vfs", version = "0.0.343" }
+project_model = { package = "ra_ap_project_model", version = "0.0.343" }
 
 # ra-ap-rustc
-rustc_type_ir = { package = "ra-ap-rustc_type_ir", version = "0.160.0" }
-rustc_next_trait_solver = { package = "ra-ap-rustc_next_trait_solver", version = "0.160.0" }
+rustc_type_ir = { package = "ra-ap-rustc_type_ir", version = "0.165.0" }
+rustc_next_trait_solver = { package = "ra-ap-rustc_next_trait_solver", version = "0.165.0" }
 
 # ra base lib
-salsa = "0.26.2"
-salsa-macros = "0.26.2"
+salsa = "0.27.2"
+salsa-macros = "0.27.2"
 
 # other utils
-itertools = "0.14.0"
+itertools = "0.15.0"
 tracing = "0.1.44"
 
 [profile.release]

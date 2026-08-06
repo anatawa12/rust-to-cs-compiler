@@ -1,0 +1,19 @@
+[package]
+name = "test_ra_analyze_only"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+tracing-panic = "0.1.2"
+
+hir.workspace = true
+syntax.workspace = true
+cfg.workspace = true
+ide_db.workspace = true
+load-cargo.workspace = true
+vfs.workspace = true
+project_model.workspace = true
+
+[lints]
+workspace = true
