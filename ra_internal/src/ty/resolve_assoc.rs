@@ -1,15 +1,12 @@
-use crate::adt::AdtExt;
 use crate::debug::DebugDisplay;
 use crate::internal::{ParsedProjection, TyFromType, parse_bounds_for};
 use crate::ty::TypeExt;
 use ::hir;
-use hir_def::signatures::TypeAliasSignature;
 use hir_def::*;
-use hir_ty::GenericPredicates;
 use hir_ty::db::HirDatabase;
 use hir_ty::next_solver::*;
+use rustc_type_ir::AliasTyKind;
 use rustc_type_ir::inherent::{GenericArg as _, IntoKind};
-use rustc_type_ir::{AliasTyKind, Interner};
 use tracing::{debug, trace};
 
 /// This tries to resolve `<impl SomeTrait<Assoc = SomeType> as SomeTrait>::Assoc` to a simpler type

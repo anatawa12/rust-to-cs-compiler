@@ -3,7 +3,7 @@ use crate::codegen::expr::ItemInBody;
 use crate::codegen::item_exclusion::{is_r2cs_native, should_emit};
 use crate::codegen::simple_extensions::*;
 use crate::codegen::ty::generic_types;
-use hir::{AssocItem, Crate, HasContainer, HasCrate, Impl, Trait, Type};
+use hir::{AssocItem, Crate, HasContainer, Impl, Trait, Type};
 use itertools::Itertools;
 use ra_internal::function::FunctionExt;
 use ra_internal::*;

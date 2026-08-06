@@ -47,6 +47,7 @@ pub trait TypeExt<'db> {
     fn expect_adt_of(&self, adt: Adt) -> Vec<Type<'db>>;
 
     /// Returns Some if this type is `<SomeParam as Trait>::AssociatedType` or nested it
+    #[allow(clippy::type_complexity)]
     fn as_assoc_of_type_param(
         &self,
         db: &dyn HirDatabase,

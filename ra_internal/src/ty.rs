@@ -5,7 +5,6 @@ use super::internal::{TyExt, TyFromType};
 use crate::DebugDisplay;
 use crate::ty::type_to_string::TypeToString;
 use hir::HasContainer;
-use hir_def::resolver::HasResolver;
 use hir_def::{GenericParamId, HasModule, TypeAliasId};
 use hir_ty::db::HirDatabase;
 use hir_ty::next_solver::{

@@ -1110,7 +1110,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 }
                 Some(ast::BlockModifier::Async(_)) => {
                     let mut body_code = Code::new();
-                    let return_type = (self.type_of_expr(&expr))
+                    let return_type = (self.type_of_expr(expr))
                         .adjusted()
                         .future_output(self.db)
                         .unwrap();
@@ -1121,7 +1121,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                             is_async: true,
                             returning: return_type,
                         });
-                        self.emit_returning_block(&mut body_code, &block_expr);
+                        self.emit_returning_block(&mut body_code, block_expr);
                     }
 
                     code!(
