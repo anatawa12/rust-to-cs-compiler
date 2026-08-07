@@ -12,6 +12,7 @@ use ra_internal::adt::AdtExt;
 use ra_internal::function::FunctionExt;
 use ra_internal::generic_def::GenericDefExt as _;
 use ra_internal::*;
+use std::borrow::Borrow;
 use std::collections::HashSet;
 
 pub trait TraitExt {
@@ -45,6 +46,9 @@ pub trait TypeExt<'db> {
     #[allow(dead_code)]
     fn expect_adt_with_args(&self) -> (Adt, Vec<Option<Type<'db>>>);
     fn expect_adt_of(&self, adt: Adt) -> Vec<Type<'db>>;
+    fn try_instantiate(self, args: Option<impl IntoIterator<Item: Borrow<Type<'db>>>>)
+    -> Type<'db>;
+    fn try_with_owner(self, args: Option<impl Into<hir::GenericDef>>) -> Type<'db>;
 
     /// Returns Some if this type is `<SomeParam as Trait>::AssociatedType` or nested it
     #[allow(clippy::type_complexity)]
@@ -70,6 +74,19 @@ impl<'db> TypeExt<'db> for Type<'db> {
         assert_eq!(adt_of_ty, adt, "expected adt of {adt:?} but was {self:?}");
 
         types.into_iter().flatten().collect()
+    }
+
+    fn try_instantiate(
+        self,
+        args: Option<impl IntoIterator<Item: Borrow<Type<'db>>>>,
+    ) -> Type<'db> {
+        args.map(|args| self.instantiate(args))
+            .unwrap_or(self.clone())
+    }
+
+    fn try_with_owner(self, args: Option<impl Into<hir::GenericDef>>) -> Type<'db> {
+        args.map(|args| self.with_owner(args))
+            .unwrap_or(self.clone())
     }
 
     fn as_assoc_of_type_param(
@@ -144,15 +161,12 @@ impl TypeParamExt for hir::TypeParam {
                     // The t is expected to be associated type of self (generic of impl item) so
                     // making error types for impl generics is valid
                     let t_as_trait = t.instantiate(
-                        self_def,
-                        &generic_types(&GenericDef::from(impl_).params0(db))
+                        generic_types(&GenericDef::from(impl_).params0(db))
                             .map(|_| Type::error(db, impl_.krate(db)))
                             .chain(
                                 generic_types(&base.parent(db).params0(db))
                                     .map(|param| param.ty(db)),
-                            )
-                            .collect::<Vec<_>>(),
-                        db,
+                            ),
                     );
 
                     match base.trait_bounds_of_nested_type_with_args_self(&t_as_trait, db) {
@@ -163,7 +177,8 @@ impl TypeParamExt for hir::TypeParam {
 
                                 for (_, args) in &mut traits_base {
                                     for ty in args {
-                                        *ty = ty.instantiate(base.parent(db), &generic_args, db);
+                                        *ty = ty /*.with_owner(self_def)*/
+                                            .instantiate(&generic_args);
                                     }
                                 }
 
@@ -182,7 +197,6 @@ impl TypeParamExt for hir::TypeParam {
                 // use same bounds for the type. We add them
                 if let GenericDef::Adt(adt) = self.parent(db) {
                     let _scop = tracing::info_span!("adt", adt = %adt.debug_display(db)).entered();
-                    let self_def = self.parent(db);
 
                     let mut impl_bounds = vec![];
                     let adt_as_def = self.parent(db);
@@ -199,7 +213,6 @@ impl TypeParamExt for hir::TypeParam {
                                     && Some(trait_) != lang_items.Clone()
                                     && Some(trait_) != lang_items.Default()
                             })
-                            && let impl_as_def = GenericDef::from(impl_)
                             && adt_as_def.params0(db).len() == impl_self_args.len()
                             && let Some(impl_args_maps_adt) =
                                 adt.map_generics_to_impl_generics(impl_, &impl_self_args, db)
@@ -208,11 +221,7 @@ impl TypeParamExt for hir::TypeParam {
                                 .unwrap()
                                 .as_type_param(db)
                         {
-                            let t_as_impl = t.instantiate(
-                                self_def,
-                                &impl_self_args.into_iter().flatten().collect::<Vec<_>>(),
-                                db,
-                            );
+                            let t_as_impl = t.instantiate(impl_self_args.into_iter().flatten());
 
                             match type_param.trait_bounds_of_nested_type_with_args(&t_as_impl, db) {
                                 Either::Right(projection) => {
@@ -227,11 +236,7 @@ impl TypeParamExt for hir::TypeParam {
                                             .collect::<Vec<_>>();
                                         for (_, args) in &mut this_impl_bounds {
                                             for ty in args {
-                                                *ty = ty.instantiate(
-                                                    impl_as_def,
-                                                    &impl_args_maps_adt,
-                                                    db,
-                                                );
+                                                *ty = ty.instantiate(&impl_args_maps_adt);
                                             }
                                         }
                                     }
@@ -298,7 +303,7 @@ pub trait GenericDefExt: Copy {
 
     /// Only valid if this is associated item of an impl of a trait.
     fn type_args_maps_trait_to_this_impl<'db>(
-        &self,
+        self,
         db: &'db dyn HirDatabase,
         trait_ref: &hir::TraitRef<'db>,
     ) -> Vec<hir::Type<'db>>;
@@ -317,7 +322,7 @@ impl GenericDefExt for GenericDef {
             // derived Hash::hash so we retrieve the H from parameter instead of GenericDef
             let param = f.params_without_self(db).swap_remove(0);
             let param_type = param.ty();
-            let param_type = param_type.remove_ref().unwrap();
+            let param_type = param_type.as_reference().unwrap().0;
             let type_param = param_type
                 .as_type_param(db)
                 .unwrap_or_else(|| panic!("type {param_type:?} is not type_param"));
@@ -338,11 +343,12 @@ impl GenericDefExt for GenericDef {
     }
 
     fn type_args_maps_trait_to_this_impl<'db>(
-        &self,
+        self,
         db: &'db dyn HirDatabase,
         trait_ref: &hir::TraitRef<'db>,
     ) -> Vec<hir::Type<'db>> {
         (trait_ref.generic_types(db).flatten())
+            .map(|ty| ty.with_owner(self))
             .chain(generic_types(&self.params0(db)).map(|param| param.ty(db)))
             .collect::<Vec<_>>()
     }

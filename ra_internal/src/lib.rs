@@ -39,3 +39,4 @@ pub use crate::ImplExt as _;
 pub use crate::TraitExt as _;
 pub use crate::TypeExt as _;
 pub use crate::TypeParamExt as _;
+pub use internal::TypeOwnerId;

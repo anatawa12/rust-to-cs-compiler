@@ -5,7 +5,7 @@ use crate::codegen::ty::CsTypeOption;
 use crate::codegen::ty::generic_params::CsTypeParamSource;
 use hir::db::HirDatabase;
 use hir::{HasContainer, HasCrate, sym};
-use ra_internal::{LangItems, TypeExt};
+use ra_internal::LangItems;
 
 type TraitRef<'db> = (hir::Trait, Vec<hir::Type<'db>>);
 
@@ -214,8 +214,7 @@ impl<'db> CodeGenerator<'db> {
         // generic way
         match f.container(db) {
             hir::ItemContainer::Impl(impl_) => {
-                let self_ty =
-                    (impl_.self_ty(db)).instantiate(impl_.into(), &parent_args.unwrap(), db);
+                let self_ty = (impl_.self_ty(db)).instantiate(parent_args.as_ref().unwrap());
 
                 if f.self_param(db).is_some() {
                     ResolvedFunction::Method {
@@ -294,7 +293,7 @@ fn resolve_trait_impl<'db>(
                 .enumerate()
                 .filter(|(_, x)| matches!(x, hir::GenericParam::TypeParam(_)))
                 .flat_map(|(i, _)| trait_ref.get_type_argument(i))
-                .map(move |x| x.to_type(db).instantiate(impl_.into(), parent_args, db))
+                .map(move |x| x.instantiate(parent_args))
                 .collect(),
         )
     } else {

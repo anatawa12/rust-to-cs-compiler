@@ -704,7 +704,9 @@ impl<'db> CodeGenerator<'db> {
 
     pub fn enum_variant_cs2(&self, v: hir::EnumVariant, generic: Vec<Type<'db>>) -> String {
         let mut path = self.rust_type_to_cs_options(
-            &Adt::Enum(v.parent_enum(self.db)).ty_with_args(self.db, generic),
+            &Adt::Enum(v.parent_enum(self.db))
+                .ty(self.db)
+                .instantiate(generic),
             CsTypeOption::constructing(),
         );
         path.push('.');
@@ -715,7 +717,7 @@ impl<'db> CodeGenerator<'db> {
     pub fn constructable_name_cs(&self, c: &Constructable<'db>) -> String {
         match c.def {
             ConstructableDef::Struct(s) => self.rust_type_to_cs_options(
-                &Adt::Struct(s).ty_with_args(self.db, c.args.clone()),
+                &Adt::Struct(s).ty(self.db).instantiate(c.args.clone()),
                 CsTypeOption::constructing(),
             ),
             ConstructableDef::EnumVariant(v) => self.enum_variant_cs2(v, c.args.clone()),

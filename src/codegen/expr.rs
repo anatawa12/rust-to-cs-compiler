@@ -28,7 +28,7 @@ use syntax::ast::{BinaryOp, RangeOp, UnaryOp};
 pub struct BodyGen<'g, 'db> {
     cg: &'g CodeGenerator<'db>,
     /// Mapping from Local to the C# local name allocated for it.
-    locals: RefCell<HashMap<Local, String>>,
+    locals: RefCell<HashMap<Local<'db>, String>>,
     /// Counter per original Rust name for uniqueness.
     name_counts: RefCell<HashMap<String, usize>>,
     cs_type: CsFunctionType,
@@ -94,7 +94,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
         }
     }
 
-    fn alloc_binding_ast(&self, local: &Local) -> String {
+    fn alloc_binding_ast(&self, local: &Local<'db>) -> String {
         let rust_name = local.name(self.db).as_str().to_string();
         let mut name_counts = self.name_counts.borrow_mut();
         let count = name_counts.entry(rust_name.clone()).or_insert(0);
@@ -120,10 +120,10 @@ impl<'g, 'db> BodyGen<'g, 'db> {
     }
 
     fn label_name(&self, l: ast::Lifetime) -> String {
-        names::camel(&l.text().as_str()[1..])
+        names::camel(&l.text()[1..])
     }
 
-    fn add_local(&self, local: Local, name: String) {
+    fn add_local(&self, local: Local<'db>, name: String) {
         self.locals.borrow_mut().insert(local, name);
     }
 
@@ -211,15 +211,12 @@ impl<'g, 'db> BodyGen<'g, 'db> {
     #[tracing::instrument(skip_all)]
     pub fn emit_function_body(&self, f: ast::Fn, out: &mut Code) {
         let params = f.param_list().unwrap();
+        let f_def = self.sem.to_def(&f).unwrap();
         let _scope = self.new_ctx(CodeContext {
             is_async: self.is_async(),
-            returning: if self.is_async() {
-                (self.sem.to_def(&f).unwrap().ret_type(self.db))
-                    .future_output(self.db)
-                    .unwrap()
-            } else {
-                (self.sem.to_def(&f).unwrap()).ret_type(self.db)
-            },
+            returning: f_def
+                .async_ret_type(self.db)
+                .unwrap_or_else(|| f_def.ret_type(self.db)),
         });
         if let Some(self_param) = params.self_param() {
             match self.cs_type {
@@ -666,6 +663,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
         self.emit_expr_str_ast_inner(expr, false)
     }
 
+    #[tracing::instrument(skip_all, fields(expr_at = self.expr_location_ast(expr)))]
     pub fn emit_expr_str_ast_inner(&self, expr: &ast::Expr, statement: bool) -> Code {
         match expr {
             //Expr::Missing => "/* missing */default!".into(),
@@ -832,16 +830,17 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 let receiver_type = self.type_of_expr(&receiver_part);
                 let receiver = self.emit_expr_str_ast(&receiver_part);
                 let adjuster = if let Some(adjusted) = receiver_type.adjusted
-                    && std::iter::successors(receiver_type.original.remove_ref(), |c| {
-                        c.remove_ref()
-                    })
+                    && std::iter::successors(
+                        receiver_type.original.as_reference().map(|x| x.0),
+                        |c| c.as_reference().map(|x| x.0),
+                    )
                     .all(|remove_ref| adjusted != remove_ref)
                 {
                     tracing::trace!(
                         "adjusted type {original} to {adjusted} to access {name}",
                         original = receiver_type.original.debug_display(self.db),
                         adjusted = adjusted.debug_display(self.db),
-                        name = field_expr.name_ref().unwrap().text().as_str(),
+                        name = field_expr.name_ref().unwrap().text(),
                     );
                     ".m_Deref()"
                 } else {
@@ -918,7 +917,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                             "method call resolved to field at {}",
                             self.expr_location_ast(method_call)
                         );
-                        let method_cs = method_call.name_ref().unwrap().text().as_str().to_string();
+                        let method_cs = method_call.name_ref().unwrap().text().to_string();
                         let args = method_call
                             .arg_list()
                             .unwrap()
@@ -931,7 +930,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                             "Unresolved method call at {}",
                             self.expr_location_ast(method_call)
                         );
-                        let method_cs = method_call.name_ref().unwrap().text().as_str().to_string();
+                        let method_cs = method_call.name_ref().unwrap().text().to_string();
                         let args = method_call
                             .arg_list()
                             .unwrap()
@@ -1192,12 +1191,13 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     .fields()
                     .filter(|f| self.check_cfg(f))
                     .map(|f| {
-                        let cs_f = names::field_name(f.field_name().unwrap().text().as_str());
-                        let field = c.fields(self.db).into_iter().find(|x| {
-                            x.name(self.db).as_str() == f.field_name().unwrap().text().as_str()
-                        });
+                        let cs_f = names::field_name(f.field_name().unwrap().text());
+                        let field = c
+                            .fields(self.db)
+                            .into_iter()
+                            .find(|x| x.name(self.db).as_str() == f.field_name().unwrap().text());
                         let _cs_ty = field
-                            .map(|f| self.rust_type_to_cs(&f.ty(self.db).to_type(self.db)))
+                            .map(|f| self.rust_type_to_cs(&f.ty(self.db)))
                             .unwrap_or_else(|| "object /*unknown field type*/".into());
                         let val = self.emit_expr_str_ast(&f.expr().unwrap());
                         code!(cs_f, " = (", val, ")")
@@ -1563,6 +1563,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     ")"
                 )
             }
+            ast::Expr::IncludeBytesExpr(_) => "_".into(),
         }
     }
 
@@ -1866,7 +1867,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     code!(cs_type_name, "{", "}")
                 } else {
                     let pattern_codes = fields.iter().map(|field| {
-                        let field_name = field.field_name().unwrap().text().as_str().to_string();
+                        let field_name = field.field_name().unwrap().text().to_string();
                         let field_name_cs = names::field_name(&field_name);
                         if let Some(field_pat) = field.pat() {
                             code!(
@@ -1987,13 +1988,13 @@ impl<'g, 'db> BodyGen<'g, 'db> {
     }
 
     /// Collect all binding IDs in a pattern.
-    fn collect_bindings_in_pat_ast(&self, pat: &ast::Pat) -> Vec<Local> {
+    fn collect_bindings_in_pat_ast(&self, pat: &ast::Pat) -> Vec<Local<'db>> {
         let mut result = Vec::new();
         self.collect_bindings_recursive_ast(pat, &mut result);
         result
     }
 
-    fn collect_bindings_recursive_ast(&self, pat: &ast::Pat, result: &mut Vec<Local>) {
+    fn collect_bindings_recursive_ast(&self, pat: &ast::Pat, result: &mut Vec<Local<'db>>) {
         match pat {
             ast::Pat::IdentPat(ident_pat) if let Some(local) = self.sem.to_def(ident_pat) => {
                 result.push(local);

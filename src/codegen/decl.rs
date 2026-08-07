@@ -3,7 +3,7 @@ use crate::codegen::expr::ItemInBody;
 use crate::codegen::item_exclusion::{is_r2cs_native, should_emit};
 use crate::codegen::simple_extensions::*;
 use crate::codegen::ty::generic_types;
-use hir::{AssocItem, Crate, HasContainer, Impl, Trait, Type};
+use hir::{AssocItem, HasContainer, Impl, Trait, Type};
 use itertools::Itertools;
 use ra_internal::function::FunctionExt;
 use ra_internal::*;
@@ -205,7 +205,7 @@ impl<'db> CodeGenerator<'db> {
         access: &str,
         additional_modifier: &str,
         function_type: CsFunctionType,
-        instanciate: Option<(&[hir::Type<'db>], hir::Crate)>,
+        instanciate: Option<(&[hir::Type<'db>], hir::GenericDef)>,
     ) {
         let db = self.db;
 
@@ -213,25 +213,9 @@ impl<'db> CodeGenerator<'db> {
         let generics = self.format_generics(&tp_names);
 
         let is_async = f.is_async(db);
-        //f.ret_type_with_args()
-        let ret_ty = if let Some((generics, _)) = instanciate {
-            f.ret_type_with_args(db, generics.iter().cloned())
-        } else {
-            f.ret_type(db)
-        };
-        let ret_ty = if f.is_async(db) {
-            ret_ty
-                .normalize_trait_assoc_type(db, &[], self.lang_items.FutureOutput().unwrap())
-                .unwrap()
-        } else {
-            ret_ty
-        };
-        let ret_ty = if let Some((_, krate)) = instanciate {
-            ret_ty.with_crate(krate, db)
-        } else {
-            ret_ty
-        };
-        //type_mapper(f.async_ret_type(db).unwrap_or(f.ret_type(db)));
+        let ret_ty = (f.async_ret_type(db).unwrap_or_else(|| f.ret_type(db)))
+            .try_instantiate(instanciate.map(|x| x.0))
+            .try_with_owner(instanciate.map(|x| x.1));
         let cs_ret = self.cs_ret_type(is_async, &ret_ty);
         let m_name = self.function_name(f);
         let has_self = f.has_self_param(db);
@@ -382,19 +366,14 @@ impl<'db> CodeGenerator<'db> {
         &self,
         f: hir::Function,
         function_type: CsFunctionType,
-        instanciate: Option<(&[Type<'db>], Crate)>,
+        instanciate: Option<(&[Type<'db>], hir::GenericDef)>,
     ) -> String {
         let db = self.db;
 
-        let params = if let Some((generic_types, _)) = instanciate {
-            f.params_without_self_with_args(db, generic_types.iter().cloned())
-        } else {
-            f.params_without_self(db)
-        };
-        //let params = f.params_without_self(db);
+        let params = f.params_without_self(db);
         let params = params.iter().enumerate().map(|(i, param)| {
-            let cs_ty = if let Some((_, krate)) = instanciate {
-                self.rust_type_to_cs(&param.ty().with_crate(krate, db))
+            let cs_ty = if let Some((generics, krate)) = instanciate {
+                self.rust_type_to_cs(&param.ty().instantiate(generics).with_owner(krate))
             } else {
                 self.rust_type_to_cs(param.ty())
             };

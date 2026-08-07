@@ -392,9 +392,7 @@ impl<'db> CodeGenerator<'db> {
 
         // Fields
         for field in s.fields(db) {
-            let f_ty_ns = field.ty(db);
-            let f_ty = f_ty_ns.to_type(db);
-            let cs_ty = self.rust_type_to_cs(&f_ty);
+            let cs_ty = self.rust_type_to_cs(&field.ty(db));
             let f_name = names::field_name(field.name(db).as_str());
             out.wln(format!("public {} {} = default!;", cs_ty, f_name));
         }
@@ -412,9 +410,7 @@ impl<'db> CodeGenerator<'db> {
                     " ctor(",
                     join(
                         s.fields(db).iter().map(|field| {
-                            let f_ty_ns = field.ty(db);
-                            let f_ty = f_ty_ns.to_type(db);
-                            let cs_ty = self.rust_type_to_cs(&f_ty);
+                            let cs_ty = self.rust_type_to_cs(&field.ty(db));
                             let f_name = names::field_name(field.name(db).as_str());
                             code!(cs_ty, " ", f_name)
                         }),
@@ -504,7 +500,14 @@ impl<'db> CodeGenerator<'db> {
                 .filter_map(|x| x.as_function())
                 .filter(|f| !implemented_fns.contains(f.name(db).symbol()))
             {
-                self.emit_wrapper_fn(out, &trait_ref, f, &declared_class, CsFunctionType::Normal);
+                self.emit_wrapper_fn(
+                    out,
+                    &trait_ref,
+                    f,
+                    impl_,
+                    &declared_class,
+                    CsFunctionType::Normal,
+                );
             }
         }
 
@@ -531,7 +534,7 @@ impl<'db> CodeGenerator<'db> {
             && self.lang_items.PartialEq() == Some(trait_ref.trait_())
         {
             let self_ty = impl_.self_ty(db);
-            let arg_ty = trait_ref.get_type_argument(1).unwrap().to_type(db);
+            let arg_ty = trait_ref.get_type_argument(1).unwrap();
             let self_ty_cs = self.rust_type_to_cs(&self_ty);
             let arg_ty_cs = self.rust_type_to_cs(&arg_ty);
             out.wln(fcode!("public static bool operator==({self_ty_cs} self, {arg_ty_cs} right) => self.m_Eq(right);"));
@@ -563,6 +566,7 @@ impl<'db> CodeGenerator<'db> {
                     out,
                     &trait_ref,
                     f,
+                    impl_,
                     cs_name,
                     CsFunctionType::TraitStaticStruct,
                 );
@@ -578,6 +582,7 @@ impl<'db> CodeGenerator<'db> {
         out: &mut Code,
         trait_ref: &hir::TraitRef<'db>,
         f: hir::Function,
+        impl_: hir::Impl,
         declared_class: &str,
         function_type: CsFunctionType,
     ) {
@@ -614,7 +619,7 @@ impl<'db> CodeGenerator<'db> {
             "public ",
             "",
             function_type,
-            Some((&type_args, self.krate)),
+            Some((&type_args, impl_.into())),
         );
         out.wln("");
         out.indent();

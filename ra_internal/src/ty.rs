@@ -2,14 +2,13 @@ mod resolve_assoc;
 mod type_to_string;
 
 use super::internal::{TyExt, TyFromType};
-use crate::DebugDisplay;
 use crate::ty::type_to_string::TypeToString;
 use hir::HasContainer;
 use hir_def::{GenericParamId, HasModule, TypeAliasId};
 use hir_ty::db::HirDatabase;
 use hir_ty::next_solver::{
     AliasTy, Clause, ClauseKind, DbInterner, EarlyBinder, ErrorGuaranteed, GenericArg, GenericArgs,
-    SolverDefId, TraitRef, Ty, TyKind,
+    TraitAssocTyId, TraitRef, Ty, TyKind, Unnormalized,
 };
 use rustc_type_ir::inherent::{GenericArg as _, IntoKind};
 use rustc_type_ir::{AliasTyKind, Interner, Upcast};
@@ -21,6 +20,9 @@ type BoundsProvider<'db> =
 pub trait TypeExt<'db> {
     fn error(db: &'db dyn HirDatabase, krate: hir::Crate) -> Self;
     fn is_error(&self) -> bool;
+
+    fn with_owner(&self, owner: impl Into<hir::GenericDef>) -> Self;
+
     fn as_impl_traits_with_params(
         &self,
         db: &'db dyn HirDatabase,
@@ -45,17 +47,6 @@ pub trait TypeExt<'db> {
     /// Returns if this type is a array type. This doesn't require the length to be known unlike [`Type::as_array`]
     fn as_array_unsized(&self, db: &'db dyn HirDatabase) -> Option<hir::Type<'db>>;
 
-    fn instantiate(
-        &self,
-        def: hir::GenericDef,
-        args: &[hir::Type<'db>],
-        db: &'db dyn HirDatabase,
-    ) -> hir::Type<'db>;
-
-    /// In some functions like [hir::Function::ret_type_with_args], type env krate
-    /// can be incorrect and fails to [hir::Type::normalize_trait_assoc_type]. This can fix by replacing krate part
-    fn with_crate(&self, krate: hir::Crate, db: &'db dyn HirDatabase) -> hir::Type<'db>;
-
     // you should add members above this line. below this line is the debug utility
     /// Debug display the type with much information as possible
     fn ty_string(&self, db: &'db dyn HirDatabase) -> impl std::fmt::Debug;
@@ -63,21 +54,29 @@ pub trait TypeExt<'db> {
 
 impl<'db> TypeExt<'db> for hir::Type<'db> {
     fn error(db: &'db dyn HirDatabase, krate: hir::Crate) -> Self {
-        Self::from_ty_env(
-            Ty::new(DbInterner::new_no_crate(db), TyKind::Error(ErrorGuaranteed)),
-            crate::internal::empty_param_env(krate.base()),
+        Self::from_ty_owner(
+            EarlyBinder::bind(Ty::new(
+                DbInterner::new_no_crate(db),
+                TyKind::Error(ErrorGuaranteed),
+            )),
+            krate,
         )
     }
 
     fn is_error(&self) -> bool {
-        matches!(self.ns_ty().kind(), TyKind::Error(_))
+        matches!(self.ns_ty().skip_binder().kind(), TyKind::Error(_))
+    }
+
+    // Can be try_rebase_into_owner, but it does not handle builtinderive
+    fn with_owner(&self, owner: impl Into<hir::GenericDef>) -> Self {
+        Self::from_ty_owner(self.ns_ty(), owner.into())
     }
 
     fn as_impl_traits_with_params(
         &self,
         db: &'db dyn HirDatabase,
     ) -> Option<Vec<(hir::Trait, Vec<Option<hir::Type<'db>>>)>> {
-        impl_trait_bounds(self.ns_ty(), db).map(|it| {
+        impl_trait_bounds(self.ns_ty().skip_binder(), db).map(|it| {
             it.into_iter()
                 .filter_map(|pred| match pred.kind().skip_binder() {
                     ClauseKind::Trait(trait_ref) => {
@@ -105,6 +104,7 @@ impl<'db> TypeExt<'db> for hir::Type<'db> {
         &self,
     ) -> Option<(hir::Type<'db>, Vec<Option<hir::Type<'db>>>, hir::TypeAlias)> {
         self.ns_ty()
+            .skip_binder()
             .as_associated_type()
             .map(|(ty, args, alias_id)| {
                 (
@@ -123,9 +123,9 @@ impl<'db> TypeExt<'db> for hir::Type<'db> {
         db: &'db dyn HirDatabase,
         bounds_provider: BoundsProvider<'db>,
     ) -> hir::Type<'db> {
-        let interner = DbInterner::new_with(db, self.env().krate);
-        let self_ty = self.ns_ty();
-        let env = self.env();
+        let interner = DbInterner::new_with(db, self.env(db).krate);
+        let self_ty = self.ns_ty().skip_binder();
+        let env = self.env(db);
         let mut clauses = env.param_env.clauses().to_vec();
         let mut ty = self_ty;
         for &alias in aliases {
@@ -142,23 +142,24 @@ impl<'db> TypeExt<'db> for hir::Type<'db> {
                 assert!(traits.len() == 1);
                 let (_trait, trait_args) = { traits }.swap_remove(0);
                 let mut parsed_iter = trait_args.iter().map(|x| x.ns_ty());
-                let generic_args = GenericArgs::for_item(interner, alias_id.into(), |_, y, _| {
-                    if let GenericParamId::TypeParamId(_) = y {
-                        if let Some(ty) = parsed_iter.next() {
-                            ty.into()
+                let generic_args =
+                    GenericArgs::for_item(interner, alias_id.into(), |_, y, _, _| {
+                        if let GenericParamId::TypeParamId(_) = y {
+                            if let Some(ty) = parsed_iter.next() {
+                                ty.skip_binder().into()
+                            } else {
+                                GenericArg::error_from_id(interner, y)
+                            }
                         } else {
                             GenericArg::error_from_id(interner, y)
                         }
-                    } else {
-                        GenericArg::error_from_id(interner, y)
-                    }
-                });
+                    });
                 ty = Ty::new(
                     interner,
                     TyKind::Alias(AliasTy::new_from_args(
                         interner,
                         AliasTyKind::Projection {
-                            def_id: SolverDefId::TypeAliasId(alias_id),
+                            def_id: TraitAssocTyId(alias_id),
                         },
                         generic_args,
                     )),
@@ -167,7 +168,8 @@ impl<'db> TypeExt<'db> for hir::Type<'db> {
                 clauses.extend(
                     interner
                         .item_self_bounds(alias_id.into())
-                        .iter_instantiated(interner, generic_args),
+                        .iter_instantiated(interner, generic_args)
+                        .map(Unnormalized::skip_norm_wip),
                 );
             } else {
                 ty = Ty::new(
@@ -176,7 +178,7 @@ impl<'db> TypeExt<'db> for hir::Type<'db> {
                         AliasTy::new_from_args(
                             interner,
                             AliasTyKind::Projection {
-                                def_id: SolverDefId::TypeAliasId(alias_id),
+                                def_id: TraitAssocTyId(alias_id),
                             },
                             GenericArgs::error_for_item(interner, alias_id.into()),
                         )
@@ -189,92 +191,11 @@ impl<'db> TypeExt<'db> for hir::Type<'db> {
     }
 
     fn as_array_unsized(&self, _db: &'db dyn HirDatabase) -> Option<hir::Type<'db>> {
-        if let TyKind::Array(inner, _size) = self.ns_ty().kind() {
+        if let TyKind::Array(inner, _size) = self.ns_ty().skip_binder().kind() {
             Some(self.derived(inner))
         } else {
             None
         }
-    }
-
-    fn instantiate(
-        &self,
-        def: hir::GenericDef,
-        args: &[hir::Type<'db>],
-        db: &'db dyn HirDatabase,
-    ) -> hir::Type<'db> {
-        let parent_def = match match def {
-            hir::GenericDef::Function(f) => Some(f.container(db)),
-            hir::GenericDef::Adt(_) => None,
-            hir::GenericDef::Trait(_) => None,
-            hir::GenericDef::TypeAlias(a) => Some(a.container(db)),
-            hir::GenericDef::Impl(_) => None,
-            hir::GenericDef::Const(c) => Some(c.container(db)),
-            hir::GenericDef::Static(s) => Some(s.container(db)),
-        } {
-            Some(hir::ItemContainer::Trait(trait_)) => Some(hir::GenericDef::Trait(trait_)),
-            Some(hir::ItemContainer::Impl(impl_)) => Some(hir::GenericDef::Impl(impl_)),
-            Some(hir::ItemContainer::Module(_)) => None,
-            Some(hir::ItemContainer::ExternBlock(_)) => None,
-            Some(hir::ItemContainer::Crate(_)) => None,
-            None => None,
-        };
-        let params = parent_def
-            .map(|def| def.params(db))
-            .unwrap_or_default()
-            .into_iter()
-            .chain(def.params(db))
-            .collect::<Vec<_>>();
-        let mut def_args = Vec::with_capacity(params.len());
-        let mut type_iter = args.iter();
-        let interner = DbInterner::new_no_crate(db);
-
-        if matches!(def, hir::GenericDef::Trait(_))
-            || matches!(parent_def, Some(hir::GenericDef::Trait(_)))
-        {
-            def_args.push(GenericArg::from(type_iter.next().unwrap().ns_ty()))
-        }
-
-        for &x in &params {
-            match x {
-                hir::GenericParam::TypeParam(_) => def_args.push(GenericArg::from(
-                    type_iter
-                        .next()
-                        .map(|x| x.ns_ty())
-                        .unwrap_or_else(|| hir::Type::error(db, def.module(db).krate(db)).ns_ty()),
-                )),
-                hir::GenericParam::ConstParam(_) => {
-                    def_args.push(hir_ty::next_solver::Const::error(interner).into())
-                }
-                hir::GenericParam::LifetimeParam(_) => {
-                    def_args.push(hir_ty::next_solver::Region::error(interner).into())
-                }
-            }
-        }
-        tracing::trace!(
-            "instantiate: {} with {:?} ({params:?}) based on {def:?}",
-            self.debug_display(db),
-            args.iter()
-                .map(|x| std::fmt::from_fn(move |f| std::fmt::Display::fmt(
-                    &x.debug_display(db),
-                    f
-                )))
-                .collect::<Vec<_>>()
-        );
-
-        if args.is_empty() {
-            self.clone()
-        } else {
-            self.derived(EarlyBinder::bind(self.ns_ty()).instantiate(interner, def_args.as_slice()))
-        }
-    }
-
-    fn with_crate(&self, krate: hir::Crate, db: &'db dyn HirDatabase) -> Self {
-        let mut env = self.env();
-        let ty = self.ns_ty();
-        if env.krate.transitive_rev_deps(db).contains(&krate.base()) {
-            env.krate = krate.base();
-        }
-        hir::Type::from_ty_env(ty, env)
     }
 
     fn ty_string(&self, db: &'db dyn HirDatabase) -> impl std::fmt::Debug {
@@ -282,9 +203,9 @@ impl<'db> TypeExt<'db> for hir::Type<'db> {
             std::fmt::Debug::fmt(
                 &TypeToString {
                     db,
-                    interner: DbInterner::new_with(db, self.env().krate),
+                    interner: DbInterner::new_with(db, self.env(db).krate),
                 }
-                .ty_to_str(self.ns_ty()),
+                .ty_to_str(self.ns_ty().skip_binder()),
                 f,
             )
         })

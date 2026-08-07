@@ -2,6 +2,7 @@ use crate::debug::DebugDisplay;
 use crate::internal::{ParsedProjection, TyFromType, parse_bounds_for};
 use crate::ty::TypeExt;
 use ::hir;
+use hir::HasCrate;
 use hir_def::*;
 use hir_ty::db::HirDatabase;
 use hir_ty::next_solver::*;
@@ -42,9 +43,9 @@ fn resolve_assoc_of_impl_impl<'db>(
 
     alias_list.reverse();
 
-    let interner = DbInterner::new_with(db, assoc_type.env().krate);
+    let interner = DbInterner::new_with(db, assoc_type.krate(db).into());
 
-    let self_ty = self_type.ns_ty();
+    let self_ty = self_type.ns_ty().skip_binder();
     match self_ty.kind() {
         TyKind::Alias(self_ty_alias) => {
             let AliasTyKind::Opaque { def_id } = self_ty_alias.kind else {
@@ -55,8 +56,7 @@ fn resolve_assoc_of_impl_impl<'db>(
                 );
                 // return assoc_type.clone();
             };
-            let bounds = def_id
-                .expect_opaque_ty()
+            let bounds = (def_id.0)
                 .predicates(db)
                 .iter_instantiated_copied(interner, self_ty_alias.args.as_slice());
 
@@ -94,13 +94,13 @@ fn create_impl_generic_args_for<'db>(
     interner: DbInterner<'db>,
     db: &'db dyn HirDatabase,
 ) -> GenericArgs<'db> {
-    let impl_self_ty = db.impl_self_ty(target).instantiate_identity();
+    let impl_self_ty = db.impl_self_ty(target).skip_binder();
     let (self_adt, self_args) = self_ty.as_adt().unwrap();
     match impl_self_ty.kind() {
         TyKind::Param(param_ty) => {
             debug!("translate_args: param: {param_ty:?}");
 
-            GenericArgs::for_item(interner, target.into(), |_i, arg, _| match arg {
+            GenericArgs::for_item(interner, target.into(), |_i, arg, _, _| match arg {
                 GenericParamId::TypeParamId(ty_arg) if ty_arg == param_ty.id => {
                     Term::from(self_ty).into()
                 }
@@ -137,7 +137,7 @@ fn create_impl_generic_args_for<'db>(
                 }
             }
 
-            GenericArgs::for_item(interner, target.into(), |_i, arg, _| {
+            GenericArgs::for_item(interner, target.into(), |_i, arg, _, _| {
                 if let Some(ty) = type_map.get(&arg) {
                     Term::from(*ty).into()
                 } else {

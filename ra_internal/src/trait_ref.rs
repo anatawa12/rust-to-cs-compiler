@@ -17,6 +17,5 @@ impl<'db> TraitRefExt<'db> for hir::TraitRef<'db> {
             .into_iter()
             .enumerate()
             .map(|(i, _)| self.get_type_argument(i))
-            .map(move |x| x.map(|x| x.to_type(db)))
     }
 }

@@ -1,73 +1,139 @@
-use hir_def::TypeAliasId;
+use hir::{HasContainer, HasCrate};
 use hir_def::lang_item::lang_items;
-use hir_def::resolver::Resolver;
+use hir_def::{AdtId, BuiltinDeriveImplId, GenericDefId, TypeAliasId};
 use hir_ty::ParamEnvAndCrate;
-use hir_ty::db::HirDatabase;
+use hir_ty::db::{AnonConstId, HirDatabase};
 use hir_ty::next_solver::{
-    Clause, ClauseKind, DbInterner, GenericArgs, ParamEnv, SolverDefId, TermKind, TraitRef, Ty,
-    TyKind,
+    AnyImplId, Clause, ClauseKind, DbInterner, EarlyBinder, GenericArgs, ParamEnv, TermId,
+    TermKind, TraitAssocTermId, TraitAssocTyId, TraitRef, Ty, TyKind, Unnormalized,
 };
 use itertools::Itertools;
 use rustc_type_ir::inherent::{GenericArg, IntoKind};
 use rustc_type_ir::{AliasTyKind, Interner, PredicatePolarity};
 
 pub(crate) trait TyFromType<'db> {
-    fn ns_ty(&self) -> Ty<'db>;
-    fn env(&self) -> ParamEnvAndCrate<'db>;
-    fn from_ty_env(ty: Ty<'db>, env: ParamEnvAndCrate<'db>) -> Self;
-    #[allow(dead_code)]
-    fn from_ty_resolver(ty: Ty<'db>, db: &'db dyn HirDatabase, resolver: &Resolver<'_>) -> Self;
+    fn ns_ty(&self) -> EarlyBinder<'db, Ty<'db>>;
+    fn owner_id(&self) -> TypeOwnerId<'db>;
+    fn from_ty_owner(ty: EarlyBinder<'db, Ty<'db>>, owner: impl Into<TypeOwnerId<'db>>) -> Self;
+
+    fn env(&self, db: &'db dyn HirDatabase) -> ParamEnvAndCrate<'db>;
     fn derived(&self, ty: Ty<'db>) -> Self;
 }
 
 #[allow(dead_code)]
+#[derive(Debug, Copy, Clone)]
+pub enum TypeOwnerId<'db> {
+    GenericDefId(GenericDefId),
+    BuiltinDeriveImplId(BuiltinDeriveImplId),
+    AnonConstId(AnonConstId<'db>),
+    // FIXME: What do when we unify two different crates? Currently we just randomly keep one.
+    NoParams(base_db::Crate),
+}
+
+#[allow(dead_code)]
 struct TypeRepr<'db> {
-    env: ParamEnvAndCrate<'db>,
-    ty: Ty<'db>,
+    owner: TypeOwnerId<'db>,
+    ty: EarlyBinder<'db, Ty<'db>>,
 }
 
 impl<'db> TyFromType<'db> for hir::Type<'db> {
-    fn ns_ty(&self) -> Ty<'db> {
+    fn ns_ty(&self) -> EarlyBinder<'db, Ty<'db>> {
         // SAFETY:  This is NOT safe in rust guaranteed behavior,
         //          but known implementation allows us to do so.
         unsafe { std::mem::transmute::<&Self, &TypeRepr<'db>>(self).ty }
     }
 
-    fn env(&self) -> ParamEnvAndCrate<'db> {
-        unsafe { std::mem::transmute::<&Self, &TypeRepr<'db>>(self).env }
+    fn owner_id(&self) -> TypeOwnerId<'db> {
+        unsafe { std::mem::transmute::<&Self, &TypeRepr<'db>>(self).owner }
     }
 
-    fn from_ty_env(ty: Ty<'db>, env: ParamEnvAndCrate<'db>) -> Self {
-        unsafe { std::mem::transmute::<TypeRepr<'db>, Self>(TypeRepr { env, ty }) }
+    fn from_ty_owner(ty: EarlyBinder<'db, Ty<'db>>, owner: impl Into<TypeOwnerId<'db>>) -> Self {
+        unsafe {
+            std::mem::transmute::<TypeRepr<'db>, Self>(TypeRepr {
+                ty,
+                owner: owner.into(),
+            })
+        }
     }
 
-    fn from_ty_resolver(ty: Ty<'db>, db: &'db dyn HirDatabase, resolver: &Resolver<'_>) -> Self {
-        Self::from_ty_env(ty, param_env_from_resolver(db, resolver))
+    fn env(&self, db: &'db dyn HirDatabase) -> ParamEnvAndCrate<'db> {
+        let interner = DbInterner::new_no_crate(db);
+        let krate = self.krate(db).into();
+        match self.owner_id() {
+            TypeOwnerId::GenericDefId(def) => ParamEnvAndCrate {
+                param_env: db.trait_environment(def),
+                krate,
+            },
+            TypeOwnerId::BuiltinDeriveImplId(def) => ParamEnvAndCrate {
+                param_env: hir_ty::builtin_derive::param_env(interner, def),
+                krate,
+            },
+            TypeOwnerId::AnonConstId(def) => ParamEnvAndCrate {
+                param_env: db.trait_environment(def.loc(db).owner.generic_def(db)),
+                krate,
+            },
+            TypeOwnerId::NoParams(_) => ParamEnvAndCrate {
+                param_env: ParamEnv::empty(interner),
+                krate,
+            },
+        }
     }
 
     fn derived(&self, ty: Ty<'db>) -> Self {
-        Self::from_ty_env(ty, self.env())
+        Self::from_ty_owner(EarlyBinder::bind(ty), self.owner_id())
     }
 }
 
-pub(crate) fn param_env_from_resolver<'db>(
-    db: &'db dyn HirDatabase,
-    resolver: &Resolver<'_>,
-) -> ParamEnvAndCrate<'db> {
-    ParamEnvAndCrate {
-        param_env: resolver
-            .generic_def()
-            .map_or_else(ParamEnv::empty, |generic_def| {
-                db.trait_environment(generic_def.into())
-            }),
-        krate: resolver.krate(),
+impl<'db> From<hir::Crate> for TypeOwnerId<'db> {
+    fn from(value: hir::Crate) -> Self {
+        TypeOwnerId::NoParams(value.base())
     }
 }
-
-pub(crate) fn empty_param_env<'db>(krate: base_db::Crate) -> ParamEnvAndCrate<'db> {
-    ParamEnvAndCrate {
-        param_env: ParamEnv::empty(),
-        krate,
+impl<'db> From<hir::GenericDef> for TypeOwnerId<'db> {
+    fn from(value: hir::GenericDef) -> Self {
+        match value {
+            hir::GenericDef::Adt(hir::Adt::Struct(hir)) => {
+                TypeOwnerId::GenericDefId(GenericDefId::AdtId(AdtId::StructId(hir.into())))
+            }
+            hir::GenericDef::Adt(hir::Adt::Enum(hir)) => {
+                TypeOwnerId::GenericDefId(GenericDefId::AdtId(AdtId::EnumId(hir.into())))
+            }
+            hir::GenericDef::Adt(hir::Adt::Union(hir)) => {
+                TypeOwnerId::GenericDefId(GenericDefId::AdtId(AdtId::UnionId(hir.into())))
+            }
+            hir::GenericDef::Const(hir) => {
+                TypeOwnerId::GenericDefId(GenericDefId::ConstId(hir.into()))
+            }
+            hir::GenericDef::Function(hir) if let Ok(id) = hir.try_into() => {
+                TypeOwnerId::GenericDefId(GenericDefId::FunctionId(id))
+            }
+            hir::GenericDef::Function(hir) => {
+                // hir.try_into::<FunctionId>() = None => BuiltinDeriveImplMethod.
+                // We use container (impl)'s id
+                let hir::ItemContainer::Impl(impl_) =
+                    hir_ty::with_attached_db(|db| hir.container(db))
+                else {
+                    panic!("Expected impl container for function {hir:?}");
+                };
+                let AnyImplId::BuiltinDeriveImplId(derive_id) = AnyImplId::from(impl_) else {
+                    panic!("Expected derive impl container for function {hir:?}");
+                };
+                TypeOwnerId::BuiltinDeriveImplId(derive_id)
+            }
+            hir::GenericDef::Impl(hir) => match AnyImplId::from(hir) {
+                AnyImplId::ImplId(i) => TypeOwnerId::GenericDefId(GenericDefId::ImplId(i)),
+                AnyImplId::BuiltinDeriveImplId(i) => TypeOwnerId::BuiltinDeriveImplId(i),
+            },
+            hir::GenericDef::Static(hir) => {
+                TypeOwnerId::GenericDefId(GenericDefId::StaticId(hir.into()))
+            }
+            hir::GenericDef::Trait(hir) => {
+                TypeOwnerId::GenericDefId(GenericDefId::TraitId(hir.into()))
+            }
+            hir::GenericDef::TypeAlias(hir) => {
+                TypeOwnerId::GenericDefId(GenericDefId::TypeAliasId(hir.into()))
+            }
+        }
     }
 }
 
@@ -80,7 +146,7 @@ impl<'db> TyExt<'db> for Ty<'db> {
     fn as_associated_type(&self) -> Option<(Ty<'db>, GenericArgs<'db>, TypeAliasId)> {
         if let TyKind::Alias(alias) = self.kind()
             && let AliasTyKind::Projection { def_id } = alias.kind
-            && let SolverDefId::TypeAliasId(alias_id) = def_id
+            && let TraitAssocTyId(alias_id) = def_id
         {
             Some((alias.self_ty(), alias.args, alias_id))
         } else {
@@ -101,11 +167,11 @@ pub(crate) enum ParsedProjection<'db> {
 /// Otherwise, if there are some `<target_ty>: Trait<args>` clauses, returns [`ParsedProjection::Traits`].
 /// Otherwise, returns [`ParsedProjection::NoBounds`].
 pub(crate) fn parse_bounds_for<'db>(
-    bounds: impl IntoIterator<Item = Clause<'db>>,
+    bounds: impl IntoIterator<Item = Unnormalized<'db, Clause<'db>>>,
     target_type: &hir::Type<'db>,
     db: &'db dyn HirDatabase,
 ) -> ParsedProjection<'db> {
-    let target_ty = target_type.ns_ty();
+    let target_ty = target_type.ns_ty().skip_binder();
     let mut def_clauses = vec![];
 
     // collect clauses of associated type declaration at trait definition
@@ -134,7 +200,7 @@ pub(crate) fn parse_bounds_for<'db>(
             break 'resolve_projection None;
         };
         let AliasTyKind::Projection {
-            def_id: SolverDefId::TypeAliasId(alias_id),
+            def_id: TraitAssocTyId(alias_id),
         } = alias.kind
         else {
             panic!("Tries to assoc but not assoc: {target_ty:?}")
@@ -154,7 +220,10 @@ pub(crate) fn parse_bounds_for<'db>(
         clauses.push(x);
         */
 
-        Some((alias.self_ty(), SolverDefId::TypeAliasId(alias_id)))
+        Some((
+            alias.self_ty(),
+            TraitAssocTermId(TermId::TypeAliasId(alias_id)),
+        ))
     };
 
     let clauses = (bounds.into_iter().chain(def_clauses.into_iter().flatten())).collect::<Vec<_>>();
@@ -162,14 +231,14 @@ pub(crate) fn parse_bounds_for<'db>(
 }
 
 pub(crate) fn parse_clauses<'db>(
-    clauses: impl IntoIterator<Item = Clause<'db>>,
+    clauses: impl IntoIterator<Item = Unnormalized<'db, Clause<'db>>>,
     target_type: &hir::Type<'db>,
-    projection: Option<(Ty<'db>, SolverDefId)>,
+    projection: Option<(Ty<'db>, TraitAssocTermId)>,
     db: &'db dyn HirDatabase,
 ) -> ParsedProjection<'db> {
-    let target_ty = target_type.ns_ty();
+    let target_ty = target_type.ns_ty().skip_binder();
 
-    let lang_items = lang_items(db, target_type.env().krate);
+    let lang_items = lang_items(db, target_type.krate(db).base());
 
     #[derive(Debug)]
     enum Pred<'db> {

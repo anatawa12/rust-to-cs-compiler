@@ -1,5 +1,5 @@
 use hir_ty::db::HirDatabase;
-use hir_ty::next_solver::{DbInterner, GenericArgKind, GenericArgs, SolverDefId, Ty, TyKind};
+use hir_ty::next_solver::{DbInterner, GenericArgKind, GenericArgs, Ty, TyKind};
 use rustc_type_ir::inherent::IntoKind;
 use rustc_type_ir::{AliasTyKind, Interner};
 
@@ -38,21 +38,28 @@ impl TypeToString<'_> {
                     .field(&std::fmt::from_fn(move |f| match alias.kind {
                         AliasTyKind::Projection { def_id } => f
                             .debug_struct("Projection")
-                            .field("def_id", &self.def_id_to_str(def_id))
+                            .field("def_id", &def_id)
                             .finish(),
-                        AliasTyKind::Inherent { def_id } => f
-                            .debug_struct("Inherent")
-                            .field("def_id", &self.def_id_to_str(def_id))
-                            .finish(),
+                        AliasTyKind::Inherent { def_id } => {
+                            f.debug_struct("Inherent").field("def_id", &def_id).finish()
+                        }
                         AliasTyKind::Opaque { def_id } => f
                             .debug_struct("Opaque")
-                            .field("def_id", &self.def_id_to_str(def_id))
-                            .field("interned", &self.interner.type_of(def_id))
+                            .field(
+                                "def_id",
+                                &std::fmt::from_fn(move |f| {
+                                    f.debug_tuple("InternedOpaqueTyId")
+                                        .field(&def_id.0)
+                                        .field(&def_id.0.loc(self.db))
+                                        .field(&def_id.0.loc(self.db).predicates(self.db))
+                                        .finish()
+                                }),
+                            )
+                            .field("interned", &self.interner.type_of(def_id.into()))
                             .finish(),
-                        AliasTyKind::Free { def_id } => f
-                            .debug_struct("Free")
-                            .field("def_id", &self.def_id_to_str(def_id))
-                            .finish(),
+                        AliasTyKind::Free { def_id } => {
+                            f.debug_struct("Free").field("def_id", &(def_id)).finish()
+                        }
                     }))
                     .field(&self.args_to_str(alias.args))
                     .finish(),
@@ -93,19 +100,6 @@ impl TypeToString<'_> {
                 }));
             }
             list.finish()
-        })
-    }
-
-    pub(super) fn def_id_to_str<'a>(&'a self, def_id: SolverDefId) -> impl std::fmt::Debug + 'a {
-        std::fmt::from_fn(move |f| match def_id {
-            SolverDefId::InternedOpaqueTyId(id) => f
-                .debug_tuple("InternedOpaqueTyId")
-                .field(&id)
-                .field(&id.loc(self.db))
-                .field(&id.loc(self.db).predicates(self.db))
-                .finish(),
-
-            _ => std::fmt::Debug::fmt(&def_id, f),
         })
     }
 }

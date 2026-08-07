@@ -30,20 +30,20 @@ disallowed_methods = "deny"
 
 [workspace.dependencies]
 # ra-ap
-hir = { package = "ra_ap_hir", version = "0.0.343" }
-hir_def = { package = "ra_ap_hir_def", version = "0.0.343" }
-hir_ty = { package = "ra_ap_hir_ty", version = "0.0.343" }
-syntax = { package = "ra_ap_syntax", version = "0.0.343" }
-cfg = { package = "ra_ap_cfg", version = "0.0.343" }
-ide_db = { package = "ra_ap_ide_db", version = "0.0.343" }
-base_db = { package = "ra_ap_base_db", version = "0.0.343" }
-load-cargo = { package = "ra_ap_load-cargo", version = "0.0.343" }
-vfs = { package = "ra_ap_vfs", version = "0.0.343" }
-project_model = { package = "ra_ap_project_model", version = "0.0.343" }
+hir = { package = "ra_ap_hir", version = "0.0.345" }
+hir_def = { package = "ra_ap_hir_def", version = "0.0.345" }
+hir_ty = { package = "ra_ap_hir_ty", version = "0.0.345" }
+syntax = { package = "ra_ap_syntax", version = "0.0.345" }
+cfg = { package = "ra_ap_cfg", version = "0.0.345" }
+ide_db = { package = "ra_ap_ide_db", version = "0.0.345" }
+base_db = { package = "ra_ap_base_db", version = "0.0.345" }
+load-cargo = { package = "ra_ap_load-cargo", version = "0.0.345" }
+vfs = { package = "ra_ap_vfs", version = "0.0.345" }
+project_model = { package = "ra_ap_project_model", version = "0.0.345" }
 
 # ra-ap-rustc
-rustc_type_ir = { package = "ra-ap-rustc_type_ir", version = "0.165.0" }
-rustc_next_trait_solver = { package = "ra-ap-rustc_next_trait_solver", version = "0.165.0" }
+rustc_type_ir = { package = "ra-ap-rustc_type_ir", version = "0.166.0" }
+rustc_next_trait_solver = { package = "ra-ap-rustc_next_trait_solver", version = "0.166.0" }
 
 # ra base lib
 salsa = "0.27.2"

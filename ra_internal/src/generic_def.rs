@@ -4,7 +4,9 @@ use hir::HasContainer;
 use hir_def::GenericDefId;
 use hir_ty::GenericPredicates;
 use hir_ty::db::HirDatabase;
-use hir_ty::next_solver::{AliasTy, ClauseKind, DbInterner, SolverDefId, Ty, TyKind};
+use hir_ty::next_solver::{
+    AliasTy, ClauseKind, DbInterner, TermId, TraitAssocTermId, TraitAssocTyId, Ty, TyKind,
+};
 use rustc_type_ir::inherent::IntoKind;
 use rustc_type_ir::{AliasTyKind, PredicatePolarity};
 
@@ -27,17 +29,17 @@ impl GenericDefExt for hir::GenericDef {
             return vec![];
         };
         let clauses = GenericPredicates::query_all(db, generic_def_id).skip_binder();
-        let interner = DbInterner::new_with(db, ty.env().krate);
+        let interner = DbInterner::new_with(db, ty.env(db).krate);
         clauses
             .filter_map(|clause| {
                 let ClauseKind::Projection(projection) = clause.kind().skip_binder() else {
                     return None;
                 };
-                (projection.term.expect_type() == ty.ns_ty()).then_some(projection)
+                (projection.term.expect_type() == ty.ns_ty().skip_binder()).then_some(projection)
             })
             .map(|x| {
                 let self_ty = x.self_ty();
-                let SolverDefId::TypeAliasId(alias_id) = x.def_id() else {
+                let TraitAssocTermId(TermId::TypeAliasId(alias_id)) = x.def_id() else {
                     unreachable!();
                 };
                 let hir::ItemContainer::Trait(trait_) =
@@ -83,7 +85,7 @@ impl GenericDefExt for hir::GenericDef {
                         AliasTy::new_from_args(
                             interner,
                             AliasTyKind::Projection {
-                                def_id: SolverDefId::TypeAliasId(alias_id),
+                                def_id: TraitAssocTyId(alias_id),
                             },
                             trait_clause.args,
                         )

@@ -3,7 +3,7 @@ use hir_def::GenericDefId;
 use hir_ty::ParamEnvAndCrate;
 use hir_ty::db::HirDatabase;
 use hir_ty::next_solver::{DbInterner, GenericArgs};
-use rustc_type_ir::inherent::IntoKind;
+use rustc_type_ir::EarlyBinder;
 
 pub trait TraitExt {
     fn predicate_types<'db>(self, db: &'db dyn HirDatabase)
@@ -36,7 +36,9 @@ impl TraitExt for hir::Trait {
                     .filter_map(|x| {
                         variant_or_none!(x.kind(), hir_ty::next_solver::GenericArgKind::Type)
                     })
-                    .map(move |ty| hir::Type::from_ty_env(ty, env))
+                    .map(move |ty| {
+                        hir::Type::from_ty_owner(EarlyBinder::bind(ty), hir::GenericDef::from(self))
+                    })
             })
     }
 }

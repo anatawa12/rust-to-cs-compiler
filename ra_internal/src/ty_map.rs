@@ -1,5 +1,5 @@
 use crate::internal::TyFromType;
-use hir::Type;
+use hir::{HasCrate, Type};
 use hir_ty::db::HirDatabase;
 use hir_ty::next_solver::Ty;
 use std::cell::RefCell;
@@ -40,13 +40,15 @@ impl<'db> TyMap<'db> {
         if self.is_empty() {
             None
         } else {
-            let (ty, env) = (ty.ns_ty(), ty.env());
-            let ty = hir_ty::next_solver::fold::fold_tys(
-                hir_ty::next_solver::DbInterner::new_with(db, env.krate),
-                ty,
-                |ty| self.get(ty),
-            );
-            Some(Type::from_ty_env(ty, env))
+            let (ty, krate, owner) = (ty.ns_ty(), ty.krate(db), ty.owner_id());
+            let ty = ty.map_bound(|ty| {
+                hir_ty::next_solver::fold::fold_tys(
+                    hir_ty::next_solver::DbInterner::new_with(db, krate.into()),
+                    ty,
+                    |ty| self.get(ty),
+                )
+            });
+            Some(Type::from_ty_owner(ty, owner))
         }
     }
 
@@ -72,7 +74,7 @@ impl<'db, 'a> NewTypeMapScope<'db, 'a> {
         self.type_map
             .inner
             .borrow_mut()
-            .insert(old.ns_ty(), new.ns_ty());
+            .insert(old.ns_ty().skip_binder(), new.ns_ty().skip_binder());
     }
 }
 impl<'db, 'a> Drop for NewTypeMapScope<'db, 'a> {

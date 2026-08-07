@@ -1,4 +1,5 @@
 use hir_ty::db::HirDatabase;
+use hir_ty::next_solver::Unnormalized;
 use rustc_type_ir::inherent::IntoKind;
 
 pub trait AssocItemExt {
@@ -22,21 +23,27 @@ impl AssocItemExt for hir::AssocItem {
             },
         );
 
-        rustc_type_ir::elaborate::elaborate(interner, predicates.iter_identity()).any(|pred| {
-            match pred.kind().skip_binder() {
-                rustc_type_ir::ClauseKind::Trait(trait_pred) => {
-                    if sized == trait_pred.def_id().0
-                        && let rustc_type_ir::TyKind::Param(param_ty) =
-                            trait_pred.trait_ref.self_ty().kind()
-                        && param_ty.index == 0
-                    {
-                        true
-                    } else {
-                        false
-                    }
+        // copied from ra_ap_hir_ty-0.0.343/src/dyn_compatibility.rs
+        // FIXME: We should use `explicit_predicates_of` here, which hasn't been implemented to
+        // rust-analyzer yet
+        // https://github.com/rust-lang/rust/blob/ddaf12390d3ffb7d5ba74491a48f3cd528e5d777/compiler/rustc_hir_analysis/src/collect/predicates_of.rs#L490
+        rustc_type_ir::elaborate::elaborate(
+            interner,
+            predicates.iter_identity().map(Unnormalized::skip_norm_wip),
+        )
+        .any(|pred| match pred.kind().skip_binder() {
+            rustc_type_ir::ClauseKind::Trait(trait_pred) => {
+                if sized == trait_pred.def_id().0
+                    && let rustc_type_ir::TyKind::Param(param_ty) =
+                        trait_pred.trait_ref.self_ty().kind()
+                    && param_ty.index == 0
+                {
+                    true
+                } else {
+                    false
                 }
-                _ => false,
             }
+            _ => false,
         })
     }
 }
