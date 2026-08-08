@@ -1,4 +1,5 @@
 disallowed-methods = [
     "ra_ap_hir::GenericDef::params",
     "ra_ap_hir::TypeParam::trait_bounds",
+    { path = "ra_ap_hir::Function::ret_type", replacement = "ret_ty" },
 ]

@@ -216,7 +216,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
             is_async: self.is_async(),
             returning: f_def
                 .async_ret_type(self.db)
-                .unwrap_or_else(|| f_def.ret_type(self.db)),
+                .unwrap_or_else(|| f_def.ret_ty(self.db)),
         });
         if let Some(self_param) = params.self_param() {
             match self.cs_type {

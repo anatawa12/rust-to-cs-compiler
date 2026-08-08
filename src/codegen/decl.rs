@@ -3,7 +3,7 @@ use crate::codegen::expr::ItemInBody;
 use crate::codegen::item_exclusion::{is_r2cs_native, should_emit};
 use crate::codegen::simple_extensions::*;
 use crate::codegen::ty::generic_types;
-use hir::{AssocItem, HasContainer, Impl, Trait, Type};
+use hir::{AssocItem, HasContainer, Impl, ItemContainer, Trait, Type};
 use itertools::Itertools;
 use ra_internal::function::FunctionExt;
 use ra_internal::*;
@@ -176,25 +176,56 @@ impl<'db> CodeGenerator<'db> {
         let is_async = f.is_async(db);
 
         writeln!(out, "// method on {}", cs_self);
-        self.emit_function_signature(
-            out,
-            f,
-            "public ",
-            if is_async { "async " } else { "" },
-            cs_type,
-            None,
-        );
-        out.wln("");
-        out.open_brace();
+        if f.is_builtin_derive(db) {
+            let ItemContainer::Impl(impl_) = f.container(db) else {
+                panic!("expected impl container for builtin derive");
+            };
+            let trait_ref = impl_.trait_ref(db).unwrap();
+            let base_method = *(trait_ref.trait_().items(db))
+                .iter()
+                .filter_map(|x| variant_or_none!(x, hir::AssocItem::Function))
+                .find(|x| x.name(db) == f.name(db))
+                .unwrap();
 
-        // Try to generate a real body using BodyGen
-        let mut body_gen = BodyGen::new(self, is_async, cs_type);
-        body_gen.emit_function_body(self.sem.source(f).unwrap().value, out);
+            self.emit_function_signature(
+                out,
+                base_method,
+                "public ",
+                "",
+                cs_type,
+                Some((
+                    &trait_ref.generic_types(db).flatten().collect::<Vec<_>>(),
+                    impl_.into(),
+                )),
+            );
 
-        out.dedent();
-        out.wln("}");
+            out.wln("");
+            out.open_brace();
+            // Try to generate a real body using BodyGen
+            let mut body_gen = BodyGen::new(self, is_async, cs_type);
+            body_gen.emit_function_body(self.sem.source(f).unwrap().value, out);
+            out.close_brace();
 
-        self.deferred(out, body_gen.deferred(), f.module(self.db));
+            self.deferred(out, body_gen.deferred(), f.module(self.db));
+        } else {
+            self.emit_function_signature(
+                out,
+                f,
+                "public ",
+                if is_async { "async " } else { "" },
+                cs_type,
+                None,
+            );
+
+            out.wln("");
+            out.open_brace();
+            // Try to generate a real body using BodyGen
+            let mut body_gen = BodyGen::new(self, is_async, cs_type);
+            body_gen.emit_function_body(self.sem.source(f).unwrap().value, out);
+            out.close_brace();
+
+            self.deferred(out, body_gen.deferred(), f.module(self.db));
+        }
         out.blank_line();
     }
 
@@ -213,7 +244,7 @@ impl<'db> CodeGenerator<'db> {
         let generics = self.format_generics(&tp_names);
 
         let is_async = f.is_async(db);
-        let ret_ty = (f.async_ret_type(db).unwrap_or_else(|| f.ret_type(db)))
+        let ret_ty = (f.async_ret_type(db).unwrap_or_else(|| f.ret_ty(db)))
             .try_instantiate(instanciate.map(|x| x.0))
             .try_with_owner(instanciate.map(|x| x.1));
         let cs_ret = self.cs_ret_type(is_async, &ret_ty);
@@ -377,6 +408,7 @@ impl<'db> CodeGenerator<'db> {
             } else {
                 self.rust_type_to_cs(param.ty())
             };
+
             let p_name = param
                 .name(db)
                 .map(|n| names::local_name(n.as_str(), 0))

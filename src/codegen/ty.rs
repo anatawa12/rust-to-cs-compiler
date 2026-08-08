@@ -543,7 +543,7 @@ impl<'db> CodeGenerator<'db> {
             let param_ty = param.ty(db);
             if !self.with_self_in_cs(trait_)
                 && let GenericDef::Function(f) = param.parent(db)
-                && !includes_type_in_type(&f.ret_type(db), db, &|ty| ty == &param_ty)
+                && !includes_type_in_type(&f.ret_ty(db), db, &|ty| ty == &param_ty)
                 && f.params_without_self(db)
                     .iter()
                     .any(|p| includes_type_in_type(p.ty(), db, &|ty| ty == &param_ty))

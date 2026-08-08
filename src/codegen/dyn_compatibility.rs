@@ -159,7 +159,7 @@ fn virtual_call_violations_for_method<'db, F>(
         cb(MethodViolationCode::ReferencesSelfInput);
     }
 
-    if includes_type_in_type(&func.ret_type(db), db, &is_self_ty) {
+    if includes_type_in_type(&func.ret_ty(db), db, &is_self_ty) {
         cb(MethodViolationCode::ReferencesSelfOutput);
     }
 

@@ -9,7 +9,7 @@ use hir::{
 use ide_db::base_db::salsa_macros;
 use itertools::Either;
 use ra_internal::adt::AdtExt;
-use ra_internal::function::FunctionExt;
+use ra_internal::function::FunctionExt as _;
 use ra_internal::generic_def::GenericDefExt as _;
 use ra_internal::*;
 use std::borrow::Borrow;
@@ -312,10 +312,7 @@ pub trait GenericDefExt: Copy {
 impl GenericDefExt for GenericDef {
     fn params0(self, db: &dyn HirDatabase) -> Vec<hir::GenericParam> {
         if let GenericDef::Function(f) = self
-            && let ItemContainer::Impl(impl_) = f.container(db)
-            && impl_.is_builtin_derive()
-            && let Some(trait_) = impl_.trait_(db)
-            && Some(trait_) == LangItems::new(db, trait_.krate(db)).Hash()
+            && f.is_builtin_derive(db)
             && f.name(db) == sym::hash
         {
             // it's hash. Derive method has <H> but `GenericDef::from` returns empty array for
@@ -444,5 +441,37 @@ impl HasTraitBase for hir::TypeParam {
             return None;
         };
         Some(t)
+    }
+}
+
+pub trait FunctionExt: Copy {
+    fn is_builtin_derive(self, db: &dyn HirDatabase) -> bool;
+    fn ret_ty<'db>(self, db: &'db dyn HirDatabase) -> hir::Type<'db>;
+}
+
+impl FunctionExt for hir::Function {
+    fn is_builtin_derive(self, db: &dyn HirDatabase) -> bool {
+        if let ItemContainer::Impl(impl_) = self.container(db)
+            && impl_.is_builtin_derive()
+        {
+            true
+        } else {
+            false
+        }
+    }
+
+    fn ret_ty<'db>(self, db: &'db dyn HirDatabase) -> hir::Type<'db> {
+        if let ItemContainer::Impl(impl_) = self.container(db)
+            && impl_.is_builtin_derive()
+        {
+            let trait_ref = impl_.trait_ref(db).unwrap();
+            #[allow(clippy::disallowed_methods)]
+            self.ret_type(db)
+                //.with_owner(impl_)
+                .instantiate(trait_ref.generic_types(db).flatten())
+        } else {
+            #[allow(clippy::disallowed_methods)]
+            self.ret_type(db)
+        }
     }
 }

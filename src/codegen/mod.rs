@@ -20,6 +20,7 @@ mod simple_extensions {
     #[path = "simple_extensions.rs"]
     mod impl_;
 
+    pub use impl_::FunctionExt as _;
     pub use impl_::GenericDefExt as _;
     pub use impl_::HasTraitBase as _;
     pub use impl_::TraitExt as _;
