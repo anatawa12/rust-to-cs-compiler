@@ -508,9 +508,20 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     .expand_macro_call(&m.macro_call().unwrap())
                     .unwrap()
                     .value;
-                let expr = ast::MacroStmts::cast(macro_call.clone())
-                    .unwrap_or_else(|| panic!("{:?}", macro_call));
-                self.emit_block_contents(out, expr.statements(), expr.expr(), option)
+                if let Some(stmts) = ast::MacroStmts::cast(macro_call.clone()) {
+                    self.emit_block_contents(out, stmts.statements(), stmts.expr(), option)
+                } else if let Some(expr) = ast::Expr::cast(macro_call.clone()) {
+                    let inner_str = self.emit_expr_str_ast(&expr);
+                    if option.returning {
+                        out.wln(code!("return ", inner_str, ";"));
+                        EmittedExprInfo::diverging()
+                    } else {
+                        out.wln(code!("", inner_str, ";"));
+                        EmittedExprInfo::non_diverging()
+                    }
+                } else {
+                    panic!("{:?}", macro_call)
+                }
             }
             ast::Expr::MacroExpr(ref m) => {
                 let (s, info) = self.emit_expr_macro(&expr, &m.macro_call().unwrap());
