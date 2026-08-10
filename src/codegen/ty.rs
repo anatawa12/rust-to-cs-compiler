@@ -550,6 +550,9 @@ impl<'db> CodeGenerator<'db> {
             // TODO: consider generic params
             {
                 //self.includes_type_in_generic_params_cs_constraints()
+                if param.name(db).as_str() == "H" {
+                    print!("");
+                }
                 return SpecialImplBounds::ArgOnlyTrait(param_ty);
             }
             // */

@@ -3,7 +3,7 @@ use crate::codegen::expr::ItemInBody;
 use crate::codegen::item_exclusion::{is_r2cs_native, should_emit};
 use crate::codegen::simple_extensions::*;
 use crate::codegen::ty::generic_types;
-use hir::{AssocItem, HasContainer, Impl, ItemContainer, Trait, Type};
+use hir::{AssocItem, GenericDef, HasContainer, Impl, ItemContainer, Trait, Type};
 use itertools::Itertools;
 use ra_internal::function::FunctionExt;
 use ra_internal::*;
@@ -194,7 +194,12 @@ impl<'db> CodeGenerator<'db> {
                 "",
                 cs_type,
                 Some((
-                    &trait_ref.generic_types(db).flatten().collect::<Vec<_>>(),
+                    &(trait_ref.generic_types(db).flatten())
+                        .chain(
+                            generic_types(&GenericDef::from(base_method).params0(db))
+                                .map(|x| x.ty(db).with_owner(impl_)),
+                        )
+                        .collect::<Vec<_>>(),
                     impl_.into(),
                 )),
             );
