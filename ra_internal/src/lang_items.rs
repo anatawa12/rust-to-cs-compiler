@@ -137,6 +137,8 @@ our_lang_items! {
     pin = core::pin::pin as Macro;
     unreachable = core::unreachable as Macro;
     matches = core::matches as Macro;
+    write = core::write as Macro;
+    format_args = core::format_args as Macro;
     Send = core::marker::Send as Trait;
     Into = core::convert::Into as Trait;
 
