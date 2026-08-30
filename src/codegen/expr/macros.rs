@@ -110,116 +110,17 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 )
             };
 
-            let mut exprs = vec![];
-            let mut named_exprs = HashMap::new();
-
-            while parser.take_token(T![,]) && !parser.is_end() {
-                if let Some(ident) = parser.take_look_ahead(|p| {
-                    if let Some(ident) = p.take_token_value(T![ident])
-                        && let Some(_eq) = p.take_token_value(T![=])
-                    {
-                        Some(ident)
-                    } else {
-                        None
-                    }
-                }) {
-                    // ident =
-                    let Some(expr) = parser.next_expr() else {
-                        panic!(
-                            "expected expression but not after '{ident} =' at {}",
-                            self.expr_location_ast(macro_call)
-                        );
-                    };
-
-                    named_exprs.insert(ident.text().to_owned(), expr);
-                } else {
-                    // simple expr
-                    let token = { parser.clone() }.next();
-                    let Some(expr) = parser.next_expr() else {
-                        panic!(
-                            "expected expression but not at {} ({token:?})",
-                            self.expr_location_ast(macro_call)
-                        );
-                    };
-                    exprs.push(expr);
-                }
-            }
+            let (exprs, named_exprs) = parse_format_args_params(self, macro_call, &mut parser);
 
             let Some(segments) = parse_format_string(&format) else {
                 panic!("Invalid format string at {}", self.expr_location_ast(expr))
             };
 
-            let sem_scope = self.sem.scope(format_literal.syntax()).unwrap();
             // NOTE: this might breaks execution order of each format args
-
-            let mut result = code!(r##"$""##);
-            for segment in segments {
-                match segment {
-                    FormatSegment::Literal(literal) => {
-                        write!(result, "{}", literal.escape_default());
-                    }
-                    FormatSegment::Escaped(c) => write!(result, "{c}{c}"), // C# also uses '{' '}'
-                    FormatSegment::Placeholder(var, f) => {
-                        // display
-                        let expr = match var {
-                            Either::Left(i) => Either::Left(&exprs[i as usize]),
-                            Either::Right(name) => named_exprs
-                                .get(name)
-                                .map(Either::Left)
-                                .unwrap_or(Either::Right(name)),
-                        };
-
-                        let formatter = match f {
-                            "" => "DisplayStr",
-                            "?" => "DebugStr",
-                            _ => panic!(
-                                "Unsupported format specifier: {f} at {}",
-                                self.expr_location_ast(macro_call)
-                            ),
-                        };
-
-                        match expr {
-                            Either::Left(expr) => {
-                                result
-                                    .w("{")
-                                    .w(self.emit_expr_str_ast(expr))
-                                    .w(".")
-                                    .w(formatter)
-                                    .w("()}");
-                            }
-                            Either::Right(name) => {
-                                let mut resolved = None;
-                                sem_scope.process_all_names(&mut |cur_name, def| {
-                                    if cur_name.as_str() == name {
-                                        resolved.get_or_insert(def);
-                                    }
-                                });
-                                let Some(resolved) = resolved else {
-                                    panic!(
-                                        "Unresolved format param name {name} at {}",
-                                        self.expr_location_ast(macro_call)
-                                    );
-                                };
-                                let expr = match resolved {
-                                    hir::ScopeDef::Local(l) => self.binding_name_ast(l),
-                                    _ => {
-                                        sem_scope
-                                            .speculative_resolve(&ast::make::path_from_text(name));
-                                        panic!(
-                                            "Unsupported path in format: {name} at {} ({resolved:?})",
-                                            self.expr_location_ast(macro_call),
-                                        )
-                                    }
-                                };
-                                result.w("{").w(expr).w(".").w(formatter).w("()}");
-                            }
-                        }
-                    }
-                }
-            }
-            result.w("\"");
-
-            return (result, EmittedExprInfo::non_diverging());
+            (
+                emit_format_args_to_string(self, macro_call, &segments, &exprs, &named_exprs),
+                EmittedExprInfo::non_diverging(),
+            )
         } else {
             (
                 fcode!(
@@ -434,4 +335,126 @@ fn parse_format_string(format: &str) -> Option<Vec<FormatSegment<'_>>> {
     }
 
     Some(segments)
+}
+
+fn parse_format_args_params(
+    bg: &BodyGen,
+    macro_call: &ast::MacroCall,
+    parser: &mut MacroParser<impl Iterator<Item = TokenTreeElement> + Clone>,
+) -> (Vec<ast::Expr>, HashMap<String, ast::Expr>) {
+    let mut exprs = vec![];
+    let mut named_exprs = HashMap::new();
+
+    while parser.take_token(T![,]) && !parser.is_end() {
+        if let Some(ident) = parser.take_look_ahead(|p| {
+            if let Some(ident) = p.take_token_value(T![ident])
+                && let Some(_eq) = p.take_token_value(T![=])
+            {
+                Some(ident)
+            } else {
+                None
+            }
+        }) {
+            // ident =
+            let Some(expr) = parser.next_expr() else {
+                panic!(
+                    "expected expression but not after '{ident} =' at {}",
+                    bg.expr_location_ast(macro_call)
+                );
+            };
+
+            named_exprs.insert(ident.text().to_owned(), expr);
+        } else {
+            // simple expr
+            let token = { parser.clone() }.next();
+            let Some(expr) = parser.next_expr() else {
+                panic!(
+                    "expected expression but not at {} ({token:?})",
+                    bg.expr_location_ast(macro_call)
+                );
+            };
+            exprs.push(expr);
+        }
+    }
+
+    (exprs, named_exprs)
+}
+
+fn emit_format_args_to_string(
+    bg: &BodyGen,
+    macro_call: &ast::MacroCall,
+    segments: &[FormatSegment],
+    exprs: &[ast::Expr],
+    named_exprs: &HashMap<String, ast::Expr>,
+) -> Code {
+    let sem_scope = bg.sem.scope(macro_call.syntax()).unwrap();
+
+    let mut result = code!(r##"$""##);
+    for segment in segments {
+        match segment {
+            FormatSegment::Literal(literal) => {
+                write!(result, "{}", literal.escape_default());
+            }
+            FormatSegment::Escaped(c) => write!(result, "{c}{c}"), // C# also uses '{' '}'
+            &FormatSegment::Placeholder(var, f) => {
+                // display
+                let expr = match var {
+                    Either::Left(i) => Either::Left(&exprs[i as usize]),
+                    Either::Right(name) => named_exprs
+                        .get(name)
+                        .map(Either::Left)
+                        .unwrap_or(Either::Right(name)),
+                };
+
+                let formatter = match f {
+                    "" => "DisplayStr",
+                    "?" => "DebugStr",
+                    _ => panic!(
+                        "Unsupported format specifier: {f} at {}",
+                        bg.expr_location_ast(macro_call)
+                    ),
+                };
+
+                match expr {
+                    Either::Left(expr) => {
+                        result
+                            .w("{")
+                            .w(bg.emit_expr_str_ast(expr))
+                            .w(".")
+                            .w(formatter)
+                            .w("()}");
+                    }
+                    Either::Right(name) => {
+                        let mut resolved = None;
+                        sem_scope.process_all_names(&mut |cur_name, def| {
+                            if cur_name.as_str() == name {
+                                resolved.get_or_insert(def);
+                            }
+                        });
+                        let Some(resolved) = resolved else {
+                            panic!(
+                                "Unresolved format param name {name} at {}",
+                                bg.expr_location_ast(macro_call)
+                            );
+                        };
+                        let expr = match resolved {
+                            hir::ScopeDef::Local(l) => bg.binding_name_ast(l),
+                            _ => {
+                                sem_scope.speculative_resolve(&ast::make::path_from_text(name));
+                                panic!(
+                                    "Unsupported path in format: {name} at {} ({resolved:?})",
+                                    bg.expr_location_ast(macro_call),
+                                )
+                            }
+                        };
+                        result.w("{").w(expr).w(".").w(formatter).w("()}");
+                    }
+                }
+            }
+        }
+    }
+
+    result.w("\"");
+
+    result
 }
