@@ -5,7 +5,6 @@ use itertools::{Either, Itertools};
 use std::collections::HashMap;
 use std::iter;
 use std::str::FromStr;
-use syntax::ast::{MacroCall, TokenTree};
 use syntax::{AstNode, NodeOrToken, SyntaxKind, SyntaxToken, T, ast};
 
 impl<'g, 'db> BodyGen<'g, 'db> {
@@ -93,28 +92,9 @@ impl<'g, 'db> BodyGen<'g, 'db> {
         } else if Some(macro_) == self.lang_items.format_args()
             || Some(macro_) == self.lang_items.format()
         {
-            let mut parser = MacroParser::new(self.cg, &tt);
-            let format = if let ast::Expr::Literal(format_literal) = parser.next_expr().unwrap()
-                && let ast::LiteralKind::String(s) = format_literal.kind()
-                && let Ok(format) = s.value()
-            {
-                format.into_owned()
-            } else {
-                panic!(
-                    "Expected format_args!() first argument to be a literal at {}",
-                    self.expr_location_ast(expr)
-                )
-            };
-
-            let (exprs, named_exprs) = parse_format_args_params(self, macro_call, &mut parser);
-
-            let Some(segments) = parse_format_string(&format) else {
-                panic!("Invalid format string at {}", self.expr_location_ast(expr))
-            };
-
             // NOTE: this might breaks execution order of each format args
             (
-                emit_format_args_to_string(self, macro_call, &segments, &exprs, &named_exprs),
+                parse_rest_as_format_args(self, macro_call, &mut MacroParser::new(self.cg, &tt)),
                 EmittedExprInfo::non_diverging(),
             )
         } else if Some(macro_) == self.lang_items.log_trace() {
@@ -159,33 +139,11 @@ impl<'g, 'db> BodyGen<'g, 'db> {
 fn log_macro(
     level: &str,
     bg: &BodyGen,
-    macro_call: &MacroCall,
-    tt: TokenTree,
+    macro_call: &ast::MacroCall,
+    tt: ast::TokenTree,
 ) -> (Code, EmittedExprInfo) {
-    let mut parser = MacroParser::new(bg.cg, &tt);
-    let format = if let ast::Expr::Literal(format_literal) = parser.next_expr().unwrap()
-        && let ast::LiteralKind::String(s) = format_literal.kind()
-        && let Ok(format) = s.value()
-    {
-        format.into_owned()
-    } else {
-        panic!(
-            "Expected format_args!() first argument to be a literal at {}",
-            bg.expr_location_ast(macro_call)
-        )
-    };
-
-    let (exprs, named_exprs) = parse_format_args_params(bg, macro_call, &mut parser);
-
-    let Some(segments) = parse_format_string(&format) else {
-        panic!(
-            "Invalid format string at {}",
-            bg.expr_location_ast(macro_call)
-        )
-    };
-
-    // NOTE: this might breaks execution order of each format args
-    let format_string = emit_format_args_to_string(bg, macro_call, &segments, &exprs, &named_exprs);
+    let format_string =
+        parse_rest_as_format_args(bg, macro_call, &mut MacroParser::new(bg.cg, &tt));
     (
         code!("Logging.", level, "(", format_string, ")"),
         EmittedExprInfo::non_diverging(),
@@ -322,6 +280,35 @@ enum FormatSegment<'a> {
     Literal(&'a str),
     Escaped(char),
     Placeholder(Either<u64, &'a str>, &'a str),
+}
+
+fn parse_rest_as_format_args(
+    bg: &BodyGen,
+    macro_call: &ast::MacroCall,
+    parser: &mut MacroParser<impl Iterator<Item = TokenTreeElement> + Clone>,
+) -> Code {
+    let format = if let ast::Expr::Literal(format_literal) = parser.next_expr().unwrap()
+        && let ast::LiteralKind::String(s) = format_literal.kind()
+        && let Ok(format) = s.value()
+    {
+        format.into_owned()
+    } else {
+        panic!(
+            "Expected format_args!() first argument to be a literal at {}",
+            bg.expr_location_ast(macro_call)
+        )
+    };
+
+    let (exprs, named_exprs) = parse_format_args_params(bg, macro_call, parser);
+
+    let Some(segments) = parse_format_string(&format) else {
+        panic!(
+            "Invalid format string at {}",
+            bg.expr_location_ast(macro_call)
+        )
+    };
+
+    emit_format_args_to_string(bg, macro_call, &segments, &exprs, &named_exprs)
 }
 
 fn parse_format_string(format: &str) -> Option<Vec<FormatSegment<'_>>> {
