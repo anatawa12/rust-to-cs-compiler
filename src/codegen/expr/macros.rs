@@ -5,6 +5,7 @@ use itertools::{Either, Itertools};
 use std::collections::HashMap;
 use std::iter;
 use std::str::FromStr;
+use syntax::ast::{MacroCall, TokenTree};
 use syntax::{AstNode, NodeOrToken, SyntaxKind, SyntaxToken, T, ast};
 
 impl<'g, 'db> BodyGen<'g, 'db> {
@@ -116,6 +117,16 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 emit_format_args_to_string(self, macro_call, &segments, &exprs, &named_exprs),
                 EmittedExprInfo::non_diverging(),
             )
+        } else if Some(macro_) == self.lang_items.log_trace() {
+            log_macro("trace", self, macro_call, tt)
+        } else if Some(macro_) == self.lang_items.log_debug() {
+            log_macro("debug", self, macro_call, tt)
+        } else if Some(macro_) == self.lang_items.log_info() {
+            log_macro("info", self, macro_call, tt)
+        } else if Some(macro_) == self.lang_items.log_warn() {
+            log_macro("warn", self, macro_call, tt)
+        } else if Some(macro_) == self.lang_items.log_error() {
+            log_macro("error", self, macro_call, tt)
         } else {
             (
                 fcode!(
@@ -143,6 +154,42 @@ impl<'g, 'db> BodyGen<'g, 'db> {
             || Some(macro_) == self.lang_items.write()
             || is_inline
     }
+}
+
+fn log_macro(
+    level: &str,
+    bg: &BodyGen,
+    macro_call: &MacroCall,
+    tt: TokenTree,
+) -> (Code, EmittedExprInfo) {
+    let mut parser = MacroParser::new(bg.cg, &tt);
+    let format = if let ast::Expr::Literal(format_literal) = parser.next_expr().unwrap()
+        && let ast::LiteralKind::String(s) = format_literal.kind()
+        && let Ok(format) = s.value()
+    {
+        format.into_owned()
+    } else {
+        panic!(
+            "Expected format_args!() first argument to be a literal at {}",
+            bg.expr_location_ast(macro_call)
+        )
+    };
+
+    let (exprs, named_exprs) = parse_format_args_params(bg, macro_call, &mut parser);
+
+    let Some(segments) = parse_format_string(&format) else {
+        panic!(
+            "Invalid format string at {}",
+            bg.expr_location_ast(macro_call)
+        )
+    };
+
+    // NOTE: this might breaks execution order of each format args
+    let format_string = emit_format_args_to_string(bg, macro_call, &segments, &exprs, &named_exprs);
+    (
+        code!("Logging.", level, "(", format_string, ")"),
+        EmittedExprInfo::non_diverging(),
+    )
 }
 
 type TokenTreeElement = NodeOrToken<ast::TokenTree, SyntaxToken>;

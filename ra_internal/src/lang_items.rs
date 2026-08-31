@@ -130,6 +130,7 @@ our_lang_items! {
         extern crate core;
         extern crate alloc;
         extern crate std;
+        extern crate log;
     }
 
     // core
@@ -155,6 +156,13 @@ our_lang_items! {
     OsString = std::ffi::OsString as Struct;
     IntoIterator = std::iter::IntoIterator as Trait;
     Result = std::result::Result as Enum;
+
+    // log
+    log_trace = log::trace as Macro;
+    log_debug = log::debug as Macro;
+    log_info = log::info as Macro;
+    log_warn = log::warn as Macro;
+    log_error = log::error as Macro;
 }
 
 lang_item_wrapper! {
