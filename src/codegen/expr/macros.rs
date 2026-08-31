@@ -129,6 +129,12 @@ impl<'g, 'db> BodyGen<'g, 'db> {
             } else {
                 panic!("Unsupported cfg expression: {}", tt_as_str);
             }
+        } else if Some(macro_) == self.lang_items.lazy_static() {
+            // TODO? consider generating static initializer pattern?
+            (
+                code!("/* lazy_static placeholder */"),
+                EmittedExprInfo::non_diverging(),
+            )
         } else {
             (
                 fcode!(

@@ -131,6 +131,7 @@ our_lang_items! {
         extern crate alloc;
         extern crate std;
         extern crate log;
+        extern crate lazy_static;
     }
 
     // core
@@ -165,6 +166,9 @@ our_lang_items! {
     log_info = log::info as Macro;
     log_warn = log::warn as Macro;
     log_error = log::error as Macro;
+
+    //lazy_static
+    lazy_static = lazy_static::lazy_static as Macro;
 }
 
 lang_item_wrapper! {
