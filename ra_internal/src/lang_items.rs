@@ -140,6 +140,7 @@ our_lang_items! {
     matches = core::matches as Macro;
     write = core::write as Macro;
     format_args = core::format_args as Macro;
+    cfg = core::cfg as Macro;
     Send = core::marker::Send as Trait;
     Into = core::convert::Into as Trait;
 

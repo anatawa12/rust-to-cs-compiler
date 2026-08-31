@@ -122,6 +122,13 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 code!("Asserts.assert(", condition, ", () => ", format_string, ")"),
                 EmittedExprInfo::non_diverging(),
             )
+        } else if Some(macro_) == self.lang_items.cfg() {
+            let tt_as_str = tt.syntax().to_string();
+            if tt_as_str == "(windows)" {
+                ("Cfg.IsWindows()".into(), EmittedExprInfo::non_diverging())
+            } else {
+                panic!("Unsupported cfg expression: {}", tt_as_str);
+            }
         } else {
             (
                 fcode!(
