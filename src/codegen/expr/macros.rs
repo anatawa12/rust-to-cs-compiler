@@ -1,6 +1,6 @@
 use super::{BodyGen, EmittedExprInfo};
 use crate::codegen::output::Code;
-use crate::codegen::{CodeGenerator, item_exclusion};
+use crate::codegen::{CodeGenerator, item_exclusion, names};
 use itertools::{Either, Itertools};
 use std::collections::HashMap;
 use std::iter;
@@ -89,23 +89,18 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 self.emit_expr_str_ast(&parser.next_expr().unwrap()),
                 EmittedExprInfo::non_diverging(),
             )
-        } else if Some(macro_) == self.lang_items.format_args() {
+        } else if Some(macro_) == self.lang_items.format_args()
+            || Some(macro_) == self.lang_items.format()
+        {
             let mut parser = MacroParser::new(self.cg, &tt);
-            let ast::Expr::Literal(format_literal) = parser.next_expr().unwrap() else {
+            let format = if let ast::Expr::Literal(format_literal) = parser.next_expr().unwrap()
+                && let ast::LiteralKind::String(s) = format_literal.kind()
+                && let Ok(format) = s.value()
+            {
+                format.into_owned()
+            } else {
                 panic!(
                     "Expected format_args!() first argument to be a literal at {}",
-                    self.expr_location_ast(expr)
-                )
-            };
-            let ast::LiteralKind::String(s) = format_literal.kind() else {
-                panic!(
-                    "Expected format_args!() first argument to be a string literal at {}",
-                    self.expr_location_ast(expr)
-                )
-            };
-            let Ok(format) = s.value() else {
-                panic!(
-                    "Expected format_args!() first argument to be a valid string literal at {}",
                     self.expr_location_ast(expr)
                 )
             };
@@ -439,6 +434,15 @@ fn emit_format_args_to_string(
                         };
                         let expr = match resolved {
                             hir::ScopeDef::Local(l) => bg.binding_name_ast(l),
+                            hir::ScopeDef::ModuleDef(hir::ModuleDef::Const(const_)) => {
+                                bg.const_path_cs(const_)
+                            }
+                            hir::ScopeDef::ModuleDef(hir::ModuleDef::Static(static_)) => {
+                                let mut path = bg.module_class_cs(static_.module(bg.db));
+                                path.push('.');
+                                path.push_str(&names::static_name(static_.name(bg.db).as_str()));
+                                path
+                            }
                             _ => {
                                 sem_scope.speculative_resolve(&ast::make::path_from_text(name));
                                 panic!(

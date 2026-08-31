@@ -144,6 +144,7 @@ our_lang_items! {
 
     // alloc
     vec = alloc::vec as Macro;
+    format = alloc::format as Macro;
     Cow = alloc::borrow::Cow as Enum;
     CowBorrowed = alloc::borrow::Cow::Borrowed as EnumVariant;
     CowOwned = alloc::borrow::Cow::Owned as EnumVariant;
