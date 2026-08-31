@@ -107,6 +107,21 @@ impl<'g, 'db> BodyGen<'g, 'db> {
             log_macro("warn", self, macro_call, tt)
         } else if Some(macro_) == self.lang_items.log_error() {
             log_macro("error", self, macro_call, tt)
+        } else if Some(macro_) == self.lang_items.assert() {
+            let parser = &mut MacroParser::new(self.cg, &tt);
+            let Some(condition) = parser.next_expr() else {
+                panic!(
+                    "Expected assert!() first argument to be a condition at {}",
+                    self.expr_location_ast(macro_call)
+                )
+            };
+            parser.take_token(T![,]);
+            let condition = self.emit_expr_str_ast(&condition);
+            let format_string = parse_rest_as_format_args(self, macro_call, parser);
+            (
+                code!("Asserts.assert(", condition, ", () => ", format_string, ")"),
+                EmittedExprInfo::non_diverging(),
+            )
         } else {
             (
                 fcode!(

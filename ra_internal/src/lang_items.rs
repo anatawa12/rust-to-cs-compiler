@@ -152,6 +152,7 @@ our_lang_items! {
 
     // std
     panic = std::panic as Macro;
+    assert = std::assert as Macro;
     OsStr = std::ffi::OsStr as Struct;
     OsString = std::ffi::OsString as Struct;
     IntoIterator = std::iter::IntoIterator as Trait;
