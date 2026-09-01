@@ -132,6 +132,7 @@ our_lang_items! {
         extern crate std;
         extern crate log;
         extern crate lazy_static;
+        extern crate futures;
     }
 
     // core
@@ -169,6 +170,9 @@ our_lang_items! {
 
     //lazy_static
     lazy_static = lazy_static::lazy_static as Macro;
+
+    // futures
+    try_join = futures::try_join as Macro;
 }
 
 lang_item_wrapper! {

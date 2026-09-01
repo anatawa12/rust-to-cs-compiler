@@ -1,6 +1,7 @@
 use super::{BodyGen, EmittedExprInfo};
 use crate::codegen::output::Code;
 use crate::codegen::{CodeGenerator, item_exclusion, names};
+use hir::tt;
 use itertools::{Either, Itertools};
 use std::collections::HashMap;
 use std::iter;
@@ -133,6 +134,25 @@ impl<'g, 'db> BodyGen<'g, 'db> {
             // TODO? consider generating static initializer pattern?
             (
                 code!("/* lazy_static placeholder */"),
+                EmittedExprInfo::non_diverging(),
+            )
+        } else if Some(macro_) == self.lang_items.try_join() {
+            let parser = &mut MacroParser::new(self.cg, &tt);
+
+            let mut exprs = vec![];
+            while !parser.is_end() {
+                let Some(expr) = parser.next_expr() else {
+                    panic!("Expected expression");
+                };
+                exprs.push(self.emit_expr_str_ast(&expr));
+                if !parser.take_token(T![,]) && !parser.is_end() {
+                    panic!("Expected comma at {}", self.expr_location_ast(&expr));
+                }
+            }
+
+            // TODO? consider generating static initializer pattern?
+            (
+                code!("await RustTask.TryJoin(", join(exprs, ", "), ")"),
                 EmittedExprInfo::non_diverging(),
             )
         } else {

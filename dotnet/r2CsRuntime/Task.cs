@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
+using VrcGetVpm;
 
 namespace r2CsRuntime;
 
@@ -194,6 +195,8 @@ public class RustCancellationException : Exception
 public static class RustTask
 {
     public static RustTask<T> New<T>(Func<RustTask<T>> closure) => closure();
+
+    public static RustTask<crt_Core.mod_Result.s_Result<(T1, T2), TE>> TryJoin<T1, T2, TE>(RustTask<crt_Core.mod_Result.s_Result<T1, TE>> t1, RustTask<crt_Core.mod_Result.s_Result<T2, TE>> t2) => throw null;
 
     public static async RustTask<T> FromTaskWithCancellationToken<T>(Func<CancellationToken, Task<T>> action)
     {
