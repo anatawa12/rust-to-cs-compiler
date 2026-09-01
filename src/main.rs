@@ -28,7 +28,7 @@ fn load_workspace_from_cargo(
     };
     cargo_config.cfg_overrides.global =
         CfgDiff::new(vec![CfgAtom::Flag(Symbol::intern("r2cs"))], vec![]);
-    let ws = ProjectWorkspace::load(manifest, &cargo_config, &|_| {}).unwrap();
+    let mut ws = ProjectWorkspace::load(manifest, &cargo_config, &|_| {}).unwrap();
 
     let load_config = LoadCargoConfig {
         load_out_dirs_from_check: true,
@@ -37,6 +37,11 @@ fn load_workspace_from_cargo(
         num_worker_threads: 10,
         proc_macro_processes: 10,
     };
+
+    let build_scripts = ws
+        .run_build_scripts(&cargo_config, &|_| {})
+        .expect("error running build scripts");
+    ws.set_build_scripts(build_scripts);
 
     let (db, vfs, _proc_macro) = load_workspace(ws, env, &load_config).unwrap();
 
