@@ -156,16 +156,11 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 EmittedExprInfo::non_diverging(),
             )
         } else {
-            (
-                fcode!(
-                    "/* macro name {macro_path} */ macro_{short_name}()",
-                    macro_path = macro_call.path().unwrap().syntax().text(),
-                    short_name = (macro_call.path().unwrap().segments().last().unwrap())
-                        .syntax()
-                        .text(),
-                ),
-                EmittedExprInfo::non_diverging(),
-            )
+            panic!(
+                "unsupported macro {macro_path} at {loc}",
+                macro_path = macro_call.path().unwrap().syntax().text(),
+                loc = self.expr_location_ast(expr),
+            );
         }
     }
 
