@@ -3,6 +3,7 @@ use crate::codegen::simple_extensions::*;
 pub mod output;
 #[macro_use]
 mod impl_from;
+mod body;
 mod constructable;
 pub mod decl;
 mod dyn_compatibility;
