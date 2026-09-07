@@ -140,7 +140,7 @@ def_eir!(
             // there is zero body for this expr
         },
         WhileExpr {
-            label: Label,
+            label: Option<Label>,
             condition: Expr,
             loop_body: BlockExpr,
         },
@@ -509,5 +509,14 @@ impl LowerToEir for ast::NameRef {
 
     fn lower_to_eir(self, _: &LowerToEirCtx) -> NameRef {
         NameRef::Ast(self)
+    }
+}
+
+impl NameRef {
+    pub fn text(&self) -> &str {
+        match self {
+            NameRef::Ast(ast) => ast.text(),
+            NameRef::CSharp(code) => code,
+        }
     }
 }
