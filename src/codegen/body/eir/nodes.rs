@@ -6,10 +6,10 @@ use std::rc::Rc;
 use syntax::ast;
 
 def_eir!(
-    #[common_info = expr_info: ExprInfo]
+    #[common_info]
     pub enum Expr {
         #[manual_construct]
-        #[common_info_ast_ty = std::convert::Infallible]
+        #[common_info_ast_ty = NoNode]
         RawCodeExpr {
             code: output::Code,
         },
@@ -181,11 +181,9 @@ def_eir!(
                 lhs: ctx.lower(bin.lhs()).lower_cast("lhs"),
                 rhs: ctx.lower(bin.rhs()).lower_cast("rhs"),
                 op_details: LowerCast::<(_, _)>::lower_cast(bin.op_details(), "op_details").1,
-                expr_info: ExprInfo::Ast(bin),
+                node_info: ExprInfo::Ast(bin),
             })),*/
-            ast::Expr::MacroExpr(macro_expr) => {
-                ctx.emit_expr_macro(macro_expr)
-            }
+            ast::Expr::MacroExpr(macro_expr) => ctx.emit_expr_macro(macro_expr),
             ast::Expr::ArrayExpr(array) => match array.kind() {
                 ArrayExprKind::Repeat {
                     initializer,
@@ -193,12 +191,14 @@ def_eir!(
                 } => From::from(new_eir_node!(ArrayRepeatExpr {
                     initializer: ctx.lower(initializer).lower_cast("initializer"),
                     repeat: ctx.lower(repeat).lower_cast("repeat"),
-                    expr_info: ExprInfo::Ast(array),
+                    node_info: NodeInfo::Ast(array),
                 })),
-                ArrayExprKind::ElementList(elements) => From::from(new_eir_node!(ArrayElementListExpr {
-                    elements: ctx.lower(elements),
-                    expr_info: ExprInfo::Ast(array),
-                })),
+                ArrayExprKind::ElementList(elements) => {
+                    From::from(new_eir_node!(ArrayElementListExpr {
+                        elements: ctx.lower(elements),
+                        node_info: NodeInfo::Ast(array),
+                    }))
+                }
             },
             ast::Expr::BlockExpr(block) => From::from(ctx.lower(block)),
             test => panic!("{:?}", test),
@@ -214,7 +214,7 @@ impl LowerToEir for ast::BlockExpr {
             modifier: ctx.lower(self.modifier()),
             statements: ctx.lower(self.stmt_list().unwrap().statements()),
             tail_expr: ctx.lower(self.stmt_list().unwrap().tail_expr()),
-            expr_info: ExprInfo::Ast(self),
+            node_info: NodeInfo::Ast(self),
         })
     }
 }
@@ -286,7 +286,7 @@ def_eir!(
 );
 
 def_eir!(
-    #[common_info = expr_info: ExprInfo]
+    #[common_info]
     pub struct MatchArm {
         pat: Pat,
         guard: Option<Expr>,
@@ -310,7 +310,7 @@ def_eir!(
 );
 
 def_eir!(
-    #[common_info = expr_info: ExprInfo]
+    #[common_info]
     pub struct RecordExprField {
         field_name: Option<NameRef>,
         expr: Expr,
@@ -379,7 +379,7 @@ pub enum FormatArgsSegment {
 }
 
 def_eir!(
-    #[common_info = pat_info: ExprInfo]
+    #[common_info]
     pub enum Pat {
         // BoxPat // nightly
         // ConstBlockPat // nightly
@@ -475,7 +475,7 @@ impl LowerToEir for ast::SlicePatComponents {
 
 def_eir!(
     pub struct RecordPatField {
-        name_ref: NameRef,
+        field_name: NameOrNameRef,
         pat: Pat,
     }
 );
@@ -495,6 +495,17 @@ impl LowerToEir for ast::Path {
 
     fn lower_to_eir(self, _: &LowerToEirCtx) -> Path {
         Path::Ast(self)
+    }
+}
+
+impl EirNode for Path {
+    type AstNode = ast::Path;
+
+    fn node_info(&self) -> NodeInfo<Self::AstNode> {
+        match self {
+            Path::Ast(ast) => NodeInfo::Ast(ast.clone()),
+            Path::ScopedName { .. } => NodeInfo::None,
+        }
     }
 }
 
@@ -520,3 +531,26 @@ impl NameRef {
         }
     }
 }
+
+impl EirNode for NameRef {
+    type AstNode = ast::NameRef;
+
+    fn node_info(&self) -> NodeInfo<Self::AstNode> {
+        match self {
+            NameRef::Ast(ast) => NodeInfo::Ast(ast.clone()),
+            NameRef::CSharp(..) => NodeInfo::None,
+        }
+    }
+}
+
+def_eir!(
+    #[common_info]
+    pub enum NameOrNameRef {
+        Name(_),
+        NameRef(_),
+    }
+
+    fn lower_to_eir(self, ctx: &LowerToEirCtx) -> Eir {
+        match self {}
+    }
+);

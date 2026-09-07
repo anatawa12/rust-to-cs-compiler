@@ -11,13 +11,13 @@ macro_rules! raw_code_expr {
     (node: $expr: expr, $($tt:tt)*) => {
         crate::codegen::body::eir::Expr::from(new_eir_node!(crate::codegen::body::eir::RawCodeExpr {
             code: fcode!($($tt)*),
-            expr_info: crate::codegen::body::eir::ExprInfo::Ast($expr.into()),
+            node_info: crate::codegen::body::eir::NodeInfo::Ast($expr.into()),
         }))
     };
     ($($tt:tt)*) => {
         crate::codegen::body::eir::Expr::from(new_eir_node!(crate::codegen::body::eir::RawCodeExpr {
             code: fcode!($($tt)*),
-            expr_info: crate::codegen::body::eir::ExprInfo::None,
+            node_info: crate::codegen::body::eir::NodeInfo::None,
         }))
     };
 }
@@ -40,7 +40,7 @@ impl<'g, 'db> LowerToEirCtx<'g, 'db> {
                 From::from(new_eir_node!(eir::MacroStmts {
                     statements: self.lower(stmts.statements()),
                     tail_expr: self.lower(stmts.expr()),
-                    expr_info: eir::ExprInfo::Ast(macro_expr),
+                    node_info: eir::NodeInfo::Ast(macro_expr),
                 }))
             } else if let Some(expr) = ast::Expr::cast(expanded.clone()) {
                 self.lower(expr)
@@ -85,7 +85,7 @@ impl<'g, 'db> LowerToEirCtx<'g, 'db> {
 
                     From::from(new_eir_node!(eir::VecListExpr {
                         elements: args.into(),
-                        expr_info: eir::ExprInfo::Ast(macro_expr),
+                        node_info: eir::NodeInfo::Ast(macro_expr),
                     }))
                 } else {
                     panic!(
@@ -96,7 +96,7 @@ impl<'g, 'db> LowerToEirCtx<'g, 'db> {
             } else {
                 From::from(new_eir_node!(eir::VecListExpr {
                     elements: eir_children![],
-                    expr_info: eir::ExprInfo::Ast(macro_expr),
+                    node_info: eir::NodeInfo::Ast(macro_expr),
                 }))
             }
         } else if Some(macro_) == self.cg.lang_items.pin() {
@@ -138,11 +138,11 @@ impl<'g, 'db> LowerToEirCtx<'g, 'db> {
                                 params: eir_children![],
                             }),
                             body: parse_rest_as_format_args(self, macro_call, parser).into(),
-                            expr_info: eir::ExprInfo::None,
+                            node_info: eir::NodeInfo::None,
                         })),
                     ]
                 }),
-                expr_info: eir::ExprInfo::Ast(macro_expr.into()),
+                node_info: eir::NodeInfo::Ast(macro_expr.into()),
             }))
         } else if Some(macro_) == self.cg.lang_items.cfg() {
             let tt_as_str = tt.syntax().to_string();
@@ -152,7 +152,7 @@ impl<'g, 'db> LowerToEirCtx<'g, 'db> {
                     arg_list: new_eir_node!(eir::ArgList {
                         args: eir_children![]
                     }),
-                    expr_info: eir::ExprInfo::Ast(macro_expr.into()),
+                    node_info: eir::NodeInfo::Ast(macro_expr.into()),
                 }))
             } else {
                 panic!("Unsupported cfg expression: {}", tt_as_str);
@@ -181,9 +181,9 @@ impl<'g, 'db> LowerToEirCtx<'g, 'db> {
                 expr: From::from(new_eir_node!(eir::CallExpr {
                     expr: raw_code_expr!("RustTask.TryJoin"),
                     arg_list: new_eir_node!(eir::ArgList { args: exprs.into() }),
-                    expr_info: eir::ExprInfo::None,
+                    node_info: eir::NodeInfo::None,
                 })),
-                expr_info: eir::ExprInfo::Ast(macro_expr.into()),
+                node_info: eir::NodeInfo::Ast(macro_expr.into()),
             }))
         } else {
             panic!(
@@ -224,7 +224,7 @@ fn log_macro(
                     .into(),
             ],
         }),
-        expr_info: eir::ExprInfo::Ast(macro_expr.into()),
+        node_info: eir::NodeInfo::Ast(macro_expr.into()),
     }))
 }
 
@@ -514,7 +514,7 @@ fn emit_format_args_to_string(
                                 scope: macro_call.syntax().clone(),
                                 name: name.to_string(),
                             },
-                            expr_info: eir::ExprInfo::None,
+                            node_info: eir::NodeInfo::None,
                         }))
                     }),
                 };
@@ -536,7 +536,7 @@ fn emit_format_args_to_string(
                         arg_list: new_eir_node!(eir::ArgList {
                             args: eir_children![]
                         }),
-                        expr_info: eir::ExprInfo::None,
+                        node_info: eir::NodeInfo::None,
                     }
                 ))));
             }
@@ -545,6 +545,6 @@ fn emit_format_args_to_string(
 
     new_eir_node!(eir::FormatArgsExpr {
         segments: result.into(),
-        expr_info: eir::ExprInfo::None,
+        node_info: eir::NodeInfo::None,
     })
 }

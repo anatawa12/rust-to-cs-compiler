@@ -18,12 +18,13 @@ mod eir_macros;
 
 // needs new_eir_node
 mod children;
-mod expr_info;
 mod macro_expansion;
+mod node_info;
 mod nodes;
 
 use crate::codegen::{CodeGenerator, output};
 use ast::HasAttrs as _;
+use std::fmt::Display;
 use syntax::ast;
 use syntax::ast::ArrayExprKind;
 use syntax::ast::{HasArgList, HasLoopBody, HasName, RangeItem};
@@ -34,13 +35,13 @@ pub use ast::Item;
 pub use ast::Label;
 pub use ast::Lifetime;
 pub use ast::LiteralKind;
+pub use ast::Name;
 pub use ast::Ordering;
 pub use ast::RangeOp;
 pub use ast::UnaryOp;
-
-//pub use children::Children;
 pub(super) use children::ChildrenContainer;
-pub use expr_info::*;
+use itertools::Either;
+pub use node_info::*;
 pub use nodes::*;
 
 pub struct LowerToEirCtx<'g, 'db> {
@@ -56,6 +57,47 @@ impl LowerToEirCtx<'_, '_> {
 pub trait LowerToEir {
     type Eir;
     fn lower_to_eir(self, ctx: &LowerToEirCtx) -> Self::Eir;
+}
+
+pub trait EirNode {
+    type AstNode: ast::AstNode;
+    fn node_info(&self) -> NodeInfo<Self::AstNode>;
+
+    fn syntax_text(&self) -> impl Display {
+        match self.node_info() {
+            NodeInfo::Ast(ast) => Either::Left(ast::AstNode::syntax(&ast).text()),
+            NodeInfo::None => Either::Right("no-syntax"),
+        }
+    }
+}
+
+#[derive(Clone)]
+enum NoNode {}
+
+impl ast::AstNode for NoNode {
+    fn can_cast(_: syntax::SyntaxKind) -> bool
+    where
+        Self: Sized,
+    {
+        false
+    }
+
+    fn cast(_: syntax::SyntaxNode) -> Option<Self>
+    where
+        Self: Sized,
+    {
+        None
+    }
+
+    fn syntax(&self) -> &syntax::SyntaxNode {
+        match *self {}
+    }
+}
+
+impl From<NoNode> for ast::Expr {
+    fn from(value: NoNode) -> Self {
+        match value {}
+    }
 }
 
 impl<T: LowerToEir> LowerToEir for Option<T> {
@@ -79,27 +121,27 @@ pub trait HasAttrs {
 
 impl HasAttrs for Expr {
     fn attrs(&self) -> impl Iterator<Item = ast::Attr> {
-        match self.expr_info() {
-            ExprInfo::Ast(ast) => Some(ast.attrs()).into_iter().flatten(),
-            ExprInfo::None => None.into_iter().flatten(),
+        match self.node_info() {
+            NodeInfo::Ast(ast) => Some(ast.attrs()).into_iter().flatten(),
+            NodeInfo::None => None.into_iter().flatten(),
         }
     }
 }
 
 impl HasAttrs for MatchArm {
     fn attrs(&self) -> impl Iterator<Item = ast::Attr> {
-        match self.expr_info() {
-            ExprInfo::Ast(ast) => Some(ast.attrs()).into_iter().flatten(),
-            ExprInfo::None => None.into_iter().flatten(),
+        match self.node_info() {
+            NodeInfo::Ast(ast) => Some(ast.attrs()).into_iter().flatten(),
+            NodeInfo::None => None.into_iter().flatten(),
         }
     }
 }
 
 impl HasAttrs for RecordExprField {
     fn attrs(&self) -> impl Iterator<Item = ast::Attr> {
-        match self.expr_info() {
-            ExprInfo::Ast(ast) => Some(ast.attrs()).into_iter().flatten(),
-            ExprInfo::None => None.into_iter().flatten(),
+        match self.node_info() {
+            NodeInfo::Ast(ast) => Some(ast.attrs()).into_iter().flatten(),
+            NodeInfo::None => None.into_iter().flatten(),
         }
     }
 }
@@ -127,13 +169,25 @@ macro_rules! lower_identity {
         }
     };
 }
+macro_rules! ast_eir_node {
+    ($ty: ty) => {
+        lower_identity!($ty);
+        impl EirNode for $ty {
+            type AstNode = Self;
+
+            fn node_info(&self) -> NodeInfo<Self::AstNode> {
+                NodeInfo::Ast(self.clone())
+            }
+        }
+    };
+}
 
 lower_identity!(UnaryOp);
 lower_identity!(BinaryOp);
 lower_identity!(RangeOp);
 lower_identity!(BlockModifier);
-lower_identity!(Lifetime);
-lower_identity!(Label);
 lower_identity!(LiteralKind);
-lower_identity!(ast::Type);
-lower_identity!(ast::Name);
+ast_eir_node!(Lifetime);
+ast_eir_node!(Label);
+ast_eir_node!(ast::Type);
+ast_eir_node!(Name);
