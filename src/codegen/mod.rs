@@ -30,6 +30,7 @@ mod simple_extensions {
 }
 
 use self::output::Code;
+use crate::codegen::body::EirSemantics;
 use crate::codegen::constructable::ConstructableDef;
 use crate::codegen::decl::CsFunctionType;
 use crate::codegen::id_map::IdMap;
@@ -52,6 +53,7 @@ pub struct CodeGenerator<'db> {
     vfs: &'db Vfs,
     krate: Crate,
     sem: Semantics<'db, dyn HirDatabase>,
+    eir_sem: EirSemantics<'db>,
     lang_items: &'db LangItems,
     trait_first_traits: Vec<hir::Trait>,
     // some internal information that hard is to determine
@@ -80,6 +82,7 @@ impl<'db> CodeGenerator<'db> {
             vfs,
             krate,
             sem: Semantics::new_dyn(db),
+            eir_sem: EirSemantics::new(db, vfs),
             lang_items: LangItems::new(db, krate),
             trait_first_traits,
 

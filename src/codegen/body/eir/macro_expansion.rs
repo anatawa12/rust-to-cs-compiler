@@ -25,7 +25,7 @@ macro_rules! raw_code_expr {
 impl<'g, 'db> LowerToEirCtx<'g, 'db> {
     pub(super) fn emit_expr_macro(&self, macro_expr: ast::MacroExpr) -> eir::Expr {
         let macro_call = &macro_expr.macro_call().unwrap();
-        let Some(macro_) = self.cg.sem.resolve_macro_call(macro_call) else {
+        let Some(macro_) = self.cg.eir_sem.resolve_macro_call(macro_call) else {
             panic!(
                 "Unresolved macro call at {}",
                 self.cg.expr_location_ast(macro_call)
@@ -35,7 +35,7 @@ impl<'g, 'db> LowerToEirCtx<'g, 'db> {
 
         if self.should_inline_macro(macro_call) {
             // Macro that expands
-            let expanded = self.cg.sem.expand_macro_call(macro_call).unwrap().value;
+            let expanded = self.cg.eir_sem.expand_macro_call(macro_call).unwrap().value;
             if let Some(stmts) = ast::MacroStmts::cast(expanded.clone()) {
                 From::from(new_eir_node!(eir::MacroStmts {
                     statements: self.lower(stmts.statements()),
@@ -195,7 +195,7 @@ impl<'g, 'db> LowerToEirCtx<'g, 'db> {
     }
 
     pub(super) fn should_inline_macro(&self, macro_call: &ast::MacroCall) -> bool {
-        let Some(macro_) = self.cg.sem.resolve_macro_call(macro_call) else {
+        let Some(macro_) = self.cg.eir_sem.resolve_macro_call(macro_call) else {
             panic!(
                 "Unresolved macro call at {}",
                 self.cg.expr_location_ast(macro_call)
@@ -339,10 +339,10 @@ impl<'g, 'db, I: Iterator<Item = TokenTreeElement>> MacroParser<'g, 'db, I> {
             .last();
         let first_token = first_token(first.clone());
         let last_token = last.map(last_token);
-        let first_descenders = self.cg.sem.descend_into_macros(first_token.clone());
+        let first_descenders = self.cg.eir_sem.descend_into_macros(first_token.clone());
         let last_descenders = last_token
             .clone()
-            .map(|token| self.cg.sem.descend_into_macros(token));
+            .map(|token| self.cg.eir_sem.descend_into_macros(token));
         let last_descenders = last_descenders.as_ref().unwrap_or(&first_descenders);
         Some(
             (first_descenders.iter())
