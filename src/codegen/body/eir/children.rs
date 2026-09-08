@@ -3,7 +3,7 @@ use std::rc::Rc;
 use syntax::ast;
 
 // Children
-pub(in super::super) struct ChildrenContainer<T>(Rc<[T]>);
+pub struct ChildrenContainer<T>(Rc<[T]>);
 
 #[derive(Clone)]
 pub struct Children<T>(Rc<[T]>, usize);

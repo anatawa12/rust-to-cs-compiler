@@ -72,7 +72,7 @@ pub trait EirNode {
 }
 
 #[derive(Clone)]
-enum NoNode {}
+pub enum NoNode {}
 
 impl ast::AstNode for NoNode {
     fn can_cast(_: syntax::SyntaxKind) -> bool

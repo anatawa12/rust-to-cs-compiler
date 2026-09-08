@@ -46,7 +46,7 @@ impl<Eir> LowerCast<Eir> for Option<Eir> {
 }
 
 /// The helper trait for determining the type of eir child access method
-pub(super) trait EirAccessType {
+pub trait EirAccessType {
     type Result;
     fn cast(&self) -> Self::Result;
 }
