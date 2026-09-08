@@ -156,8 +156,8 @@ def_eir!(
         #[manual_construct]
         #[common_info_ast_ty = ast::MacroExpr]
         VecRepeatExpr {
-            initializer: Option<Expr>,
-            repeat: Option<Expr>,
+            initializer: Expr,
+            repeat: Expr,
         },
         #[manual_construct]
         #[common_info_ast_ty = ast::MacroExpr]
@@ -325,6 +325,7 @@ def_eir!(
 );
 
 def_eir!(
+    #[common_info]
     pub struct SelfParam {}
 );
 
@@ -552,5 +553,14 @@ def_eir!(
 
     fn lower_to_eir(self, ctx: &LowerToEirCtx) -> Eir {
         match self {}
+    }
+);
+
+// Container of Expr
+def_eir!(
+    #[common_info]
+    pub struct Fn {
+        param_list: ParamList,
+        body: Option<BlockExpr>,
     }
 );
