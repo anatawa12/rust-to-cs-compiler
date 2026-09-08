@@ -44,7 +44,7 @@ use ra_internal::function::FunctionExt;
 use ra_internal::*;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use syntax::{SyntaxNode, ast};
+use syntax::{AstNode, NodeOrToken, SyntaxNode, SyntaxToken, ast};
 use vfs::Vfs;
 
 pub struct CodeGenerator<'db> {
@@ -93,7 +93,9 @@ impl<'db> CodeGenerator<'db> {
         &self,
         f: InFile<impl as_syntax_node_ptr::IntoSyntaxNodePtr>,
     ) -> String {
-        let loc = self.sem.diagnostics_display_range(f.map(|x| x.as_ptr()));
+        let loc = self
+            .sem
+            .diagnostics_display_range_for_range(f.map(|x| x.text_range()));
 
         let path = self.vfs.file_path(loc.file_id);
         let line_index = line_index(self.db, loc.file_id);
@@ -109,16 +111,36 @@ impl<'db> CodeGenerator<'db> {
     pub fn node_location_ast(&self, node: &SyntaxNode) -> String {
         self.location_with_file(InFile::new(self.sem.hir_file_for(node), node.clone()))
     }
+
+    pub fn any_location_ast(&self, node: &NodeOrToken<impl AstNode, SyntaxToken>) -> String {
+        match node {
+            NodeOrToken::Node(node) => self.location_with_file(InFile::new(
+                self.sem.hir_file_for(node.syntax()),
+                node.syntax(),
+            )),
+            NodeOrToken::Token(token) => self.location_with_file(InFile::new(
+                self.sem.hir_file_for(&token.parent().unwrap()),
+                token,
+            )),
+        }
+    }
 }
 
 pub mod as_syntax_node_ptr {
 
     use hir::ModuleSource;
+    use hir::tt::TextRange;
     use syntax::ast::Impl;
-    use syntax::{AstNode, AstPtr, SyntaxNode, SyntaxNodePtr};
+    use syntax::{AstNode, AstPtr, SyntaxNode, SyntaxNodePtr, SyntaxToken};
 
     pub trait IntoSyntaxNodePtr {
-        fn as_ptr(&self) -> SyntaxNodePtr;
+        fn text_range(&self) -> TextRange;
+    }
+
+    impl<T: IntoSyntaxNodePtr> IntoSyntaxNodePtr for &T {
+        fn text_range(&self) -> TextRange {
+            (*self).text_range()
+        }
     }
 
     macro_rules! impls {
@@ -131,7 +153,7 @@ pub mod as_syntax_node_ptr {
             $(
                 impl IntoSyntaxNodePtr for $ty {
                     #[inline]
-                    fn as_ptr(&$self) -> SyntaxNodePtr {
+                    fn text_range(&$self) -> TextRange {
                         $body
                     }
                 }
@@ -140,15 +162,16 @@ pub mod as_syntax_node_ptr {
     }
 
     impls!(
-        |self: SyntaxNodePtr| *self,
-        |self: SyntaxNode| SyntaxNodePtr::new(self),
-        |self: ModuleSource| self.node().as_ptr(),
-        |self: Impl| self.syntax().as_ptr(),
+        |self: SyntaxNodePtr| (*self).text_range(),
+        |self: SyntaxNode| SyntaxNodePtr::new(self).text_range(),
+        |self: SyntaxToken| self.text_range(),
+        |self: ModuleSource| self.node().text_range(),
+        |self: Impl| self.syntax().text_range(),
     );
 
     impl<T: AstNode> IntoSyntaxNodePtr for AstPtr<T> {
-        fn as_ptr(&self) -> SyntaxNodePtr {
-            self.syntax_node_ptr()
+        fn text_range(&self) -> TextRange {
+            self.syntax_node_ptr().text_range()
         }
     }
 }

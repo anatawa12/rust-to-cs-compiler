@@ -216,13 +216,43 @@ fn log_macro(
     macro_call: &ast::MacroCall,
     tt: ast::TokenTree,
 ) -> eir::Expr {
+    let mut parser = MacroParser::new(ctx.cg, &tt);
+
+    while !parser
+        .peek()
+        .is_some_and(|x| x.as_token().is_some_and(|x| x.kind() == SyntaxKind::STRING))
+    {
+        // kv
+        eprintln!("parsing kv with {:?}", parser.peek());
+        assert!(
+            parser
+                .next()
+                .is_some_and(|x| x.as_token().is_some_and(|x| x.kind() == SyntaxKind::IDENT)),
+            "not ident at {}",
+            ctx.cg.any_location_ast(parser.peek().unwrap())
+        );
+        assert!(
+            parser
+                .next()
+                .is_some_and(|x| x.as_token().is_some_and(|x| x.kind() == SyntaxKind::EQ)),
+            "not eq at {}",
+            ctx.cg.any_location_ast(parser.peek().unwrap())
+        );
+        parser.next_expr();
+        assert!(
+            parser.next().is_some_and(|x| {
+                x.as_token()
+                    .is_some_and(|x| x.kind() == SyntaxKind::SEMICOLON)
+            }),
+            "not SEMI at {}",
+            ctx.cg.any_location_ast(parser.peek().unwrap())
+        );
+    }
+
     From::from(new_eir_node!(eir::CallExpr {
         expr: raw_code_expr!("Logging.{level}").into(),
         arg_list: new_eir_node!(eir::ArgList {
-            args: eir_children![
-                parse_rest_as_format_args(ctx, macro_call, &mut MacroParser::new(ctx.cg, &tt))
-                    .into(),
-            ],
+            args: eir_children![parse_rest_as_format_args(ctx, macro_call, &mut parser).into(),],
         }),
         node_info: eir::NodeInfo::Ast(macro_expr.into()),
     }))
@@ -269,6 +299,14 @@ impl<'g, 'db, I: Iterator<Item = TokenTreeElement>> MacroParser<'g, 'db, I> {
             None
         } else {
             self.iterator.next()
+        }
+    }
+
+    pub fn peek(&mut self) -> Option<&TokenTreeElement> {
+        if self.is_end() {
+            None
+        } else {
+            self.iterator.peek()
         }
     }
 
