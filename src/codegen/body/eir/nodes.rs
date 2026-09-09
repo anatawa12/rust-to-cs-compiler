@@ -12,6 +12,7 @@ def_eir!(
         #[common_info_ast_ty = NoNode]
         RawCodeExpr {
             code: output::Code,
+            divergent: bool,
         },
         #[manual_construct]
         #[common_info_ast_ty = ast::ArrayExpr]

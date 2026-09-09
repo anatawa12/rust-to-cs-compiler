@@ -7,20 +7,79 @@ use std::iter;
 use std::str::FromStr;
 use syntax::{AstNode, NodeOrToken, SyntaxKind, SyntaxToken, T, ast};
 
-macro_rules! raw_code_expr {
-    (node: $expr: expr, $($tt:tt)*) => {
-        crate::codegen::body::eir::Expr::from(new_eir_node!(crate::codegen::body::eir::RawCodeExpr {
-            code: fcode!($($tt)*),
-            node_info: crate::codegen::body::eir::NodeInfo::Ast($expr.into()),
-        }))
+macro_rules! ___raw_code_expr_generator {
+    (
+        [$dollar: tt]
+        [
+            $(($field: ident: @$kind: ident = $key: ident))*
+        ]
+    ) => {
+        ___raw_code_expr_generator!(
+            @expand [$dollar]
+            [ [] ]
+            [ $(($field: @$kind = $key))* ]
+        );
     };
-    ($($tt:tt)*) => {
-        crate::codegen::body::eir::Expr::from(new_eir_node!(crate::codegen::body::eir::RawCodeExpr {
-            code: fcode!($($tt)*),
-            node_info: crate::codegen::body::eir::NodeInfo::None,
-        }))
+
+    (
+        @expand
+        [$dollar: tt]
+        [
+            $([$($existing:tt)*])*
+        ]
+        [
+            ($l_field: ident: @$l_kind: ident = $l_key: ident)
+            $($rest:tt)*
+        ]
+    ) => {
+        ___raw_code_expr_generator!(
+            @expand [$dollar]
+            [
+                $([$($existing)* ($l_field: @$l_kind = $l_key)])*
+                $([$($existing)* ($l_field: @$l_kind)])*
+            ]
+            [ $($rest)* ]
+        );
+    };
+    (
+        @expand
+        [$dollar: tt]
+        [
+            $([
+                $(($field: ident: @$kind: ident$( = $key: ident)?))*
+            ])*
+        ]
+        []
+    ) => {
+        macro_rules! raw_code_expr {
+            (@node) => { crate::codegen::body::eir::NodeInfo::None };
+            (@node $dollar expr: expr) => { crate::codegen::body::eir::NodeInfo::Ast($dollar expr.into()) };
+
+            (@flag) => { false };
+            (@flag $dollar expr: expr) => { $dollar expr };
+
+            $(
+            (
+                $($($key: $dollar $key:expr,)?)*
+                $dollar( $dollar tt: tt )*
+            ) => {
+                crate::codegen::body::eir::Expr::from(new_eir_node!(crate::codegen::body::eir::RawCodeExpr {
+                    code: fcode!($dollar($dollar tt)*),
+                    $($field: raw_code_expr!(@$kind $($dollar $key)?),)*
+                }))
+            };
+            )*
+        }
     };
 }
+
+___raw_code_expr_generator!(
+    [$]
+    [
+        (node_info: @node = node)
+        (divergent: @flag = divergent)
+    ]
+);
 
 impl<'g, 'db> LowerToEirCtx<'g, 'db> {
     pub(super) fn emit_expr_macro(&self, macro_expr: ast::MacroExpr) -> eir::Expr {
@@ -28,7 +87,7 @@ impl<'g, 'db> LowerToEirCtx<'g, 'db> {
         let Some(macro_) = self.cg.eir_sem.resolve_macro_call(macro_call) else {
             panic!(
                 "Unresolved macro call at {}",
-                self.cg.expr_location_ast(macro_call)
+                self.cg.eir_sem.location(macro_call)
             )
         };
         let tt = macro_call.token_tree().unwrap();
@@ -45,16 +104,12 @@ impl<'g, 'db> LowerToEirCtx<'g, 'db> {
             } else if let Some(expr) = ast::Expr::cast(expanded.clone()) {
                 self.lower(expr)
             } else {
-                panic!(
-                    "{:?} at {}",
-                    expanded,
-                    self.cg.expr_location_ast(macro_call)
-                )
+                panic!("{:?} at {}", expanded, self.cg.eir_sem.location(macro_call))
             }
         } else if Some(macro_) == self.cg.lang_items.unreachable() {
-            raw_code_expr!(r#"throw new PanicException("unreachable")"#)
+            raw_code_expr!(divergent: true, r#"throw new PanicException("unreachable")"#)
         } else if Some(macro_) == self.cg.lang_items.panic() {
-            raw_code_expr!(r#"throw new PanicException("panic")"#)
+            raw_code_expr!(divergent: true, r#"throw new PanicException("panic")"#)
         } else if Some(macro_) == self.cg.lang_items.vec() {
             // let ty = (self.cg.sem.type_of_expr(expr)).unwrap_or_else(|| {
             //     panic!(
@@ -71,7 +126,7 @@ impl<'g, 'db> LowerToEirCtx<'g, 'db> {
                     //let count = parser.next_expr().unwrap();
                     panic!(
                         "Unsupported vec![T; N] call at {}",
-                        self.cg.expr_location_ast(macro_call)
+                        self.cg.eir_sem.location(macro_call)
                     )
                 } else if parser.take_token(T![,]) || parser.is_end() {
                     let mut args = Vec::new();
@@ -90,7 +145,7 @@ impl<'g, 'db> LowerToEirCtx<'g, 'db> {
                 } else {
                     panic!(
                         "Unsupported vec![] call at {}",
-                        self.cg.expr_location_ast(macro_call)
+                        self.cg.eir_sem.location(macro_call)
                     )
                 }
             } else {
@@ -122,7 +177,7 @@ impl<'g, 'db> LowerToEirCtx<'g, 'db> {
             let Some(condition) = parser.next_expr() else {
                 panic!(
                     "Expected assert!() first argument to be a condition at {}",
-                    self.cg.expr_location_ast(macro_call)
+                    self.cg.eir_sem.location(macro_call)
                 )
             };
             parser.take_token(T![,]);
@@ -170,10 +225,7 @@ impl<'g, 'db> LowerToEirCtx<'g, 'db> {
                 };
                 exprs.push(self.lower(expr));
                 if !parser.take_token(T![,]) && !parser.is_end() {
-                    panic!(
-                        "Expected comma at {}",
-                        self.cg.expr_location_ast(macro_call)
-                    );
+                    panic!("Expected comma at {}", self.cg.eir_sem.location(macro_call));
                 }
             }
 
@@ -189,7 +241,7 @@ impl<'g, 'db> LowerToEirCtx<'g, 'db> {
             panic!(
                 "unsupported macro {macro_path} at {loc}",
                 macro_path = macro_call.path().unwrap().syntax().text(),
-                loc = self.cg.expr_location_ast(macro_call),
+                loc = self.cg.eir_sem.location(macro_call),
             );
         }
     }
@@ -198,7 +250,7 @@ impl<'g, 'db> LowerToEirCtx<'g, 'db> {
         let Some(macro_) = self.cg.eir_sem.resolve_macro_call(macro_call) else {
             panic!(
                 "Unresolved macro call at {}",
-                self.cg.expr_location_ast(macro_call)
+                self.cg.eir_sem.location(macro_call)
             )
         };
         let is_inline = item_exclusion::has_attr(macro_, "r2cs_inline", self.cg.db);
@@ -229,14 +281,14 @@ fn log_macro(
                 .next()
                 .is_some_and(|x| x.as_token().is_some_and(|x| x.kind() == SyntaxKind::IDENT)),
             "not ident at {}",
-            ctx.cg.any_location_ast(parser.peek().unwrap())
+            ctx.cg.eir_sem.location(parser.peek().unwrap())
         );
         assert!(
             parser
                 .next()
                 .is_some_and(|x| x.as_token().is_some_and(|x| x.kind() == SyntaxKind::EQ)),
             "not eq at {}",
-            ctx.cg.any_location_ast(parser.peek().unwrap())
+            ctx.cg.eir_sem.location(parser.peek().unwrap())
         );
         parser.next_expr();
         assert!(
@@ -245,7 +297,7 @@ fn log_macro(
                     .is_some_and(|x| x.kind() == SyntaxKind::SEMICOLON)
             }),
             "not SEMI at {}",
-            ctx.cg.any_location_ast(parser.peek().unwrap())
+            ctx.cg.eir_sem.location(parser.peek().unwrap())
         );
     }
 
@@ -354,7 +406,7 @@ impl<'g, 'db, I: Iterator<Item = TokenTreeElement>> MacroParser<'g, 'db, I> {
                 .unwrap_or_else(|| {
                     panic!(
                         "failed to resolve expr {}, {first:?}",
-                        self.cg.node_location_ast(&first_token.parent().unwrap()),
+                        self.cg.eir_sem.location(&first_token.parent().unwrap()),
                     )
                 }),
         )
@@ -411,7 +463,7 @@ fn parse_rest_as_format_args(
     } else {
         panic!(
             "Expected format_args!() first argument to be a literal at {}",
-            ctx.cg.expr_location_ast(macro_call)
+            ctx.cg.eir_sem.location(macro_call)
         )
     };
 
@@ -420,7 +472,7 @@ fn parse_rest_as_format_args(
     let Some(segments) = parse_format_string(&format) else {
         panic!(
             "Invalid format string at {}",
-            ctx.cg.expr_location_ast(macro_call)
+            ctx.cg.eir_sem.location(macro_call)
         )
     };
 
@@ -504,7 +556,7 @@ fn parse_format_args_params(
             let Some(expr) = parser.next_expr() else {
                 panic!(
                     "expected expression but not after '{ident} =' at {}",
-                    ctx.cg.expr_location_ast(macro_call)
+                    ctx.cg.eir_sem.location(macro_call)
                 );
             };
 
@@ -515,7 +567,7 @@ fn parse_format_args_params(
             let Some(expr) = parser.next_expr() else {
                 panic!(
                     "expected expression but not at {} ({token:?})",
-                    ctx.cg.expr_location_ast(macro_call)
+                    ctx.cg.eir_sem.location(macro_call)
                 );
             };
             exprs.push(ctx.lower(expr));
@@ -562,7 +614,7 @@ fn emit_format_args_to_string(
                     "?" => "DebugStr",
                     _ => panic!(
                         "Unsupported format specifier: {f} at {}",
-                        ctx.cg.expr_location_ast(macro_call)
+                        ctx.cg.eir_sem.location(macro_call)
                     ),
                 };
 
