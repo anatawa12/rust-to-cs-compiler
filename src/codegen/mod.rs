@@ -7,7 +7,6 @@ mod body;
 mod constructable;
 pub mod decl;
 mod dyn_compatibility;
-pub mod expr;
 mod function_resolution;
 mod id_map;
 pub mod item_exclusion;
@@ -37,22 +36,17 @@ use crate::codegen::id_map::IdMap;
 use crate::codegen::item_exclusion::{is_r2cs_native, should_emit};
 use crate::codegen::ty::generic_types;
 use hir::{
-    Adt, AssocItem, Crate, Impl, InFile, Module, ModuleDef, Semantics, StructKind, TypeParam,
-    db::HirDatabase, sym,
+    Adt, AssocItem, Crate, Impl, Module, ModuleDef, StructKind, TypeParam, db::HirDatabase, sym,
 };
-use ide_db::line_index;
 use ra_internal::function::FunctionExt;
 use ra_internal::*;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use syntax::{AstNode, NodeOrToken, SyntaxNode, SyntaxToken, ast};
 use vfs::Vfs;
 
 pub struct CodeGenerator<'db> {
     db: &'db dyn HirDatabase,
-    vfs: &'db Vfs,
     krate: Crate,
-    sem: Semantics<'db, dyn HirDatabase>,
     eir_sem: EirSemantics<'db>,
     lang_items: &'db LangItems,
     trait_first_traits: Vec<hir::Trait>,
@@ -79,9 +73,7 @@ impl<'db> CodeGenerator<'db> {
 
         Self {
             db,
-            vfs,
             krate,
-            sem: Semantics::new_dyn(db),
             eir_sem: EirSemantics::new(db, vfs),
             lang_items: LangItems::new(db, krate),
             trait_first_traits,
@@ -89,92 +81,6 @@ impl<'db> CodeGenerator<'db> {
             impl_ty_param_id: IdMap::new("impl_"),
             special_types: RefCell::new(HashMap::new()),
             type_map: TyMap::new(),
-        }
-    }
-
-    pub fn location_with_file(
-        &self,
-        f: InFile<impl as_syntax_node_ptr::IntoSyntaxNodePtr>,
-    ) -> String {
-        let loc = self
-            .sem
-            .diagnostics_display_range_for_range(f.map(|x| x.text_range()));
-
-        let path = self.vfs.file_path(loc.file_id);
-        let line_index = line_index(self.db, loc.file_id);
-        let line_col = line_index.line_col(loc.range.start());
-
-        format!("{}:{}:{}", path, line_col.line + 1, line_col.col + 1)
-    }
-
-    pub fn expr_location_ast(&self, expr: &impl ast::AstNode) -> String {
-        self.node_location_ast(expr.syntax())
-    }
-
-    pub fn node_location_ast(&self, node: &SyntaxNode) -> String {
-        self.location_with_file(InFile::new(self.sem.hir_file_for(node), node.clone()))
-    }
-
-    pub fn any_location_ast(&self, node: &NodeOrToken<impl AstNode, SyntaxToken>) -> String {
-        match node {
-            NodeOrToken::Node(node) => self.location_with_file(InFile::new(
-                self.sem.hir_file_for(node.syntax()),
-                node.syntax(),
-            )),
-            NodeOrToken::Token(token) => self.location_with_file(InFile::new(
-                self.sem.hir_file_for(&token.parent().unwrap()),
-                token,
-            )),
-        }
-    }
-}
-
-pub mod as_syntax_node_ptr {
-
-    use hir::ModuleSource;
-    use hir::tt::TextRange;
-    use syntax::ast::Impl;
-    use syntax::{AstNode, AstPtr, SyntaxNode, SyntaxNodePtr, SyntaxToken};
-
-    pub trait IntoSyntaxNodePtr {
-        fn text_range(&self) -> TextRange;
-    }
-
-    impl<T: IntoSyntaxNodePtr> IntoSyntaxNodePtr for &T {
-        fn text_range(&self) -> TextRange {
-            (*self).text_range()
-        }
-    }
-
-    macro_rules! impls {
-        (
-            $(
-                |$self: tt: $ty: ty| $body: expr
-            ),*
-            $(,)?
-        ) => {
-            $(
-                impl IntoSyntaxNodePtr for $ty {
-                    #[inline]
-                    fn text_range(&$self) -> TextRange {
-                        $body
-                    }
-                }
-            )*
-        };
-    }
-
-    impls!(
-        |self: SyntaxNodePtr| (*self).text_range(),
-        |self: SyntaxNode| SyntaxNodePtr::new(self).text_range(),
-        |self: SyntaxToken| self.text_range(),
-        |self: ModuleSource| self.node().text_range(),
-        |self: Impl| self.syntax().text_range(),
-    );
-
-    impl<T: AstNode> IntoSyntaxNodePtr for AstPtr<T> {
-        fn text_range(&self) -> TextRange {
-            self.syntax_node_ptr().text_range()
         }
     }
 }

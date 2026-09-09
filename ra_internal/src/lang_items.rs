@@ -147,6 +147,7 @@ our_lang_items! {
     Into = core::convert::Into as Trait;
 
     // alloc
+    Vec = alloc::vec::Vec as Struct;
     vec = alloc::vec as Macro;
     format = alloc::format as Macro;
     Cow = alloc::borrow::Cow as Enum;

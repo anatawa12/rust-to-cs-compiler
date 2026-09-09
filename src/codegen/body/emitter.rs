@@ -1,31 +1,26 @@
 //! Generates C# expressions and statements from Rust HIR bodies.
 
-mod macros;
-
-use super::{CodeGenerator, generic_args, names, output::Code};
+use super::super::{CodeGenerator, generic_args, names, output::Code};
+use crate::codegen::body::eir;
+use crate::codegen::body::eir::EirNode;
+use crate::codegen::body::semantics::EirSemantics;
 use crate::codegen::constructable::{Constructable, ConstructableDef};
 use crate::codegen::decl::CsFunctionType;
 use crate::codegen::function_resolution::{ArgSource, ResolvedFunction};
 use crate::codegen::simple_extensions::*;
 use crate::codegen::ty::CsTypeOption;
 use hir::db::HirDatabase;
-use hir::{
-    HasContainer, HasCrate, Local, ModuleDef, PathResolution, Semantics, StructKind, Type,
-    TypeInfo, sym,
-};
+use hir::{HasContainer, HasCrate, Local, ModuleDef, PathResolution, StructKind, Type, sym};
 use itertools::Either;
 use ra_internal::*;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign};
 use std::sync::atomic::AtomicUsize;
-use syntax::ast::{
-    self, ArithOp, AstNode as _, HasArgList as _, HasLoopBody as _, LogicOp, RangeItem as _,
-};
-use syntax::ast::{BinaryOp, RangeOp, UnaryOp};
+use syntax::ast::{self, ArithOp, BinaryOp, LogicOp, RangeOp, UnaryOp};
 
 /// Generates C# for the body of a single function.
-pub struct BodyGen<'g, 'db> {
+pub struct EirEmitter<'g, 'db> {
     cg: &'g CodeGenerator<'db>,
     /// Mapping from Local to the C# local name allocated for it.
     locals: RefCell<HashMap<Local<'db>, String>>,
@@ -65,7 +60,7 @@ impl hir::HasContainer for ItemInBody {
     }
 }
 
-impl<'g, 'db> std::ops::Deref for BodyGen<'g, 'db> {
+impl<'g, 'db> std::ops::Deref for EirEmitter<'g, 'db> {
     type Target = CodeGenerator<'db>;
 
     fn deref(&self) -> &Self::Target {
@@ -78,7 +73,7 @@ struct CodeContext<'db> {
     returning: hir::Type<'db>,
 }
 
-impl<'g, 'db> BodyGen<'g, 'db> {
+impl<'g, 'db> EirEmitter<'g, 'db> {
     pub fn new(cg: &'g CodeGenerator<'db>, is_async: bool, cs_type: CsFunctionType) -> Self {
         Self {
             cg,
@@ -110,7 +105,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
         }
 
         if let Either::Left(pat) = local.primary_source(self.db).source.value
-            && let Some(new_local) = self.sem.to_def(&pat)
+            && let Some(new_local) = self.eir_sem.to_def(&pat)
             && local != new_local
         {
             self.binding_name_ast(new_local)
@@ -119,7 +114,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
         }
     }
 
-    fn label_name(&self, l: ast::Lifetime) -> String {
+    fn label_name(&self, l: eir::Lifetime) -> String {
         names::camel(&l.text()[1..])
     }
 
@@ -140,7 +135,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     }
 
-    fn check_cfg(&self, value: &impl ast::HasAttrs) -> bool {
+    fn check_cfg(&self, value: &impl eir::HasAttrs) -> bool {
         fn check_meta(meta: ast::Meta, krate: hir::Crate, db: &dyn HirDatabase) -> Option<bool> {
             match meta {
                 ast::Meta::CfgMeta(meta) => {
@@ -200,18 +195,11 @@ impl<'g, 'db> BodyGen<'g, 'db> {
         }
     }
 
-    #[track_caller]
-    fn type_of_expr(&self, expr: &ast::Expr) -> TypeInfo<'db> {
-        self.sem
-            .type_of_expr(expr)
-            .unwrap_or_else(|| panic!("unknown type expr at {}", self.expr_location_ast(expr)))
-    }
-
     /// Emit the full function body block.
     #[tracing::instrument(skip_all)]
-    pub fn emit_function_body(&self, f: ast::Fn, out: &mut Code) {
-        let params = f.param_list().unwrap();
-        let f_def = self.sem.to_def(&f).unwrap();
+    pub fn emit_function_body(&self, f: eir::Fn, out: &mut Code) {
+        let params = f.param_list();
+        let f_def = self.eir_sem.to_def(&f).unwrap();
         let _scope = self.new_ctx(CodeContext {
             is_async: self.is_async(),
             returning: f_def
@@ -221,16 +209,16 @@ impl<'g, 'db> BodyGen<'g, 'db> {
         if let Some(self_param) = params.self_param() {
             match self.cs_type {
                 CsFunctionType::TraitDefaultImpl => {
-                    self.add_local(self.sem.to_def(&self_param).unwrap(), "self".into());
+                    self.add_local(self.eir_sem.to_def(&self_param).unwrap(), "self".into());
                 }
                 _ => {
-                    self.add_local(self.sem.to_def(&self_param).unwrap(), "this".into());
+                    self.add_local(self.eir_sem.to_def(&self_param).unwrap(), "this".into());
                 }
             }
         }
         for param in params.params() {
-            match param.pat().unwrap() {
-                ast::Pat::IdentPat(ident) if let Some(local) = self.sem.to_def(&ident) => {
+            match param.pat() {
+                eir::Pat::IdentPat(ident) if let Some(local) = self.eir_sem.to_def(&ident) => {
                     self.alloc_binding_ast(&local);
                 }
                 _ => {
@@ -306,12 +294,12 @@ impl BitOrAssign<EmittedExprInfo> for EmittedExprInfo {
     }
 }
 
-impl<'g, 'db> BodyGen<'g, 'db> {
+impl<'g, 'db> EirEmitter<'g, 'db> {
     /// Emit an expression as a statement (with semicolon if needed).
     fn emit_expr_as_stmt_ast(
         &self,
         out: &mut Code,
-        expr: ast::Expr,
+        expr: eir::Expr,
         option: ExprGenOption,
     ) -> EmittedExprInfo {
         if !self.check_cfg(&expr) {
@@ -319,12 +307,12 @@ impl<'g, 'db> BodyGen<'g, 'db> {
         }
 
         match expr {
-            ast::Expr::BlockExpr(ref block_expr) if block_expr.modifier().is_none() => {
+            eir::Expr::BlockExpr(block_expr) if block_expr.modifier().is_none() => {
                 let statements = block_expr.statements();
                 let tail = block_expr.tail_expr();
                 self.emit_block_contents(out, statements, tail, option)
             }
-            ast::Expr::ReturnExpr(ret_expr) => {
+            eir::Expr::ReturnExpr(ret_expr) => {
                 if let Some(value_expr) = ret_expr.expr() {
                     let info =
                         self.emit_expr_as_stmt_ast(out, value_expr, ExprGenOption::returning());
@@ -337,13 +325,13 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     EmittedExprInfo::diverging()
                 }
             }
-            ast::Expr::TupleExpr(tuple_expr) if tuple_expr.fields().next().is_none() => {
+            eir::Expr::TupleExpr(tuple_expr) if tuple_expr.fields().next().is_none() => {
                 out.wln("/* () unit expr */;");
                 EmittedExprInfo::non_diverging()
             }
-            ast::Expr::IfExpr(if_expr) => {
-                let condition = if_expr.condition().unwrap();
-                let then_branch = if_expr.then_branch().unwrap();
+            eir::Expr::IfExpr(if_expr) => {
+                let condition = if_expr.condition();
+                let then_branch = if_expr.then_branch();
                 let else_branch = if_expr.else_branch();
 
                 let cond = self.emit_expr_str_ast(&condition);
@@ -352,11 +340,11 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 let then_part = self.emit_expr_as_stmt_ast(out, then_branch.into(), option.clone());
                 out.dedent();
                 let else_part = match else_branch {
-                    Some(ast::ElseBranch::IfExpr(else_if)) => {
+                    Some(eir::ElseBranch::IfExpr(else_if)) => {
                         out.w("} else ");
                         self.emit_expr_as_stmt_ast(out, else_if.into(), option.clone())
                     }
-                    Some(ast::ElseBranch::Block(else_e)) => {
+                    Some(eir::ElseBranch::Block(else_e)) => {
                         out.w("} else {");
                         out.wln("");
                         out.indent();
@@ -373,9 +361,9 @@ impl<'g, 'db> BodyGen<'g, 'db> {
 
                 then_part & else_part
             }
-            ast::Expr::LoopExpr(loop_expr) => {
+            eir::Expr::LoopExpr(loop_expr) => {
                 let label = loop_expr.label();
-                let body = loop_expr.loop_body().unwrap();
+                let body = loop_expr.loop_body();
 
                 let label_str = label
                     .map(|l| format!("{}: ", self.label_name(l.lifetime().unwrap())))
@@ -387,10 +375,10 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 out.wln("}");
                 EmittedExprInfo::diverging()
             }
-            ast::Expr::WhileExpr(while_expr) => {
+            eir::Expr::WhileExpr(while_expr) => {
                 let label = while_expr.label();
-                let condition = while_expr.condition().unwrap();
-                let body = while_expr.loop_body().unwrap();
+                let condition = while_expr.condition();
+                let body = while_expr.loop_body();
 
                 let label_str = label
                     .map(|l| format!("{}: ", self.label_name(l.lifetime().unwrap())))
@@ -406,11 +394,11 @@ impl<'g, 'db> BodyGen<'g, 'db> {
 
                 EmittedExprInfo::non_diverging()
             }
-            ast::Expr::ForExpr(for_expr) => {
+            eir::Expr::ForExpr(for_expr) => {
                 let label = for_expr.label();
-                let pat = for_expr.pat().unwrap();
-                let iterable = for_expr.iterable().unwrap();
-                let body = for_expr.loop_body().unwrap();
+                let pat = for_expr.pat();
+                let iterable = for_expr.iterable();
+                let body = for_expr.loop_body();
 
                 let label_str = label
                     .map(|l| format!("{}: ", self.label_name(l.lifetime().unwrap())))
@@ -431,9 +419,9 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 EmittedExprInfo::non_diverging()
             }
             // TODO? While and For
-            ast::Expr::MatchExpr(match_expr) => {
-                let arms = match_expr.match_arm_list().unwrap();
-                let match_expr = match_expr.expr().unwrap();
+            eir::Expr::MatchExpr(match_expr) => {
+                let arms = match_expr.match_arm_list();
+                let match_expr = match_expr.expr();
                 let scrutinee = self.emit_expr_str_ast(&match_expr);
                 out.w("switch (").w(scrutinee).wln(") {");
                 out.indent();
@@ -441,17 +429,16 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 let mut result = EmittedExprInfo::diverging();
                 for arm in arms.arms() {
                     // Emit pattern check
-                    let pat_cs = self.emit_pattern_ast(&arm.pat().unwrap());
+                    let pat_cs = self.emit_pattern_ast(&arm.pat());
 
                     out.w("case ").w(pat_cs).w(" ");
                     if let Some(guard) = arm.guard() {
                         out.w("when ");
-                        out.w(self.emit_expr_str_ast(&guard.condition().unwrap()));
+                        out.w(self.emit_expr_str_ast(&guard));
                     }
                     out.wln(":{");
                     out.indent();
-                    let arm_res =
-                        self.emit_expr_as_stmt_ast(out, arm.expr().unwrap(), option.clone());
+                    let arm_res = self.emit_expr_as_stmt_ast(out, arm.expr(), option.clone());
                     if !arm_res.diverging {
                         out.wln("break;");
                     }
@@ -465,7 +452,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 out.wln("}");
                 result
             }
-            ast::Expr::BreakExpr(break_expr) => {
+            eir::Expr::BreakExpr(break_expr) => {
                 let label = break_expr.lifetime();
                 let break_expr = break_expr.expr();
 
@@ -482,7 +469,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     EmittedExprInfo::diverging()
                 }
             }
-            ast::Expr::ContinueExpr(continue_expr) => {
+            eir::Expr::ContinueExpr(continue_expr) => {
                 let label = continue_expr.lifetime();
                 // TODO: Labelled continue
                 let label_str = label
@@ -492,8 +479,8 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 EmittedExprInfo::diverging()
             }
 
-            ast::Expr::AwaitExpr(await_expr) => {
-                let inner_str = self.emit_expr_str_ast(&await_expr.expr().unwrap());
+            eir::Expr::AwaitExpr(await_expr) => {
+                let inner_str = self.emit_expr_str_ast(&await_expr.expr());
                 if option.returning {
                     out.wln(code!("return await ", inner_str, ";"));
                     EmittedExprInfo::diverging()
@@ -502,37 +489,14 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     EmittedExprInfo::non_diverging()
                 }
             }
-            ast::Expr::MacroExpr(ref m) if self.should_inline_macro(&m.macro_call().unwrap()) => {
-                let macro_call = self
-                    .sem
-                    .expand_macro_call(&m.macro_call().unwrap())
-                    .unwrap()
-                    .value;
-                if let Some(stmts) = ast::MacroStmts::cast(macro_call.clone()) {
-                    self.emit_block_contents(out, stmts.statements(), stmts.expr(), option)
-                } else if let Some(expr) = ast::Expr::cast(macro_call.clone()) {
-                    let inner_str = self.emit_expr_str_ast(&expr);
-                    if option.returning {
-                        out.wln(code!("return ", inner_str, ";"));
-                        EmittedExprInfo::diverging()
-                    } else {
-                        out.wln(code!("", inner_str, ";"));
-                        EmittedExprInfo::non_diverging()
-                    }
-                } else {
-                    panic!("{:?}", macro_call)
-                }
+            eir::Expr::MacroStmts(stmts) => {
+                self.emit_block_contents(out, stmts.statements(), stmts.tail_expr(), option)
             }
-            ast::Expr::MacroExpr(ref m) => {
-                let (s, info) = self.emit_expr_macro(&expr, &m.macro_call().unwrap());
-                if info.diverging {
-                    out.w(s).wln(";");
-                    info
-                } else if option.returning && !self.returning_type().is_unit() {
-                    out.w("return ").w(s).wln(";");
+            eir::Expr::RawCodeExpr(raw_cod) => {
+                out.wln(code!(raw_cod.code(), ";"));
+                if raw_cod.divergent() {
                     EmittedExprInfo::diverging()
                 } else {
-                    out.w(s).wln(";");
                     EmittedExprInfo::non_diverging()
                 }
             }
@@ -561,12 +525,12 @@ impl<'g, 'db> BodyGen<'g, 'db> {
     fn emit_let_stmt(
         &self,
         out: &mut Code,
-        pat: &ast::Pat,
+        pat: &eir::Pat,
         value_cs: Code,
-        else_gen: impl FnOnce(&BodyGen<'g, 'db>, &mut Code),
+        else_gen: impl FnOnce(&EirEmitter<'g, 'db>, &mut Code),
     ) {
-        if let ast::Pat::IdentPat(ident_pat) = pat {
-            let local = self.sem.to_def(ident_pat).unwrap();
+        if let eir::Pat::IdentPat(ident_pat) = pat {
+            let local = self.eir_sem.to_def(ident_pat).unwrap();
             let cs_local_name = self.alloc_binding_ast(&local);
             out.w("var ").w(cs_local_name).w(" = ").w(value_cs).wln(";");
         } else {
@@ -584,18 +548,18 @@ impl<'g, 'db> BodyGen<'g, 'db> {
     fn emit_block_contents(
         &self,
         out: &mut Code,
-        statements: impl IntoIterator<Item = ast::Stmt>,
-        tail: Option<ast::Expr>,
+        statements: impl IntoIterator<Item = eir::Stmt>,
+        tail: Option<eir::Expr>,
         option: ExprGenOption,
     ) -> EmittedExprInfo {
         let mut info = EmittedExprInfo::non_diverging();
         for stmt in statements {
             match stmt {
-                ast::Stmt::LetStmt(let_stmt) => {
-                    let pat = let_stmt.pat().unwrap();
-                    let _type_ref = let_stmt.ty();
+                eir::Stmt::LetStmt(let_stmt) => {
+                    let pat = let_stmt.pat();
+                    //let _type_ref = let_stmt.ty();
                     let initializer = let_stmt.initializer();
-                    let else_branch = let_stmt.let_else().and_then(|x| x.block_expr());
+                    let else_branch = let_stmt.let_else().map(|x| x.block_expr());
 
                     if let Some(init) = initializer {
                         let init_str = self.emit_expr_str_ast(&init);
@@ -622,42 +586,38 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         }
                     }
                 }
-                ast::Stmt::ExprStmt(expr_stmt) => {
-                    info |= self.emit_expr_as_stmt_ast(
-                        out,
-                        expr_stmt.expr().unwrap(),
-                        option.non_last(),
-                    );
+                eir::Stmt::ExprStmt(expr_stmt) => {
+                    info |= self.emit_expr_as_stmt_ast(out, expr_stmt.expr(), option.non_last());
                 }
 
-                ast::Stmt::Item(ast::Item::Fn(fn_)) => {
-                    let f = self.sem.to_def(&fn_).unwrap();
+                eir::Stmt::Item(ast::Item::Fn(fn_)) => {
+                    let f = self.eir_sem.to_def(&fn_).unwrap();
                     out.wln(format!("// inner fn: {}", f.name(self.db).as_str()));
                     self.add_deferred(f);
                 }
-                ast::Stmt::Item(ast::Item::Enum(adt)) => {
-                    let f = self.sem.to_def(&adt).unwrap();
+                eir::Stmt::Item(ast::Item::Enum(adt)) => {
+                    let f = self.eir_sem.to_def(&adt).unwrap();
                     out.wln(format!("// inner enum: {}", f.name(self.db).as_str()));
                     self.add_deferred(f);
                 }
-                ast::Stmt::Item(ast::Item::Struct(adt)) => {
-                    let f = self.sem.to_def(&adt).unwrap();
+                eir::Stmt::Item(ast::Item::Struct(adt)) => {
+                    let f = self.eir_sem.to_def(&adt).unwrap();
                     out.wln(format!("// inner enum: {}", f.name(self.db).as_str()));
                     self.add_deferred(f);
                 }
-                ast::Stmt::Item(ast::Item::Impl(impl_)) => {
-                    let f = self.sem.to_def(&impl_).unwrap();
+                eir::Stmt::Item(ast::Item::Impl(impl_)) => {
+                    let f = self.eir_sem.to_def(&impl_).unwrap();
                     out.wln("// impl");
                     self.add_deferred(f);
                 }
-                ast::Stmt::Item(ast::Item::Const(c)) => {
-                    let c = self.sem.to_def(&c).unwrap();
+                eir::Stmt::Item(ast::Item::Const(c)) => {
+                    let c = self.eir_sem.to_def(&c).unwrap();
                     out.wln("// const");
                     self.add_deferred(c);
                 }
                 // TODO: impl
                 // TODO: use, type alias: remove with comment?
-                ast::Stmt::Item(item) => {
+                eir::Stmt::Item(item) => {
                     out.wln(format!("/* unsupported inner item: {:?} */", item));
                 }
             }
@@ -670,25 +630,22 @@ impl<'g, 'db> BodyGen<'g, 'db> {
         info
     }
 
-    pub fn emit_expr_str_ast(&self, expr: &ast::Expr) -> Code {
+    pub fn emit_expr_str_ast(&self, expr: &eir::Expr) -> Code {
         self.emit_expr_str_ast_inner(expr, false)
     }
 
-    #[tracing::instrument(skip_all, fields(expr_at = self.expr_location_ast(expr)))]
-    pub fn emit_expr_str_ast_inner(&self, expr: &ast::Expr, statement: bool) -> Code {
+    #[tracing::instrument(skip_all, fields(expr_at = self.eir_sem.location(expr)))]
+    pub fn emit_expr_str_ast_inner(&self, expr: &eir::Expr, statement: bool) -> Code {
         match expr {
             //Expr::Missing => "/* missing */default!".into(),
-            ast::Expr::Literal(lit) => self.emit_literal_ast(lit),
-            ast::Expr::PathExpr(path) => match self
-                .sem
-                .resolve_path_with_subst(&path.path().unwrap())
-            {
+            eir::Expr::Literal(lit) => self.emit_literal_ast(lit),
+            eir::Expr::PathExpr(path) => match self.eir_sem.resolve_path_with_subst(&path.path()) {
                 None => {
                     eprintln!(
                         "Unresolved Path at {loc}",
-                        loc = self.expr_location_ast(expr),
+                        loc = self.eir_sem.location(expr),
                     );
-                    fcode!("/* {} */", path.syntax().text().to_string())
+                    fcode!("/* {} */", path.syntax_text())
                 }
                 Some((hir::PathResolution::Def(hir::ModuleDef::Function(f)), args)) => {
                     let args = args.map(|x| x.types(self.db)).unwrap_or_default();
@@ -739,7 +696,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 Some((hir::PathResolution::Def(module_def), _))
                     if let Some(def) = ConstructableDef::from_module_def(module_def) =>
                 {
-                    let expr_type = self.type_of_expr(expr).original;
+                    let expr_type = self.eir_sem.type_of_expr(expr).original;
                     match def.kind(self.db) {
                         StructKind::Unit => {
                             let ty_args = expr_type.expect_adt_of(def.adt(self.db));
@@ -760,7 +717,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                             eprintln!(
                                 "Unexpected struct kind and infer for enum variant path at {loc}\n\
                                     \tkind: {kind:?}",
-                                loc = self.expr_location_ast(path),
+                                loc = self.eir_sem.location(path),
                                 //type = self.new_type(infer).display(
                                 //    self.db,
                                 //    self.krate.to_display_target(self.db)
@@ -776,7 +733,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         && let Some(hir::Adt::Struct(struct_)) = self_ty.as_adt() =>
                 {
                     let def = ConstructableDef::from(struct_);
-                    let expr_type = self.type_of_expr(expr).original;
+                    let expr_type = self.eir_sem.type_of_expr(expr).original;
                     match def.kind(self.db) {
                         StructKind::Unit => {
                             let ty_args = expr_type.expect_adt_of(def.adt(self.db));
@@ -797,7 +754,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                             eprintln!(
                                 "Unexpected struct kind and infer for enum variant path at {loc}\n\
                                     \tkind: {kind:?}",
-                                loc = self.expr_location_ast(path),
+                                loc = self.eir_sem.location(path),
                                 //type = self.new_type(infer).display(
                                 //    self.db,
                                 //    self.krate.to_display_target(self.db)
@@ -809,7 +766,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     }
                 }
                 Some((hir::PathResolution::SelfType(_), _)) => {
-                    eprintln!("ImplSelf at {}", self.expr_location_ast(expr));
+                    eprintln!("ImplSelf at {}", self.eir_sem.location(expr));
                     "(ImplSelf)".into()
                 }
                 Some((hir::PathResolution::Local(local), _)) => self.binding_name_ast(local).into(),
@@ -823,22 +780,22 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     path.into()
                 }
                 Some((hir::PathResolution::TypeParam(_param), _)) => {
-                    eprintln!("GenericParam at {}", self.expr_location_ast(expr));
+                    eprintln!("GenericParam at {}", self.eir_sem.location(expr));
                     "(GenericParam)".into()
                 }
 
                 Some((resolved, _)) => {
                     eprintln!(
                         "Path at {loc}: {resolved:?}",
-                        loc = self.expr_location_ast(expr),
+                        loc = self.eir_sem.location(expr),
                     );
-                    fcode!("/* {} */", path.syntax().text().to_string())
+                    fcode!("/* {} */", path.syntax_text())
                 }
             },
-            ast::Expr::FieldExpr(field_expr) => {
-                let _name = field_expr.name_ref().unwrap();
-                let receiver_part = field_expr.expr().unwrap();
-                let receiver_type = self.type_of_expr(&receiver_part);
+            eir::Expr::FieldExpr(field_expr) => {
+                //let _name = field_expr.name_ref().unwrap();
+                let receiver_part = field_expr.expr();
+                let receiver_type = self.eir_sem.type_of_expr(&receiver_part);
                 let receiver = self.emit_expr_str_ast(&receiver_part);
                 let adjuster = if let Some(adjusted) = receiver_type.adjusted
                     && std::iter::successors(
@@ -851,15 +808,15 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         "adjusted type {original} to {adjusted} to access {name}",
                         original = receiver_type.original.debug_display(self.db),
                         adjusted = adjusted.debug_display(self.db),
-                        name = field_expr.name_ref().unwrap().text(),
+                        name = field_expr.name_ref().text(),
                     );
                     ".m_Deref()"
                 } else {
                     ""
                 };
-                match self.sem.resolve_field(field_expr) {
+                match self.eir_sem.resolve_field(field_expr) {
                     None => {
-                        eprintln!("Unresolved field at {}", self.expr_location_ast(field_expr));
+                        eprintln!("Unresolved field at {}", self.eir_sem.location(field_expr));
                         code!(receiver, adjuster, "./* unresolved field */")
                     }
                     Some(Either::Left(field)) => {
@@ -870,12 +827,12 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     }
                 }
             }
-            ast::Expr::MethodCallExpr(method_call) => {
-                let receiver = self.emit_expr_str_ast(&method_call.receiver().unwrap());
+            eir::Expr::MethodCallExpr(method_call) => {
+                let receiver = self.emit_expr_str_ast(&method_call.receiver());
 
                 let db = self.db;
 
-                match self.sem.resolve_method_call_fallback(method_call) {
+                match self.eir_sem.resolve_method_call_fallback(method_call) {
                     Some((Either::Left(f), _))
                         if f.name(db).symbol().as_str() == "push"
                             && let hir::ItemContainer::Impl(impl_) = f.container(db)
@@ -883,10 +840,9 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                             && let None = impl_.trait_(db)
                             && (Some(struct_) == self.lang_items.OsString()
                                 || Some(struct_) == self.lang_items.String())
-                            && let ast::Expr::PathExpr(receiver_path) =
-                                method_call.receiver().unwrap()
+                            && let eir::Expr::PathExpr(receiver_path) = method_call.receiver()
                             && let Some(hir::PathResolution::Local(receiver_var)) =
-                                self.sem.resolve_path(&receiver_path.path().unwrap())
+                                self.eir_sem.resolve_path(&receiver_path.path())
                             && let Some(hir::Adt::Struct(struct_of_reciver_var)) =
                                 receiver_var.ty(db).as_adt()
                             && struct_of_reciver_var == struct_
@@ -894,9 +850,9 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     {
                         let mut code: Code = (self.binding_name_ast(receiver_var)).into();
                         code.w(" += ");
-                        code.w(self.emit_expr_str_ast(
-                            &method_call.arg_list().unwrap().args().next().unwrap(),
-                        ));
+                        code.w(
+                            self.emit_expr_str_ast(&method_call.arg_list().args().next().unwrap())
+                        );
                         code
                     }
                     Some((Either::Left(f), args)) => {
@@ -917,8 +873,8 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                             [receiver].into_iter().chain(
                                 method_call
                                     .arg_list()
-                                    .unwrap()
                                     .args()
+                                    .into_iter()
                                     .map(|arg| self.emit_expr_str_ast(&arg)),
                             ),
                         )
@@ -926,12 +882,11 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     Some((Either::Right(_), _)) => {
                         eprintln!(
                             "method call resolved to field at {}",
-                            self.expr_location_ast(method_call)
+                            self.eir_sem.location(method_call)
                         );
-                        let method_cs = method_call.name_ref().unwrap().text().to_string();
+                        let method_cs = method_call.name_ref().text().to_string();
                         let args = method_call
                             .arg_list()
-                            .unwrap()
                             .args()
                             .map(|a| self.emit_expr_str_ast(&a));
                         code!(receiver, ".", method_cs, "(", join(args, ", "), ")")
@@ -939,23 +894,22 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     None => {
                         eprintln!(
                             "Unresolved method call at {}",
-                            self.expr_location_ast(method_call)
+                            self.eir_sem.location(method_call)
                         );
-                        let method_cs = method_call.name_ref().unwrap().text().to_string();
+                        let method_cs = method_call.name_ref().text().to_string();
                         let args = method_call
                             .arg_list()
-                            .unwrap()
                             .args()
                             .map(|a| self.emit_expr_str_ast(&a));
                         code!(receiver, ".", method_cs, "(", join(args, ", "), ")")
                     }
                 }
             }
-            ast::Expr::CallExpr(call_expr) => {
-                let callee = call_expr.expr().unwrap();
-                let args = call_expr.arg_list().unwrap().args();
-                if let ast::Expr::PathExpr(path) = &callee {
-                    match self.sem.resolve_path_with_subst(&path.path().unwrap()) {
+            eir::Expr::CallExpr(call_expr) => {
+                let callee = call_expr.expr();
+                let args = call_expr.arg_list().args();
+                if let eir::Expr::PathExpr(path) = &callee {
+                    match self.eir_sem.resolve_path_with_subst(&path.path()) {
                         Some((PathResolution::Def(def), _))
                             if let Some(def) = ConstructableDef::from_module_def(def)
                                 && def.adt(self.db).name(self.db).as_str() == "Cow" =>
@@ -966,7 +920,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         Some((PathResolution::Def(def), _))
                             if let Some(def) = ConstructableDef::from_module_def(def) =>
                         {
-                            let expr_type = self.type_of_expr(expr).original;
+                            let expr_type = self.eir_sem.type_of_expr(expr).original;
                             let generic_args = expr_type.expect_adt_of(def.adt(self.db));
                             let callee_type =
                                 self.constructable_name_cs(&Constructable::new(def, generic_args));
@@ -989,7 +943,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                             let resolved = self.resolve_function(f, generics);
                             return self.emit_call_expr(
                                 resolved,
-                                args.map(|a| self.emit_expr_str_ast(&a)),
+                                args.into_iter().map(|a| self.emit_expr_str_ast(&a)),
                             );
                         }
                         _ => {}
@@ -1000,27 +954,26 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 let args_str = args.map(|a| self.emit_expr_str_ast(&a));
                 code!(callee_str, "(", join(args_str, ", "), ")")
             }
-            ast::Expr::AwaitExpr(await_expr) => {
-                let inner_str = self.emit_expr_str_ast(&await_expr.expr().unwrap());
+            eir::Expr::AwaitExpr(await_expr) => {
+                let inner_str = self.emit_expr_str_ast(&await_expr.expr());
                 code!("(await ", inner_str, ")")
             }
-            ast::Expr::BinExpr(bin_expr) => {
-                let lhs_code = self.emit_expr_str_ast(&bin_expr.lhs().unwrap());
-                let rhs_code = self.emit_expr_str_ast(&bin_expr.rhs().unwrap());
+            eir::Expr::BinExpr(bin_expr) => {
+                let lhs_code = self.emit_expr_str_ast(&bin_expr.lhs());
+                let rhs_code = self.emit_expr_str_ast(&bin_expr.rhs());
                 let op_str = match bin_expr.op_kind() {
-                    None => "/* op= */ =",
-                    Some(BinaryOp::ArithOp(ArithOp::Add)) => "+",
-                    Some(BinaryOp::ArithOp(ArithOp::Mul)) => "*",
-                    Some(BinaryOp::ArithOp(ArithOp::Sub)) => "-",
-                    Some(BinaryOp::ArithOp(ArithOp::Div)) => "/",
-                    Some(BinaryOp::ArithOp(ArithOp::Rem)) => "%",
-                    Some(BinaryOp::ArithOp(ArithOp::Shl)) => "<<",
-                    Some(BinaryOp::ArithOp(ArithOp::Shr)) => ">>",
-                    Some(BinaryOp::ArithOp(ArithOp::BitXor)) => "^",
-                    Some(BinaryOp::ArithOp(ArithOp::BitOr)) => "|",
-                    Some(BinaryOp::ArithOp(ArithOp::BitAnd)) => "&",
-                    Some(BinaryOp::CmpOp(c)) => {
-                        use ast::{CmpOp, Ordering};
+                    BinaryOp::ArithOp(ArithOp::Add) => "+",
+                    BinaryOp::ArithOp(ArithOp::Mul) => "*",
+                    BinaryOp::ArithOp(ArithOp::Sub) => "-",
+                    BinaryOp::ArithOp(ArithOp::Div) => "/",
+                    BinaryOp::ArithOp(ArithOp::Rem) => "%",
+                    BinaryOp::ArithOp(ArithOp::Shl) => "<<",
+                    BinaryOp::ArithOp(ArithOp::Shr) => ">>",
+                    BinaryOp::ArithOp(ArithOp::BitXor) => "^",
+                    BinaryOp::ArithOp(ArithOp::BitOr) => "|",
+                    BinaryOp::ArithOp(ArithOp::BitAnd) => "&",
+                    BinaryOp::CmpOp(c) => {
+                        use eir::{CmpOp, Ordering};
                         match c {
                             CmpOp::Eq { negated: false } => "==",
                             CmpOp::Eq { negated: true } => "!=",
@@ -1042,10 +995,10 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                             } => ">=",
                         }
                     }
-                    Some(BinaryOp::LogicOp(LogicOp::And)) => "&&",
-                    Some(BinaryOp::LogicOp(LogicOp::Or)) => "&&",
+                    BinaryOp::LogicOp(LogicOp::And) => "&&",
+                    BinaryOp::LogicOp(LogicOp::Or) => "&&",
 
-                    Some(BinaryOp::Assignment { op }) => match op {
+                    BinaryOp::Assignment { op } => match op {
                         None => "=",
                         Some(ArithOp::Add) => "+=",
                         Some(ArithOp::Mul) => "*=",
@@ -1070,45 +1023,45 @@ impl<'g, 'db> BodyGen<'g, 'db> {
             //    let value_str = self.emit_expr_str(*value);
             //    code!(target_str, " = ", value_str)
             //}
-            ast::Expr::PrefixExpr(prefix_expr) => {
-                let inner_str = self.emit_expr_str_ast(&prefix_expr.expr().unwrap());
-                match prefix_expr.op_kind().unwrap() {
+            eir::Expr::PrefixExpr(prefix_expr) => {
+                let inner_str = self.emit_expr_str_ast(&prefix_expr.expr());
+                match prefix_expr.op_kind() {
                     UnaryOp::Deref => code!("(/* deref_op */", inner_str, ")"),
                     UnaryOp::Not => code!("!(", inner_str, ")"),
                     UnaryOp::Neg => code!("-(", inner_str, ")"),
                 }
             }
-            ast::Expr::RefExpr(ref_expr) => self.emit_expr_str_ast(&ref_expr.expr().unwrap()),
+            eir::Expr::RefExpr(ref_expr) => self.emit_expr_str_ast(&ref_expr.expr()),
             //Expr::Box { expr: inner } => self.emit_expr_str(*inner),
-            ast::Expr::CastExpr(cast_expr) => {
+            eir::Expr::CastExpr(cast_expr) => {
                 // TODO: Cast might not be compatible
                 code!(
                     "(",
-                    self.rust_type_to_cs(&self.sem.resolve_type(&cast_expr.ty().unwrap()).unwrap()),
+                    self.rust_type_to_cs(&self.eir_sem.resolve_type(&cast_expr.ty()).unwrap()),
                     ") ",
-                    self.emit_expr_str_ast(&cast_expr.expr().unwrap())
+                    self.emit_expr_str_ast(&cast_expr.expr())
                 )
             }
-            ast::Expr::IfExpr(if_expr) => match if_expr.else_branch() {
-                Some(ast::ElseBranch::Block(else_block)) => {
-                    let cond = self.emit_expr_str_ast(&if_expr.condition().unwrap());
-                    let then_s = self.emit_expr_str_ast(&if_expr.then_branch().unwrap().into());
+            eir::Expr::IfExpr(if_expr) => match if_expr.else_branch() {
+                Some(eir::ElseBranch::Block(else_block)) => {
+                    let cond = self.emit_expr_str_ast(&if_expr.condition());
+                    let then_s = self.emit_expr_str_ast(&if_expr.then_branch().into());
                     let else_s = self.emit_expr_str_ast(&else_block.into());
                     code!("(", cond, " ? ", then_s, " : ", else_s, ")")
                 }
-                Some(ast::ElseBranch::IfExpr(if_expr)) => {
-                    let cond = self.emit_expr_str_ast(&if_expr.condition().unwrap());
-                    let then_s = self.emit_expr_str_ast(&if_expr.then_branch().unwrap().into());
+                Some(eir::ElseBranch::IfExpr(if_expr)) => {
+                    let cond = self.emit_expr_str_ast(&if_expr.condition());
+                    let then_s = self.emit_expr_str_ast(&if_expr.then_branch().into());
                     let else_s = self.emit_expr_str_ast(&if_expr.into());
                     code!("(", cond, " ? ", then_s, " : ", else_s, ")")
                 }
                 None => {
-                    let cond = self.emit_expr_str_ast(&if_expr.condition().unwrap());
-                    let then_s = self.emit_expr_str_ast(&if_expr.then_branch().unwrap().into());
+                    let cond = self.emit_expr_str_ast(&if_expr.condition());
+                    let then_s = self.emit_expr_str_ast(&if_expr.then_branch().into());
                     code!("(", cond, " ? ", then_s, " : ValueTuple)")
                 }
             },
-            ast::Expr::BlockExpr(block_expr) => match block_expr.modifier() {
+            eir::Expr::BlockExpr(block_expr) => match block_expr.modifier() {
                 None => {
                     if block_expr.statements().count() == 0 {
                         if let Some(t) = block_expr.tail_expr() {
@@ -1118,9 +1071,9 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     }
                     "/* block expr */ default!".into()
                 }
-                Some(ast::BlockModifier::Async(_)) => {
+                Some(eir::BlockModifier::Async) => {
                     let mut body_code = Code::new();
-                    let return_type = (self.type_of_expr(expr))
+                    let return_type = (self.eir_sem.type_of_expr(expr))
                         .adjusted()
                         .future_output(self.db)
                         .unwrap();
@@ -1147,59 +1100,56 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 Some(modifier) => panic!(
                     "Unsupported block modifier: {} at {}",
                     match modifier {
-                        ast::BlockModifier::Async(_) => "async",
-                        ast::BlockModifier::Unsafe(_) => "unsafe",
-                        ast::BlockModifier::Try { .. } => "try",
-                        ast::BlockModifier::Const(_) => "const",
-                        ast::BlockModifier::AsyncGen(_) => "async gen",
-                        ast::BlockModifier::Gen(_) => "gen",
-                        ast::BlockModifier::Label(_) => "label",
+                        eir::BlockModifier::Async => "async",
+                        eir::BlockModifier::Unsafe => "unsafe",
+                        //eir::BlockModifier::Try { .. } => "try",
+                        eir::BlockModifier::Const => "const",
+                        eir::BlockModifier::AsyncGen => "async gen",
+                        eir::BlockModifier::Gen => "gen",
+                        eir::BlockModifier::Label(_) => "label",
                     },
-                    self.expr_location_ast(expr)
+                    self.eir_sem.location(expr)
                 ),
             },
-            ast::Expr::TupleExpr(tuple_expr) => {
+            eir::Expr::TupleExpr(tuple_expr) => {
                 if tuple_expr.fields().next().is_none() {
                     "default(global::System.ValueTuple)".into()
                 } else {
-                    let parts = tuple_expr.fields().map(|e| self.emit_expr_str_ast(&e));
+                    let parts = tuple_expr
+                        .fields()
+                        .into_iter()
+                        .map(|e| self.emit_expr_str_ast(&e));
                     code!("(", join(parts, ", "), ")")
                 }
             }
-            ast::Expr::RecordExpr(record_expr) => {
-                let c = match self.sem.resolve_variant(record_expr.clone()) {
+            eir::Expr::RecordExpr(record_expr) => {
+                let c = match self.eir_sem.resolve_variant(record_expr) {
                     None => {
                         eprintln!(
                             "Struct construction without type in {}",
-                            self.expr_location_ast(expr)
+                            self.eir_sem.location(expr)
                         );
 
-                        return fcode!(
-                            "(TypelessConstruction/*{:?}*/)",
-                            record_expr.syntax().text().to_string()
-                        );
+                        return fcode!("(TypelessConstruction/*{}*/)", record_expr.syntax_text());
                     }
                     Some(variant) if let Some(def) = ConstructableDef::from_variant(variant) => {
-                        let ty_args =
-                            (self.type_of_expr(expr).original).expect_adt_of(def.adt(self.db));
+                        let ty_args = (self.eir_sem.type_of_expr(expr).original)
+                            .expect_adt_of(def.adt(self.db));
 
                         Constructable::new(def, ty_args)
                     }
                     Some(_) => {
-                        eprintln!("Union unsupported at {}", self.expr_location_ast(expr));
+                        eprintln!("Union unsupported at {}", self.eir_sem.location(expr));
 
-                        return fcode!(
-                            "(UnionConstruction/*{:?}*/)",
-                            record_expr.syntax().text().to_string()
-                        );
+                        return fcode!("(UnionConstruction/*{}*/)", record_expr.syntax_text());
                     }
                 };
                 let type_name = self.constructable_name_cs(&c);
 
                 let field_inits = record_expr
                     .record_expr_field_list()
-                    .unwrap()
                     .fields()
+                    .into_iter()
                     .filter(|f| self.check_cfg(f))
                     .map(|f| {
                         let cs_f = names::field_name(f.field_name().unwrap().text());
@@ -1210,7 +1160,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         let _cs_ty = field
                             .map(|f| self.rust_type_to_cs(&f.ty(self.db)))
                             .unwrap_or_else(|| "object /*unknown field type*/".into());
-                        let val = self.emit_expr_str_ast(&f.expr().unwrap());
+                        let val = self.emit_expr_str_ast(&f.expr());
                         code!(cs_f, " = (", val, ")")
                     });
                 code!(
@@ -1224,19 +1174,15 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     "}"
                 )
             }
-            ast::Expr::IndexExpr(index_expr) => {
-                let base_str = self.emit_expr_str_ast(&index_expr.base().unwrap());
-                let idx_str = self.emit_expr_str_ast(&index_expr.index().unwrap());
+            eir::Expr::IndexExpr(index_expr) => {
+                let base_str = self.emit_expr_str_ast(&index_expr.base());
+                let idx_str = self.emit_expr_str_ast(&index_expr.index());
                 code!(base_str, ".Index(", idx_str, ")")
             }
-            ast::Expr::RangeExpr(range_expr) => {
-                fn single_generics<'db>(
-                    sem: &Semantics<'db, dyn HirDatabase>,
-                    expr: &ast::Expr,
-                ) -> Type<'db> {
+            eir::Expr::RangeExpr(range_expr) => {
+                fn single_generics<'db>(sem: &EirSemantics<'db>, expr: &eir::Expr) -> Type<'db> {
                     let [type_] = <[_; 1]>::try_from(
                         sem.type_of_expr(expr)
-                            .unwrap()
                             .original
                             .as_adt_with_args()
                             .unwrap()
@@ -1246,15 +1192,11 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     type_.unwrap()
                 }
 
-                match (
-                    range_expr.start(),
-                    range_expr.op_kind().unwrap(),
-                    range_expr.end(),
-                ) {
+                match (range_expr.start(), range_expr.op_kind(), range_expr.end()) {
                     (Some(start), RangeOp::Exclusive, Some(end)) => {
                         code!(
                             "Range<",
-                            self.rust_type_to_cs(&single_generics(&self.sem, expr)),
+                            self.rust_type_to_cs(&single_generics(&self.eir_sem, expr)),
                             ">.NewRange(",
                             self.emit_expr_str_ast(&start),
                             ", ",
@@ -1265,7 +1207,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     (Some(start), RangeOp::Inclusive, Some(end)) => {
                         code!(
                             "Range<",
-                            self.rust_type_to_cs(&single_generics(&self.sem, expr)),
+                            self.rust_type_to_cs(&single_generics(&self.eir_sem, expr)),
                             ">.NewRangeInclusive(",
                             self.emit_expr_str_ast(&start),
                             ", ",
@@ -1276,7 +1218,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     (Some(start), _, None) => {
                         code!(
                             "Range<",
-                            self.rust_type_to_cs(&single_generics(&self.sem, expr)),
+                            self.rust_type_to_cs(&single_generics(&self.eir_sem, expr)),
                             ">.NewRangeFrom(",
                             self.emit_expr_str_ast(&start),
                             ")"
@@ -1288,7 +1230,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     (None, RangeOp::Exclusive, Some(end)) => {
                         code!(
                             "Range<",
-                            self.rust_type_to_cs(&single_generics(&self.sem, expr)),
+                            self.rust_type_to_cs(&single_generics(&self.eir_sem, expr)),
                             ">.NewRangeTo(",
                             self.emit_expr_str_ast(&end),
                             ")"
@@ -1297,7 +1239,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     (None, RangeOp::Inclusive, Some(end)) => {
                         code!(
                             "Range<",
-                            self.rust_type_to_cs(&single_generics(&self.sem, expr)),
+                            self.rust_type_to_cs(&single_generics(&self.eir_sem, expr)),
                             ">.NewRangeToInclusive(",
                             self.emit_expr_str_ast(&end),
                             ")"
@@ -1305,37 +1247,33 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     }
                 }
             }
-            ast::Expr::ArrayExpr(array) => match array.kind() {
-                ast::ArrayExprKind::Repeat {
-                    initializer,
-                    repeat,
-                } => {
-                    let val = self.emit_expr_str_ast(&initializer.unwrap());
-                    let len = self.emit_expr_str_ast(&repeat.unwrap());
-                    code!("new object[", len, "] /* fill ", val, "*/")
-                }
-                ast::ArrayExprKind::ElementList(elements) => {
-                    let Some((element, _len)) = self.type_of_expr(expr).original.as_array(self.db)
-                    else {
-                        panic!("");
-                    };
-                    let cg = self.cg;
-                    let parts = elements.map(|e| self.emit_expr_str_ast(&e));
-                    code!(
-                        "new ",
-                        cg.rust_type_to_cs(&element),
-                        "[] { ",
-                        join(parts, ", "),
-                        " }"
-                    )
-                }
-            },
-            ast::Expr::ClosureExpr(closure) => {
-                let param_names = closure.param_list().unwrap().params().enumerate();
+            eir::Expr::ArrayRepeatExpr(repeat) => {
+                let val = self.emit_expr_str_ast(&repeat.initializer());
+                let len = self.emit_expr_str_ast(&repeat.repeat());
+                code!("new object[", len, "] /* fill ", val, "*/")
+            }
+            eir::Expr::ArrayElementListExpr(elem_list) => {
+                let Some((element, _len)) =
+                    self.eir_sem.type_of_expr(expr).original.as_array(self.db)
+                else {
+                    panic!("");
+                };
+                let cg = self.cg;
+                let parts = (elem_list.elements().into_iter()).map(|e| self.emit_expr_str_ast(&e));
+                code!(
+                    "new ",
+                    cg.rust_type_to_cs(&element),
+                    "[] { ",
+                    join(parts, ", "),
+                    " }"
+                )
+            }
+            eir::Expr::ClosureExpr(closure) => {
+                let param_names = closure.param_list().params().into_iter().enumerate();
                 let params: Vec<String> = (param_names.clone())
                     .map(|(i, p)| {
-                        if let ast::Pat::IdentPat(ident_pat) = p.pat().unwrap()
-                            && let Some(local) = self.sem.to_def(&ident_pat)
+                        if let eir::Pat::IdentPat(ident_pat) = p.pat()
+                            && let Some(local) = self.eir_sem.to_def(&ident_pat)
                         {
                             self.alloc_binding_ast(&local)
                         } else {
@@ -1346,34 +1284,39 @@ impl<'g, 'db> BodyGen<'g, 'db> {
 
                 let mut body_block = Code::new();
                 for (i, p) in param_names.clone() {
-                    if let ast::Pat::IdentPat(ident_pat) = p.pat().unwrap()
-                        && let Some(_) = self.sem.to_def(&ident_pat)
+                    if let eir::Pat::IdentPat(ident_pat) = p.pat()
+                        && let Some(_) = self.eir_sem.to_def(&ident_pat)
                     {
                     } else {
                         self.emit_let_stmt(
                             &mut body_block,
-                            &p.pat().unwrap(),
+                            &p.pat(),
                             code!(&format!("__cp{}", i)),
                             Self::emit_unreachable,
                         );
                     }
                 }
 
-                let type_of_expr = self.type_of_expr(expr).adjusted();
-                assert!(type_of_expr.impls_fnonce(self.db));
-                let output = type_of_expr
-                    .normalize_trait_assoc_type(
-                        self.db,
-                        &[],
-                        self.lang_items.FnOnceOutput().unwrap(),
-                    )
-                    .expect("No output for fn");
+                let output = if let Some(type_of_expr) = self.eir_sem.type_of_expr_opt(expr) {
+                    let type_of_expr = type_of_expr.adjusted();
+                    assert!(type_of_expr.impls_fnonce(self.db));
+                    type_of_expr
+                        .normalize_trait_assoc_type(
+                            self.db,
+                            &[],
+                            self.lang_items.FnOnceOutput().unwrap(),
+                        )
+                        .expect("No output for fn")
+                } else {
+                    // arbitary type
+                    self.cg.lang_items.Result().unwrap().ty(self.db)
+                };
                 let _scope = self.new_ctx(CodeContext {
                     is_async: false, // TODO
                     returning: output,
                 });
 
-                if let ast::Expr::BlockExpr(block) = closure.body().unwrap()
+                if let eir::Expr::BlockExpr(block) = closure.body()
                     && block.modifier().is_none()
                 {
                     self.emit_block_contents(
@@ -1392,7 +1335,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         "}"
                     )
                 } else {
-                    let body_str = self.emit_expr_str_ast(&closure.body().unwrap());
+                    let body_str = self.emit_expr_str_ast(&closure.body());
                     if body_block.is_empty() {
                         code!("(", join(params, ", "), ") => ", body_str)
                     } else {
@@ -1411,7 +1354,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     }
                 }
             }
-            ast::Expr::ReturnExpr(return_expr) => {
+            eir::Expr::ReturnExpr(return_expr) => {
                 let val = return_expr
                     .expr()
                     .map(|e| self.emit_expr_str_ast(&e))
@@ -1422,9 +1365,9 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     ")"
                 )
             }
-            ast::Expr::LetExpr(let_expr) => {
-                let val = self.emit_expr_str_ast(&let_expr.expr().unwrap());
-                let pattern_cs = self.emit_pattern_ast(&let_expr.pat().unwrap());
+            eir::Expr::LetExpr(let_expr) => {
+                let val = self.emit_expr_str_ast(&let_expr.expr());
+                let pattern_cs = self.emit_pattern_ast(&let_expr.pat());
                 code!("(", val, " is ", pattern_cs, ")")
             }
             /*
@@ -1440,22 +1383,22 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                 "/* unsafe block */ default!".into()
             }
              */
-            ast::Expr::MatchExpr(match_expr) => {
-                let arms = match_expr.match_arm_list().unwrap();
-                let match_expr = match_expr.expr().unwrap();
+            eir::Expr::MatchExpr(match_expr) => {
+                let arms = match_expr.match_arm_list();
+                let match_expr = match_expr.expr();
                 let scrutinee = self.emit_expr_str_ast(&match_expr);
 
                 // Since we lower Cow<T> => T, we remove
-                if let Some(cow) = self.sem.type_of_expr(&match_expr).and_then(|t| {
+                if let Some(cow) = Some(self.eir_sem.type_of_expr(&match_expr)).and_then(|t| {
                     if let Some((adt, _args)) = t.adjusted.unwrap_or(t.original).as_adt_with_args()
                         && let hir::Adt::Enum(enum_) = adt
                         && Some(enum_) == self.lang_items.Cow()
                         && let Some(arms) = arms
                             .arms()
                             .map(|arm| {
-                                if let ast::Pat::TupleStructPat(pat) = arm.pat().unwrap()
+                                if let eir::Pat::TupleStructPat(pat) = arm.pat()
                                     && let Some(PathResolution::Def(def)) =
-                                        self.sem.resolve_path(&pat.path().unwrap())
+                                        self.eir_sem.resolve_path(&pat.path())
                                     && let ModuleDef::EnumVariant(variant) = def
                                     && (Some(variant) == self.lang_items.CowBorrowed()
                                         || Some(variant) == self.lang_items.CowOwned())
@@ -1491,11 +1434,9 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         out.w("").w(pat_cs).w(" ");
                         if let Some(guard) = arm.guard() {
                             out.w("when ");
-                            out.w(self.emit_expr_str_ast(&guard.condition().unwrap()));
+                            out.w(self.emit_expr_str_ast(&guard));
                         }
-                        out.w("=> ")
-                            .w(self.emit_expr_str_ast(&arm.expr().unwrap()))
-                            .wln(",");
+                        out.w("=> ").w(self.emit_expr_str_ast(&arm.expr())).wln(",");
                     }
                     out.dedent();
 
@@ -1514,16 +1455,14 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         continue;
                     }
                     // Emit pattern check
-                    let pat_cs = self.emit_pattern_ast(&arm.pat().unwrap());
+                    let pat_cs = self.emit_pattern_ast(&arm.pat());
 
                     out.w("").w(pat_cs).w(" ");
                     if let Some(guard) = arm.guard() {
                         out.w("when ");
-                        out.w(self.emit_expr_str_ast(&guard.condition().unwrap()));
+                        out.w(self.emit_expr_str_ast(&guard));
                     }
-                    out.w("=> ")
-                        .w(self.emit_expr_str_ast(&arm.expr().unwrap()))
-                        .wln(",");
+                    out.w("=> ").w(self.emit_expr_str_ast(&arm.expr())).wln(",");
                 }
                 out.dedent();
 
@@ -1531,61 +1470,81 @@ impl<'g, 'db> BodyGen<'g, 'db> {
 
                 out
             }
-            ast::Expr::BreakExpr(break_expr) => break_expr
+            eir::Expr::BreakExpr(break_expr) => break_expr
                 .expr()
                 .map(|e| self.emit_expr_str_ast(&e))
                 .unwrap_or_else(|| "default!".into()),
-            ast::Expr::ContinueExpr(_) => "default!".into(),
-            ast::Expr::BecomeExpr(become_expr) => {
-                self.emit_expr_str_ast(&become_expr.expr().unwrap())
-            }
-            ast::Expr::YieldExpr(yield_expr) => yield_expr
-                .expr()
-                .map(|e| self.emit_expr_str_ast(&e))
-                .unwrap_or_else(|| "default!".into()),
+            eir::Expr::ContinueExpr(_) => "default!".into(),
+            //eir::Expr::BecomeExpr(become_expr) =>
+            //eir::Expr::YieldExpr(yield_expr) =>
             //&Expr::Const(inner) => self.emit_expr_str(inner),
-            ast::Expr::UnderscoreExpr(_) => "_".into(),
-            ast::Expr::ParenExpr(paran) => {
-                code!("(", self.emit_expr_str_ast(&paran.expr().unwrap()), ")")
-            }
-            ast::Expr::OffsetOfExpr(_) | ast::Expr::AsmExpr(_) => {
-                panic!(
-                    "Unsupported Expression: Offsetof / assembly at {}",
-                    self.expr_location_ast(expr)
-                );
-            }
-            ast::Expr::LoopExpr(_) | ast::Expr::ForExpr(_) | ast::Expr::WhileExpr(_) => {
+            eir::Expr::UnderscoreExpr(_) => "_".into(),
+            eir::Expr::LoopExpr(_) | eir::Expr::ForExpr(_) | eir::Expr::WhileExpr(_) => {
                 // TODO
                 "/* loop */ default!".into()
             }
-            ast::Expr::FormatArgsExpr(_) => {
-                // TODO
-                "/* FormatArgsExpr */ default!".into()
-            }
-            ast::Expr::MacroExpr(m) => self.emit_expr_macro(expr, &m.macro_call().unwrap()).0,
+            eir::Expr::FormatArgsExpr(args) => {
+                let mut result = code!(r##"$""##);
 
-            ast::Expr::YeetExpr(_) => {
-                panic!("yeet not supported at {}", self.expr_location_ast(expr))
+                for segment in args.segments() {
+                    match segment {
+                        eir::FormatArgsSegment::Literal(literal) => {
+                            write!(result, "{}", literal.escape_default());
+                        }
+                        eir::FormatArgsSegment::Braces(c) => write!(result, "{c}{c}"), // C# also uses '{' '}'
+                        eir::FormatArgsSegment::Expr(expr) => {
+                            result.w("{").w(self.emit_expr_str_ast(&expr)).w("}");
+                        }
+                    }
+                }
+
+                result.w("\"");
+
+                result
             }
-            ast::Expr::TryExpr(try_expr) => {
-                code!(
-                    "Try(",
-                    self.emit_expr_str_ast(&try_expr.expr().unwrap()),
-                    ")"
-                )
+            eir::Expr::TryExpr(try_expr) => {
+                code!("Try(", self.emit_expr_str_ast(&try_expr.expr()), ")")
             }
-            ast::Expr::IncludeBytesExpr(_) => "_".into(),
+            eir::Expr::VecRepeatExpr(repeat) => {
+                let val = self.emit_expr_str_ast(&repeat.initializer());
+                let len = self.emit_expr_str_ast(&repeat.repeat());
+                code!("new object[", len, "] /* fill ", val, "*/")
+            }
+            eir::Expr::VecListExpr(elem_list) => {
+                let Some((adt, generics)) =
+                    self.eir_sem.type_of_expr(expr).original.as_adt_with_args()
+                else {
+                    panic!("");
+                };
+                assert_eq!(Some(adt), self.cg.lang_items.Vec().map(hir::Adt::Struct));
+                let element = generics[0].as_ref().unwrap().clone();
+                let cg = self.cg;
+                if elem_list.elements().next().is_some() {
+                    let parts = elem_list.elements().map(|e| self.emit_expr_str_ast(&e));
+                    code!(
+                        "new List<",
+                        cg.rust_type_to_cs(&element),
+                        "> { ",
+                        join(parts, ", "),
+                        " }"
+                    )
+                } else {
+                    code!("new List<", cg.rust_type_to_cs(&element), ">()")
+                }
+            }
+            eir::Expr::RawCodeExpr(raw_cod) => raw_cod.code(),
+            eir::Expr::MacroStmts(_) => panic!("Unexpected macro stmts"),
         }
     }
 
-    fn emit_returning_block(&self, out: &mut Code, block_expr: &ast::BlockExpr) {
+    fn emit_returning_block(&self, out: &mut Code, block_expr: &eir::BlockExpr) {
         let statements = block_expr.statements();
         let tail = block_expr.tail_expr();
         let emit_info = self.emit_block_contents(out, statements, tail, ExprGenOption::returning());
         if !emit_info.diverging && !self.returning_type().is_unit() {
             tracing::error!(
                 "Error emitting expr: non-void returning expr does not diverging at {}",
-                self.expr_location_ast(block_expr)
+                self.eir_sem.location(block_expr)
             );
         }
         if self.returning_type().is_unit() && self.is_async() && !emit_info.diverging {
@@ -1593,16 +1552,16 @@ impl<'g, 'db> BodyGen<'g, 'db> {
         }
     }
 
-    fn emit_literal_ast(&self, lit: &ast::Literal) -> Code {
-        match lit.kind() {
-            ast::LiteralKind::Bool(b) => b.to_string().into(),
-            ast::LiteralKind::IntNumber(v) => v.value().unwrap().to_string().into(),
-            ast::LiteralKind::FloatNumber(v) => v.value_string().into(),
-            ast::LiteralKind::Char(c) => fcode!("'{}'", c.value().unwrap().escape_default()),
-            ast::LiteralKind::String(s) => fcode!("\"{}\"", s.value().unwrap().escape_default(),),
-            ast::LiteralKind::Byte(b) => b.value().unwrap().to_string().into(),
-            ast::LiteralKind::ByteString(_) => "/* byte string */ new byte[] {}".into(),
-            ast::LiteralKind::CString(_) => "/* cstring */ \"\"".into(),
+    fn emit_literal_ast(&self, lit: &eir::Literal) -> Code {
+        match &lit.kind() {
+            eir::LiteralKind::Bool(b) => b.to_string().into(),
+            eir::LiteralKind::IntNumber(v) => v.value().unwrap().to_string().into(),
+            eir::LiteralKind::FloatNumber(v) => v.value_string().into(),
+            eir::LiteralKind::Char(c) => fcode!("'{}'", c.value().unwrap().escape_default()),
+            eir::LiteralKind::String(s) => fcode!("\"{}\"", s.value().unwrap().escape_default(),),
+            eir::LiteralKind::Byte(b) => b.value().unwrap().to_string().into(),
+            eir::LiteralKind::ByteString(_) => "/* byte string */ new byte[] {}".into(),
+            eir::LiteralKind::CString(_) => "/* cstring */ \"\"".into(),
         }
     }
 
@@ -1754,18 +1713,18 @@ impl<'g, 'db> BodyGen<'g, 'db> {
     }
 
     /// Emit a pattern as a condition check against a scrutinee expression.
-    fn emit_pattern_ast(&self, pat: &ast::Pat) -> Code {
+    fn emit_pattern_ast(&self, pat: &eir::Pat) -> Code {
         match pat {
-            ast::Pat::WildcardPat(_w) => "{} _".into(),
-            ast::Pat::IdentPat(ident_pat)
-                if let Some(const_ref) = self.sem.resolve_bind_pat_to_const(ident_pat) =>
+            eir::Pat::WildcardPat(_w) => "{} _".into(),
+            eir::Pat::IdentPat(ident_pat)
+                if let Some(const_ref) = self.eir_sem.resolve_bind_pat_to_const(ident_pat) =>
             {
                 match const_ref {
                     const_ref
                         if let Some(constructable) =
                             ConstructableDef::from_module_def(const_ref) =>
                     {
-                        let ty_args = (self.sem.type_of_pat(pat).unwrap().original)
+                        let ty_args = (self.eir_sem.type_of_pat(pat).unwrap().original)
                             .expect_adt_of(constructable.adt(self.db));
 
                         fcode!(
@@ -1779,8 +1738,8 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     }
                 }
             }
-            ast::Pat::IdentPat(ident_pat) => {
-                let local = self.sem.to_def(ident_pat).unwrap();
+            eir::Pat::IdentPat(ident_pat) => {
+                let local = self.eir_sem.to_def(ident_pat).unwrap();
                 let cs_local_name = self.alloc_binding_ast(&local);
                 if let Some(sub) = ident_pat.pat() {
                     code!(self.emit_pattern_ast(&sub), " ", cs_local_name)
@@ -1788,14 +1747,14 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     code!("var ", cs_local_name)
                 }
             }
-            ast::Pat::TupleStructPat(tuple_struct) => {
-                let path = tuple_struct.path().unwrap();
+            eir::Pat::TupleStructPat(tuple_struct) => {
+                let path = tuple_struct.path();
 
-                let (cs_type_name, field_count) = match self.sem.resolve_path(&path) {
+                let (cs_type_name, field_count) = match self.eir_sem.resolve_path(&path) {
                     Some(PathResolution::Def(module_def))
                         if let Some(def) = ConstructableDef::from_module_def(module_def) =>
                     {
-                        let ty_args = (self.sem.type_of_pat(pat).unwrap().original)
+                        let ty_args = (self.eir_sem.type_of_pat(pat).unwrap().original)
                             .expect_adt_of(def.adt(self.db));
                         let field_count = def.fields(self.db).len();
                         let cs_variant =
@@ -1805,7 +1764,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     resolved => {
                         eprintln!(
                             "Unable to resolve path in pattern {resolved:?}: {}",
-                            self.expr_location_ast(pat)
+                            self.eir_sem.location(pat)
                         );
                         return code!("Unknown");
                     }
@@ -1822,38 +1781,35 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     .map(|(indeex, pat_code)| code!(format("f_{indeex}: "), pat_code));
                 code!(cs_type_name, "{", join(pattern_codes, ","), "}")
             }
-            ast::Pat::PathPat(path) => {
-                let path = path.path().unwrap();
-                match self.sem.resolve_path(&path) {
+            eir::Pat::PathPat(path) => {
+                let path = path.path();
+                match self.eir_sem.resolve_path(&path) {
                     Some(PathResolution::Def(ModuleDef::Const(const_))) => {
                         code!(self.const_path_cs(const_))
                     }
                     Some(PathResolution::Def(module_def))
                         if let Some(def) = ConstructableDef::from_module_def(module_def) =>
                     {
-                        let ty_args = (self.sem.type_of_pat(pat).unwrap().original)
+                        let ty_args = (self.eir_sem.type_of_pat(pat).unwrap().original)
                             .expect_adt_of(def.adt(self.db));
                         code!(self.constructable_name_cs(&Constructable::new(def, ty_args)))
                     }
                     resolved => {
                         eprintln!(
                             "Unable to resolve path in pattern {resolved:?}: {}",
-                            self.expr_location_ast(pat)
+                            self.eir_sem.location(pat)
                         );
-                        fcode!(
-                            "Unknown /* bad path resolution: {} */",
-                            path.syntax().text()
-                        )
+                        fcode!("Unknown /* bad path resolution: {} */", path.syntax_text())
                     }
                 }
             }
-            ast::Pat::RecordPat(record_pat) => {
-                let path = record_pat.path().unwrap();
-                let (cs_type_name, _field_count) = match self.sem.resolve_path(&path) {
+            eir::Pat::RecordPat(record_pat) => {
+                let path = record_pat.path();
+                let (cs_type_name, _field_count) = match self.eir_sem.resolve_path(&path) {
                     Some(PathResolution::Def(module_def))
                         if let Some(def) = ConstructableDef::from_module_def(module_def) =>
                     {
-                        let ty_args = (self.sem.type_of_pat(pat).unwrap().original)
+                        let ty_args = (self.eir_sem.type_of_pat(pat).unwrap().original)
                             .expect_adt_of(def.adt(self.db));
                         let field_count = def.fields(self.db).len();
                         let cs_variant =
@@ -1863,24 +1819,24 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     resolved => {
                         eprintln!(
                             "Unable to resolve path in pattern {resolved:?}: {}",
-                            self.expr_location_ast(pat)
+                            self.eir_sem.location(pat)
                         );
                         return fcode!(
                             "Unknown /* Bad record path resolution: {} */",
-                            path.syntax().text()
+                            path.syntax_text()
                         );
                     }
                 };
 
-                let fields = record_pat.record_pat_field_list().unwrap();
+                let fields = record_pat.record_pat_field_list();
                 let fields = fields.fields().collect::<Vec<_>>();
                 if matches!(fields.as_slice(), []) {
                     code!(cs_type_name, "{", "}")
                 } else {
                     let pattern_codes = fields.iter().map(|field| {
-                        let field_name = field.field_name().unwrap().text().to_string();
+                        let field_name = field.field_name().syntax_text().to_string();
                         let field_name_cs = names::field_name(&field_name);
-                        if let Some(field_pat) = field.pat() {
+                        if let Some(field_pat) = Some(field.pat()) {
                             code!(
                                 format("{field_name_cs}: "),
                                 self.emit_pattern_ast(&field_pat)
@@ -1888,7 +1844,7 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         } else {
                             eprintln!(
                                 "Unable to create variable from field in pattern: {}",
-                                self.expr_location_ast(pat)
+                                self.eir_sem.location(pat)
                             );
                             code!(format("{field_name_cs}: var /*unresolved*/"), field_name)
                         }
@@ -1896,41 +1852,37 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                     code!(cs_type_name, "{", join(pattern_codes, ","), "}")
                 }
             }
-            ast::Pat::LiteralPat(literal_pat) => {
-                self.emit_expr_str_ast(&ast::Expr::Literal(literal_pat.literal().unwrap()))
+            eir::Pat::LiteralPat(literal_pat) => {
+                self.emit_expr_str_ast(&eir::Expr::Literal(literal_pat.literal()))
             }
-            ast::Pat::OrPat(or_pat) => {
+            eir::Pat::OrPat(or_pat) => {
                 let parts = or_pat.pats().map(|p| self.emit_pattern_ast(&p));
                 code!("(", join(parts, " or "), ")")
             }
-            ast::Pat::SlicePat(slice_pat) => {
+            eir::Pat::SlicePat(slice_pat) => {
                 let components = slice_pat.components();
-                assert!(components.slice.is_none());
+                assert!(components.slice().is_none());
                 code!(
                     "[",
                     join(
-                        components.prefix.iter().map(|p| self.emit_pattern_ast(p)),
+                        components.prefix().iter().map(|p| self.emit_pattern_ast(p)),
                         ","
                     ),
                     "]"
                 )
             }
-            ast::Pat::TuplePat(tuple_pat) => {
-                let type_ = self.sem.type_of_pat(pat).unwrap();
+            eir::Pat::TuplePat(tuple_pat) => {
+                let type_ = self.eir_sem.type_of_pat(pat).unwrap();
                 let field_count = type_.original.tuple_fields(self.db).len();
                 let pattern_codes = self.resolve_tuple_like_struct(
                     field_count,
-                    &tuple_pat.fields().collect::<Vec<_>>(),
+                    &tuple_pat.fields().into_iter().collect::<Vec<_>>(),
                 );
 
                 code!("(", join(pattern_codes, ","), ")")
             }
-            ast::Pat::RangePat(range_pat) => {
-                match (
-                    range_pat.start(),
-                    range_pat.op_kind().unwrap(),
-                    range_pat.end(),
-                ) {
+            eir::Pat::RangePat(range_pat) => {
+                match (range_pat.start(), range_pat.op_kind(), range_pat.end()) {
                     (Some(lower), RangeOp::Exclusive, Some(upper)) => {
                         code!(
                             "(>=",
@@ -1959,27 +1911,25 @@ impl<'g, 'db> BodyGen<'g, 'db> {
                         code!("(<=", self.emit_pattern_ast(&upper), ")")
                     }
                     (lower, op, upper) => {
-                        panic!("Bad pattern: {lower:?} {op:?} {upper:?}")
+                        panic!(
+                            "Bad pattern: {lower:?} {op:?} {upper:?}",
+                            lower = lower.map(|_| "pattern"),
+                            upper = upper.map(|_| "pattern")
+                        )
                     }
                 }
             }
-            ast::Pat::RefPat(ref_pat) => self.emit_pattern_ast(&ref_pat.pat().unwrap()),
-            pat => {
-                eprintln!(
-                    "Unsupported pattern {pat:?} at {}",
-                    self.expr_location_ast(pat)
-                );
-                code!("Unknown /* unsupported pattern */")
-            }
+            eir::Pat::RefPat(ref_pat) => self.emit_pattern_ast(&ref_pat.pat()),
+            eir::Pat::RestPat(_) => panic!("Bad pattern: RestPat"),
         }
     }
 
-    fn resolve_tuple_like_struct(&self, field_count: usize, patterns: &[ast::Pat]) -> Vec<Code> {
-        if matches!(patterns, [ast::Pat::RestPat(_)]) {
+    fn resolve_tuple_like_struct(&self, field_count: usize, patterns: &[eir::Pat]) -> Vec<Code> {
+        if matches!(patterns, [eir::Pat::RestPat(_)]) {
             vec![code!("_"); field_count]
         } else if let Some(position) = patterns
             .iter()
-            .position(|p| matches!(p, ast::Pat::RestPat(_)))
+            .position(|p| matches!(p, eir::Pat::RestPat(_)))
         {
             let prefix = &patterns[..position];
             let suffix = &patterns[(position + 1)..];
@@ -1999,25 +1949,53 @@ impl<'g, 'db> BodyGen<'g, 'db> {
     }
 
     /// Collect all binding IDs in a pattern.
-    fn collect_bindings_in_pat_ast(&self, pat: &ast::Pat) -> Vec<Local<'db>> {
+    fn collect_bindings_in_pat_ast(&self, pat: &eir::Pat) -> Vec<Local<'db>> {
         let mut result = Vec::new();
         self.collect_bindings_recursive_ast(pat, &mut result);
         result
     }
 
-    fn collect_bindings_recursive_ast(&self, pat: &ast::Pat, result: &mut Vec<Local<'db>>) {
+    fn collect_bindings_recursive_ast(&self, pat: &eir::Pat, result: &mut Vec<Local<'db>>) {
         match pat {
-            ast::Pat::IdentPat(ident_pat) if let Some(local) = self.sem.to_def(ident_pat) => {
+            eir::Pat::IdentPat(ident_pat) if let Some(local) = self.eir_sem.to_def(ident_pat) => {
                 result.push(local);
                 if let Some(sub) = ident_pat.pat() {
                     self.collect_bindings_recursive_ast(&sub, result);
                 }
             }
-            _ => {
-                for child in pat.syntax().children().filter_map(ast::Pat::cast) {
-                    self.collect_bindings_recursive_ast(&child, result);
-                }
+            eir::Pat::IdentPat(_) => {}
+            eir::Pat::LiteralPat(_) => {}
+            eir::Pat::OrPat(pat) => pat
+                .pats()
+                .for_each(|pat| self.collect_bindings_recursive_ast(&pat, result)),
+            eir::Pat::PathPat(_) => {}
+            eir::Pat::RangePat(pat) => {
+                pat.start()
+                    .map(|start| self.collect_bindings_recursive_ast(&start, result));
+                pat.end()
+                    .map(|end| self.collect_bindings_recursive_ast(&end, result));
             }
+            eir::Pat::RecordPat(pat) => {
+                pat.record_pat_field_list()
+                    .fields()
+                    .for_each(|field| self.collect_bindings_recursive_ast(&field.pat(), result));
+            }
+            eir::Pat::RefPat(pat) => self.collect_bindings_recursive_ast(&pat.pat(), result),
+            eir::Pat::RestPat(_) => {}
+            eir::Pat::SlicePat(pat) => {
+                let components = pat.components();
+                (components.prefix().into_iter())
+                    .for_each(|pat| self.collect_bindings_recursive_ast(&pat, result));
+                (components.suffix().into_iter())
+                    .for_each(|pat| self.collect_bindings_recursive_ast(&pat, result));
+            }
+            eir::Pat::TuplePat(pat) => pat
+                .fields()
+                .for_each(|pat| self.collect_bindings_recursive_ast(&pat, result)),
+            eir::Pat::TupleStructPat(pat) => pat
+                .fields()
+                .for_each(|pat| self.collect_bindings_recursive_ast(&pat, result)),
+            eir::Pat::WildcardPat(_) => {}
         }
     }
 }

@@ -164,7 +164,8 @@ impl CodeGenerator<'_> {
             let Some(parent) = module.parent(self.db) else {
                 panic!(
                     "Non-crate root module: at {}",
-                    self.location_with_file(module.definition_source(self.db))
+                    self.eir_sem
+                        .location(&module.definition_source_range(self.db))
                 );
                 // return "unexpected_root_module".to_owned();
             };
@@ -187,7 +188,8 @@ impl CodeGenerator<'_> {
             } else {
                 eprintln!(
                     "Unsupported: module (crate) does not have a name at {:?} ({module:?}, source = {source:?})",
-                    self.location_with_file(module.definition_source(self.db)),
+                    self.eir_sem
+                        .location(&module.definition_source_range(self.db)),
                     source = module.definition_source(self.db).value,
                 );
                 "unnamed_mod".to_owned()

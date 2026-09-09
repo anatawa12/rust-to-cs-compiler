@@ -1,5 +1,6 @@
-use super::{CodeGenerator, expr::BodyGen, generic_args, names, output::Code};
-use crate::codegen::expr::ItemInBody;
+use super::{CodeGenerator, generic_args, names, output::Code};
+use crate::codegen::body::EirEmitter;
+use crate::codegen::body::ItemInBody;
 use crate::codegen::item_exclusion::{is_r2cs_native, should_emit};
 use crate::codegen::simple_extensions::*;
 use crate::codegen::ty::generic_types;
@@ -207,11 +208,13 @@ impl<'db> CodeGenerator<'db> {
             out.wln("");
             out.open_brace();
             // Try to generate a real body using BodyGen
-            let mut body_gen = BodyGen::new(self, is_async, cs_type);
-            body_gen.emit_function_body(self.sem.source(f).unwrap().value, out);
+            let lowerer = super::body::eir::LowerToEirCtx { cg: self };
+            let eir_fn = lowerer.lower(self.eir_sem.source(f).unwrap().value);
+            let mut emitter = EirEmitter::new(self, is_async, cs_type);
+            emitter.emit_function_body(eir_fn, out);
             out.close_brace();
 
-            self.deferred(out, body_gen.deferred(), f.module(self.db));
+            self.deferred(out, emitter.deferred(), f.module(self.db));
         } else {
             self.emit_function_signature(
                 out,
@@ -225,11 +228,13 @@ impl<'db> CodeGenerator<'db> {
             out.wln("");
             out.open_brace();
             // Try to generate a real body using BodyGen
-            let mut body_gen = BodyGen::new(self, is_async, cs_type);
-            body_gen.emit_function_body(self.sem.source(f).unwrap().value, out);
+            let lowerer = super::body::eir::LowerToEirCtx { cg: self };
+            let eir_fn = lowerer.lower(self.eir_sem.source(f).unwrap().value);
+            let mut emitter = EirEmitter::new(self, is_async, cs_type);
+            emitter.emit_function_body(eir_fn, out);
             out.close_brace();
 
-            self.deferred(out, body_gen.deferred(), f.module(self.db));
+            self.deferred(out, emitter.deferred(), f.module(self.db));
         }
         out.blank_line();
     }
@@ -452,7 +457,7 @@ impl<'db> CodeGenerator<'db> {
     pub fn emit_const(&self, out: &mut Code, c: hir::Const) {
         let db = self.db;
 
-        let source = self.sem.source(c).unwrap();
+        let source = self.eir_sem.source(c).unwrap();
 
         let ty = self.rust_type_to_cs(&c.ty(db));
         let Some(name) = c.name(db) else {
@@ -461,8 +466,10 @@ impl<'db> CodeGenerator<'db> {
         };
         let name = names::const_name(name.as_str());
 
-        let mut body_gen = BodyGen::new(self, false, CsFunctionType::Normal);
-        let expr = body_gen.emit_expr_str_ast(&source.value.body().unwrap());
+        let lowerer = super::body::eir::LowerToEirCtx { cg: self };
+        let eir_fn = lowerer.lower(source.value.body().unwrap());
+        let mut emitter = EirEmitter::new(self, false, CsFunctionType::Normal);
+        let expr = emitter.emit_expr_str_ast(&eir_fn);
 
         out.w("public static readonly ")
             .w(ty)
@@ -472,21 +479,23 @@ impl<'db> CodeGenerator<'db> {
             .w(expr)
             .wln(";");
 
-        self.deferred(out, body_gen.deferred(), c.module(self.db));
+        self.deferred(out, emitter.deferred(), c.module(self.db));
     }
 
     #[tracing::instrument(skip(self, out), fields(const = %s.debug_display(self.db)))]
     pub fn emit_static(&self, out: &mut Code, s: hir::Static) {
         let db = self.db;
 
-        let source = self.sem.source(s).unwrap();
+        let source = self.eir_sem.source(s).unwrap();
 
         let ty = self.rust_type_to_cs(&s.ty(db));
         let name = s.name(db);
         let name = names::static_name(name.as_str());
 
-        let mut body_gen = BodyGen::new(self, false, CsFunctionType::Normal);
-        let expr = body_gen.emit_expr_str_ast(&source.value.body().unwrap());
+        let lowerer = super::body::eir::LowerToEirCtx { cg: self };
+        let eir_fn = lowerer.lower(source.value.body().unwrap());
+        let mut emitter = EirEmitter::new(self, false, CsFunctionType::Normal);
+        let expr = emitter.emit_expr_str_ast(&eir_fn);
 
         out.w("public static readonly ")
             .w(ty)
@@ -496,7 +505,7 @@ impl<'db> CodeGenerator<'db> {
             .w(expr)
             .wln(";");
 
-        self.deferred(out, body_gen.deferred(), s.module(self.db));
+        self.deferred(out, emitter.deferred(), s.module(self.db));
     }
 }
 
