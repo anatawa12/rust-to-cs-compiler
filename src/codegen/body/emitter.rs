@@ -930,13 +930,6 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 if let eir::Expr::PathExpr(path) = &callee {
                     match self.eir_sem.resolve_path_with_subst(path.path()) {
                         Some((PathResolution::Def(def), _))
-                            if let Some(def) = ConstructableDef::from_module_def(def)
-                                && def.adt(self.db).name(self.db).as_str() == "Cow" =>
-                        {
-                            // The Cow::Borrow() or Cow::Owned() would become raw value so omit
-                            return self.emit_expr_str_ast({ args }.nth(0).unwrap());
-                        }
-                        Some((PathResolution::Def(def), _))
                             if let Some(def) = ConstructableDef::from_module_def(def) =>
                         {
                             let expr_type = self.eir_sem.type_of_expr(expr).original;
@@ -1037,11 +1030,6 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                     code!("(", lhs_code, " ", op_str, " ", rhs_code, ")")
                 }
             }
-            //Expr::Assignment { target, value } => {
-            //    let target_str = self.emit_pat_as_lvalue(*target);
-            //    let value_str = self.emit_expr_str(*value);
-            //    code!(target_str, " = ", value_str)
-            //}
             eir::Expr::PrefixExpr(prefix_expr) => {
                 let inner_str = self.emit_expr_str_ast(prefix_expr.expr());
                 match prefix_expr.op_kind() {
@@ -1051,7 +1039,6 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 }
             }
             eir::Expr::RefExpr(ref_expr) => self.emit_expr_str_ast(ref_expr.expr()),
-            //Expr::Box { expr: inner } => self.emit_expr_str(*inner),
             eir::Expr::CastExpr(cast_expr) => {
                 // TODO: Cast might not be compatible
                 code!(
@@ -1359,80 +1346,10 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 let pattern_cs = self.emit_pattern_ast(let_expr.pat());
                 code!("(", val, " is ", pattern_cs, ")")
             }
-            /*
-            Expr::Unsafe {
-                statements, tail, ..
-            } => {
-                if statements.is_empty() {
-                    if let &Some(t) = tail {
-                        return self.emit_expr_str(t);
-                    }
-                    return "default!".into();
-                }
-                "/* unsafe block */ default!".into()
-            }
-             */
             eir::Expr::MatchExpr(match_expr) => {
                 let arms = match_expr.match_arm_list();
                 let match_expr = match_expr.expr();
                 let scrutinee = self.emit_expr_str_ast(match_expr);
-
-                // Since we lower Cow<T> => T, we remove
-                if let Some(cow) = Some(self.eir_sem.type_of_expr(match_expr)).and_then(|t| {
-                    if let Some((adt, _args)) = t.adjusted.unwrap_or(t.original).as_adt_with_args()
-                        && let hir::Adt::Enum(enum_) = adt
-                        && Some(enum_) == self.lang_items.Cow()
-                        && let Some(arms) = arms
-                            .arms()
-                            .map(|arm| {
-                                if let eir::Pat::TupleStructPat(pat) = arm.pat()
-                                    && let Some(PathResolution::Def(def)) =
-                                        self.eir_sem.resolve_path(pat.path())
-                                    && let ModuleDef::EnumVariant(variant) = def
-                                    && (Some(variant) == self.lang_items.CowBorrowed()
-                                        || Some(variant) == self.lang_items.CowOwned())
-                                {
-                                    Some(if Some(variant) == self.lang_items.CowBorrowed() {
-                                        Some((pat.fields(), arm))
-                                    } else {
-                                        None
-                                    })
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect::<Option<Vec<_>>>()
-                    {
-                        Some(arms)
-                    } else {
-                        None
-                    }
-                }) {
-                    let cow = cow.into_iter().flatten().collect::<Vec<_>>();
-                    assert!(cow.len() == 1);
-
-                    let mut out = Code::new();
-
-                    out.w("(").w(scrutinee).wln(") switch {");
-                    out.indent();
-
-                    for (pat, arm) in cow {
-                        // Emit pattern check
-                        let pat_cs = self.emit_pattern_ast({ pat }.next().unwrap());
-
-                        out.w("").w(pat_cs).w(" ");
-                        if let Some(guard) = arm.guard() {
-                            out.w("when ");
-                            out.w(self.emit_expr_str_ast(guard));
-                        }
-                        out.w("=> ").w(self.emit_expr_str_ast(arm.expr())).wln(",");
-                    }
-                    out.dedent();
-
-                    out.w("}");
-
-                    return out;
-                }
 
                 let mut out = Code::new();
 
@@ -1464,9 +1381,6 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 .map(|e| self.emit_expr_str_ast(e))
                 .unwrap_or_else(|| "default!".into()),
             eir::Expr::ContinueExpr(_) => "default!".into(),
-            //eir::Expr::BecomeExpr(become_expr) =>
-            //eir::Expr::YieldExpr(yield_expr) =>
-            //&Expr::Const(inner) => self.emit_expr_str(inner),
             eir::Expr::UnderscoreExpr(_) => "_".into(),
             eir::Expr::LoopExpr(_) | eir::Expr::ForExpr(_) | eir::Expr::WhileExpr(_) => {
                 // TODO
