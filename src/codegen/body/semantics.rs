@@ -4,6 +4,7 @@ use hir::HasSource;
 use hir::db::HirDatabase;
 use ide_db::line_index;
 use itertools::Either;
+use ra_internal::LangItems;
 use std::marker::PhantomData;
 use syntax::ast;
 use vfs::Vfs;
@@ -16,14 +17,16 @@ pub struct EirSemantics<'db> {
     db: &'db dyn HirDatabase,
     hir: hir::Semantics<'db, dyn HirDatabase>,
     vfs: &'db Vfs,
+    lang_items: &'db LangItems,
 }
 
 impl<'db> EirSemantics<'db> {
-    pub fn new(db: &'db dyn HirDatabase, vfs: &'db Vfs) -> Self {
+    pub fn new(db: &'db dyn HirDatabase, vfs: &'db Vfs, lang_items: &'db LangItems) -> Self {
         Self {
             db,
             hir: hir::Semantics::new_dyn(db),
             vfs,
+            lang_items,
         }
     }
 }
@@ -151,6 +154,12 @@ impl<'db> EirSemantics<'db> {
     )> {
         match path {
             eir::Path::Ast(ast) => self.hir.resolve_path_with_subst(ast),
+            eir::Path::MethodCall(ast) => match self.hir.resolve_method_call_fallback(ast) {
+                Some((Either::Left(f), sub)) => {
+                    Some((hir::PathResolution::Def(hir::ModuleDef::Function(f)), sub))
+                }
+                _ => None,
+            },
             eir::Path::ScopedName { scope, name } => {
                 let mut resolved = None;
                 self.hir
@@ -174,6 +183,18 @@ impl<'db> EirSemantics<'db> {
                     hir::ScopeDef::Unknown => None,
                 }
             }
+            eir::Path::BuiltinItem(eir::BuiltinItem::DebugStr) => Some((
+                hir::PathResolution::Def(hir::ModuleDef::Function(
+                    self.lang_items.internal_debug_text().unwrap(),
+                )),
+                None,
+            )),
+            eir::Path::BuiltinItem(eir::BuiltinItem::DisplayStr) => Some((
+                hir::PathResolution::Def(hir::ModuleDef::Function(
+                    self.lang_items.internal_display_text().unwrap(),
+                )),
+                None,
+            )),
         }
     }
 
@@ -208,19 +229,6 @@ impl<'db> EirSemantics<'db> {
     pub fn resolve_bind_pat_to_const(&self, pat: &eir::IdentPat) -> Option<hir::ModuleDef> {
         match pat.node_info() {
             eir::NodeInfo::Ast(ast) => self.hir.resolve_bind_pat_to_const(&ast),
-            eir::NodeInfo::None => None,
-        }
-    }
-
-    pub fn resolve_method_call_fallback(
-        &self,
-        method_call: &eir::MethodCallExpr,
-    ) -> Option<(
-        Either<hir::Function, hir::Field>,
-        Option<hir::GenericSubstitution<'db>>,
-    )> {
-        match method_call.node_info() {
-            eir::NodeInfo::Ast(ast) => self.hir.resolve_method_call_fallback(&ast),
             eir::NodeInfo::None => None,
         }
     }

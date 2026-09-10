@@ -3,7 +3,6 @@ use crate::codegen::CodeGenerator;
 use crate::codegen::constructable::ConstructableDef;
 use crate::new_eir_node;
 use hir::HasContainer;
-use itertools::Either;
 use std::ops::ControlFlow;
 
 /// The struct implements translating EIR for C# generation
@@ -125,27 +124,33 @@ impl MutatingEirVisitor for EirTransformer<'_, '_> {
 
         if let Stmt::ExprStmt(expr_stmt) = stmt
             && let expr = &mut expr_stmt.as_mut().expr
-            && let Expr::MethodCallExpr(method_call) = expr
-            && let Some((Either::Left(f), _)) =
-                self.eir_sem.resolve_method_call_fallback(method_call)
+            && let Expr::CallExpr(call_expr) = expr
+            && let Expr::PathExpr(path) = call_expr.expr()
+            && let Some(hir::PathResolution::Def(hir::ModuleDef::Function(f))) =
+                self.eir_sem.resolve_path(path.path())
             && f.name(db).symbol().as_str() == "push"
             && let hir::ItemContainer::Impl(impl_) = f.container(db)
             && let Some(hir::Adt::Struct(struct_)) = impl_.self_ty(db).as_adt()
             && let None = impl_.trait_(db)
             && (Some(struct_) == self.lang_items.OsString()
                 || Some(struct_) == self.lang_items.String())
-            && let Expr::PathExpr(receiver_path) = method_call.receiver()
+            && let arg_list = call_expr.arg_list()
+            && let receiver = arg_list.args().nth(0).unwrap()
+            && let Expr::PathExpr(receiver_path) = receiver
             && let Some(hir::PathResolution::Local(receiver_var)) =
                 self.eir_sem.resolve_path(receiver_path.path())
             && let Some(hir::Adt::Struct(struct_of_reciver_var)) = receiver_var.ty(db).as_adt()
             && struct_of_reciver_var == struct_
         {
             replace_node!(
-                expr as Expr::MethodCallExpr(method_call) = {
-                    let method_call = method_call.into_inner();
+                expr as Expr::CallExpr(call_expr) = {
+                    let method_call = call_expr.into_inner();
+                    let mut args = method_call.arg_list.into_inner().args.into_iter();
+                    let receiver = args.next().unwrap();
+                    let operand = args.next().unwrap();
                     Expr::from(new_eir_node!(BinExpr {
-                        lhs: method_call.receiver,
-                        rhs: (method_call.arg_list.into_inner().args.into_iter().nth(0)).unwrap(),
+                        lhs: receiver,
+                        rhs: operand,
                         op_kind: BinaryOp::Assignment {
                             op: Some(ArithOp::Add)
                         },

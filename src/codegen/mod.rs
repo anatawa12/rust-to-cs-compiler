@@ -74,7 +74,7 @@ impl<'db> CodeGenerator<'db> {
         Self {
             db,
             krate,
-            eir_sem: EirSemantics::new(db, vfs),
+            eir_sem: EirSemantics::new(db, vfs, LangItems::new(db, krate)),
             lang_items: LangItems::new(db, krate),
             trait_first_traits,
 

@@ -6,7 +6,7 @@ use crate::codegen::output::Code;
 use cfg::{CfgAtom, CfgDiff};
 use hir::db::HirDatabase;
 use hir::{Crate, Symbol};
-use ide_db::base_db::all_crates;
+use ide_db::base_db::{SourceDatabase, all_crates};
 use ide_db::{FxHashMap, RootDatabase};
 use load_cargo::{LoadCargoConfig, load_workspace};
 use project_model::{CargoConfig, CargoFeatures, ProjectManifest, ProjectWorkspace, RustLibSource};
@@ -43,9 +43,35 @@ fn load_workspace_from_cargo(
         .expect("error running build scripts");
     ws.set_build_scripts(build_scripts);
 
-    let (db, vfs, _proc_macro) = load_workspace(ws, env, &load_config).unwrap();
+    let (mut db, mut vfs, _proc_macro) = load_workspace(ws, env, &load_config).unwrap();
 
-    let crates = all_crates(&db).iter().map(|&k| Crate::from(k)).collect();
+    let crates = all_crates(&db)
+        .iter()
+        .map(|&k| Crate::from(k))
+        .collect::<Vec<_>>();
+
+    if let Some(core_crate) = crates.iter().find(|x| {
+        x.origin(&db) == ide_db::base_db::CrateOrigin::Lang(ide_db::base_db::LangCrateOrigin::Core)
+    }) {
+        let file_id = (core_crate.root_module(&db).definition_source_file_id(&db))
+            .file_id()
+            .unwrap()
+            .file_id(&db);
+        let file_path = vfs.file_path(file_id);
+        let mut core_contents = std::fs::read_to_string(file_path.as_path().unwrap()).unwrap();
+        core_contents.push_str(
+            r###"
+        pub mod __r2cs_internal {
+            pub fn debug_text() {}
+            pub fn display_text() {}
+        }
+        "###,
+        );
+        db.set_file_text(file_id, &core_contents);
+        vfs.set_file_contents(file_path.clone(), Some(core_contents.clone().into_bytes()));
+    } else {
+        panic!("no core crate found in workspace");
+    }
 
     (db, vfs, crates)
 }

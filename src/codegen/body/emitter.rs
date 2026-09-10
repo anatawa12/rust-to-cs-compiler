@@ -848,61 +848,6 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                     }
                 }
             }
-            eir::Expr::MethodCallExpr(method_call) => {
-                let receiver = self.emit_expr_str_ast(method_call.receiver());
-
-                let db = self.db;
-
-                match self.eir_sem.resolve_method_call_fallback(method_call) {
-                    Some((Either::Left(f), args)) => {
-                        let args = args.map(|args| args.types(self.db)).unwrap_or_else(|| {
-                            // this is builtin derive. all except for Hash::hash implementation
-                            if *f.name(self.db).symbol() == sym::hash {
-                                vec![(
-                                    hir::Symbol::intern("H"),
-                                    hir::Type::error(self.db, f.krate(self.db)),
-                                )]
-                            } else {
-                                vec![]
-                            }
-                        });
-                        let resolved = self.resolve_function(f, args);
-                        self.emit_call_expr(
-                            resolved,
-                            [receiver].into_iter().chain(
-                                method_call
-                                    .arg_list()
-                                    .args()
-                                    .map(|arg| self.emit_expr_str_ast(arg)),
-                            ),
-                        )
-                    }
-                    Some((Either::Right(_), _)) => {
-                        eprintln!(
-                            "method call resolved to field at {}",
-                            self.eir_sem.location(method_call)
-                        );
-                        let method_cs = method_call.name_ref().text().to_string();
-                        let args = method_call
-                            .arg_list()
-                            .args()
-                            .map(|a| self.emit_expr_str_ast(a));
-                        code!(receiver, ".", method_cs, "(", join(args, ", "), ")")
-                    }
-                    None => {
-                        eprintln!(
-                            "Unresolved method call at {}",
-                            self.eir_sem.location(method_call)
-                        );
-                        let method_cs = method_call.name_ref().text().to_string();
-                        let args = method_call
-                            .arg_list()
-                            .args()
-                            .map(|a| self.emit_expr_str_ast(a));
-                        code!(receiver, ".", method_cs, "(", join(args, ", "), ")")
-                    }
-                }
-            }
             eir::Expr::CallExpr(call_expr) => {
                 let callee = call_expr.expr();
                 let args = call_expr.arg_list().args();
@@ -1524,7 +1469,6 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 }
             }
             ResolvedFunction::Method {
-                self_ty: _,
                 trait_: _,
                 function_name,
                 generic_sources,

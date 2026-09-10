@@ -617,8 +617,8 @@ fn emit_format_args_to_string(
                 };
 
                 let formatter = match f {
-                    "" => "DisplayStr",
-                    "?" => "DebugStr",
+                    "" => eir::BuiltinItem::DisplayStr,
+                    "?" => eir::BuiltinItem::DebugStr,
                     _ => panic!(
                         "Unsupported format specifier: {f} at {}",
                         ctx.cg.eir_sem.location(macro_call)
@@ -627,11 +627,13 @@ fn emit_format_args_to_string(
 
                 let _ = formatter;
                 result.push(eir::FormatArgsSegment::Expr(From::from(new_eir_node!(
-                    eir::MethodCallExpr {
-                        receiver: expr,
-                        name_ref: eir::NameRef::CSharp(formatter.to_string()),
+                    eir::CallExpr {
+                        expr: From::from(new_eir_node!(eir::PathExpr {
+                            path: eir::Path::BuiltinItem(formatter),
+                            node_info: eir::NodeInfo::None,
+                        })),
                         arg_list: new_eir_node!(eir::ArgList {
-                            args: eir_children![],
+                            args: eir_children![expr],
                             node_info: eir::NodeInfo::None,
                         }),
                         node_info: eir::NodeInfo::None,

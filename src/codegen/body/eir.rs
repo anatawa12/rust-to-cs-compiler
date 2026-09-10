@@ -132,6 +132,28 @@ impl From<NoNode> for ast::Expr {
     }
 }
 
+#[derive(Clone)]
+pub struct AnySyntax(syntax::SyntaxNode);
+impl ast::AstNode for AnySyntax {
+    fn can_cast(_: syntax::SyntaxKind) -> bool
+    where
+        Self: Sized,
+    {
+        true
+    }
+
+    fn cast(syntax: syntax::SyntaxNode) -> Option<Self>
+    where
+        Self: Sized,
+    {
+        Some(AnySyntax(syntax))
+    }
+
+    fn syntax(&self) -> &syntax::SyntaxNode {
+        &self.0
+    }
+}
+
 impl<T: LowerToEir> LowerToEir for Option<T> {
     type Eir = Option<T::Eir>;
     fn lower_to_eir(self, ctx: &LowerToEirCtx) -> Option<T::Eir> {

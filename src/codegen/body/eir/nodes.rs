@@ -100,11 +100,6 @@ def_eir!(
             expr: Expr,
             match_arm_list: MatchArmList,
         },
-        MethodCallExpr {
-            receiver: Expr,
-            name_ref: NameRef,
-            arg_list: ArgList,
-        },
         // OffsetOfExpr: we do in macro level
         // ParenExpr: lowered
         PathExpr {
@@ -183,6 +178,25 @@ def_eir!(
                 op_details: LowerCast::<(_, _)>::lower_cast(bin.op_details(), "op_details").1,
                 node_info: ExprInfo::Ast(bin),
             })),*/
+            ast::Expr::MethodCallExpr(method_call) => From::from(new_eir_node!(CallExpr {
+                expr: From::from(new_eir_node!(PathExpr {
+                    path: Path::MethodCall(method_call.clone()),
+                    node_info: NodeInfo::None,
+                })),
+                arg_list: new_eir_node!(ArgList {
+                    args: From::from(
+                        [method_call.receiver().unwrap()]
+                            .into_iter()
+                            .chain(method_call.arg_list().unwrap().args())
+                            .map(|x| ctx.lower(x))
+                            .collect::<Vec<_>>()
+                    ),
+                    node_info: NodeInfo::None,
+                }),
+                node_info: NodeInfo::Ast(method_call.into()),
+            })),
+            /*
+             */
             ast::Expr::MacroExpr(macro_expr) => ctx.emit_expr_macro(macro_expr),
             ast::Expr::ArrayExpr(array) => match array.kind() {
                 ArrayExprKind::Repeat {
@@ -486,6 +500,8 @@ def_eir!(
 #[derive(Clone)]
 pub enum Path {
     Ast(ast::Path),
+    MethodCall(ast::MethodCallExpr),
+    BuiltinItem(BuiltinItem),
     ScopedName {
         scope: syntax::SyntaxNode,
         name: String,
@@ -501,11 +517,13 @@ impl LowerToEir for ast::Path {
 }
 
 impl EirNode for Path {
-    type AstNode = ast::Path;
+    type AstNode = AnySyntax;
 
     fn node_info(&self) -> NodeInfo<Self::AstNode> {
         match self {
-            Path::Ast(ast) => NodeInfo::Ast(ast.clone()),
+            Path::Ast(ast) => NodeInfo::Ast(AnySyntax(syntax::AstNode::syntax(ast).clone())),
+            Path::MethodCall(ast) => NodeInfo::Ast(AnySyntax(syntax::AstNode::syntax(ast).clone())),
+            Path::BuiltinItem(_) => NodeInfo::None,
             Path::ScopedName { .. } => NodeInfo::None,
         }
     }
@@ -519,9 +537,14 @@ impl EirNode for Path {
 }
 
 #[derive(Clone)]
+pub enum BuiltinItem {
+    DisplayStr,
+    DebugStr,
+}
+
+#[derive(Clone)]
 pub enum NameRef {
     Ast(ast::NameRef),
-    CSharp(String),
 }
 
 impl LowerToEir for ast::NameRef {
@@ -536,7 +559,6 @@ impl NameRef {
     pub fn text(&self) -> &str {
         match self {
             NameRef::Ast(ast) => ast.text(),
-            NameRef::CSharp(code) => code,
         }
     }
 }
@@ -547,7 +569,6 @@ impl EirNode for NameRef {
     fn node_info(&self) -> NodeInfo<Self::AstNode> {
         match self {
             NameRef::Ast(ast) => NodeInfo::Ast(ast.clone()),
-            NameRef::CSharp(..) => NodeInfo::None,
         }
     }
 

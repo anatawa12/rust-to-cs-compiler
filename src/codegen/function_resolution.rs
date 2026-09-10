@@ -20,7 +20,6 @@ pub enum ResolvedFunction<'db> {
         args_map: Option<Vec<ArgSource>>,
     },
     Method {
-        self_ty: hir::Type<'db>,
         trait_: Option<TraitRef<'db>>,
         function_name: String,
         generic_sources: Vec<CsTypeParamSource<'db>>,
@@ -136,7 +135,6 @@ impl<'db> CodeGenerator<'db> {
             && type_.is_char()
         {
             return ResolvedFunction::Method {
-                self_ty,
                 trait_: None,
                 function_name: "ToString/*converted from encode_utf8*/".into(),
                 generic_sources: vec![],
@@ -193,7 +191,6 @@ impl<'db> CodeGenerator<'db> {
                 panic!("Into enum type params (self)");
             };
             return ResolvedFunction::Method {
-                self_ty,
                 trait_: None,
                 function_name: "m_UnwrapOrElse".into(),
                 generic_sources: vec![],
@@ -211,6 +208,27 @@ impl<'db> CodeGenerator<'db> {
             };
         }
 
+        if Some(f) == self.lang_items.internal_debug_text() {
+            return ResolvedFunction::Method {
+                //self_ty,
+                trait_: None,
+                function_name: "DebugStr".into(),
+                generic_sources: vec![],
+                generic_args: vec![],
+                args_map: Some((ArgSource::Source(0), vec![])),
+            };
+        }
+        if Some(f) == self.lang_items.internal_display_text() {
+            return ResolvedFunction::Method {
+                //self_ty,
+                trait_: None,
+                function_name: "DisplayStr".into(),
+                generic_sources: vec![],
+                generic_args: vec![],
+                args_map: Some((ArgSource::Source(0), vec![])),
+            };
+        }
+
         // generic way
         match f.container(db) {
             hir::ItemContainer::Impl(impl_) => {
@@ -218,7 +236,6 @@ impl<'db> CodeGenerator<'db> {
 
                 if f.self_param(db).is_some() {
                     ResolvedFunction::Method {
-                        self_ty,
                         trait_: None,
                         function_name: self.function_name(f),
                         generic_sources: self.generic_params_cs_sources(f.into(), &f_args),
@@ -239,7 +256,6 @@ impl<'db> CodeGenerator<'db> {
             hir::ItemContainer::Trait(trait_) => {
                 if f.self_param(db).is_some() {
                     ResolvedFunction::Method {
-                        self_ty: parent_args.as_ref().unwrap()[0].clone(),
                         trait_: Some((trait_, parent_args.unwrap())),
                         function_name: self.function_name(f),
                         generic_sources: self.generic_params_cs_sources(f.into(), &f_args),
