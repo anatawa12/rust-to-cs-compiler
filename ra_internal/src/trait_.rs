@@ -18,7 +18,7 @@ impl TraitExt for hir::Trait {
         let generic_def_id = GenericDefId::try_from(hir::GenericDef::from(self)).unwrap();
 
         let env = ParamEnvAndCrate {
-            param_env: db.trait_environment(generic_def_id.into()),
+            param_env: db.trait_environment(generic_def_id),
             krate: self.module(db).krate(db).base(),
         };
         let interner = DbInterner::new_with(db, env.krate);

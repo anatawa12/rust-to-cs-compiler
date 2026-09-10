@@ -392,8 +392,6 @@ impl AssocTraitItemExt for hir::Function {
         hir.as_function()
     }
     fn container(self, db: &dyn HirDatabase) -> ItemContainer {
-        // false positive see https://github.com/rust-lang/rust-clippy/issues/12629
-        #[expect(clippy::needless_borrow)]
         (&self).container(db)
     }
 }
@@ -403,8 +401,6 @@ impl AssocTraitItemExt for hir::Const {
         hir.as_const()
     }
     fn container(self, db: &dyn HirDatabase) -> ItemContainer {
-        // false positive see https://github.com/rust-lang/rust-clippy/issues/12629
-        #[expect(clippy::needless_borrow)]
         (&self).container(db)
     }
 }
@@ -414,8 +410,6 @@ impl AssocTraitItemExt for hir::TypeAlias {
         hir.as_type_alias()
     }
     fn container(self, db: &dyn HirDatabase) -> ItemContainer {
-        // false positive see https://github.com/rust-lang/rust-clippy/issues/12629
-        #[expect(clippy::needless_borrow)]
         (&self).container(db)
     }
 }

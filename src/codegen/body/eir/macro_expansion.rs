@@ -182,7 +182,7 @@ impl<'g, 'db> LowerToEirCtx<'g, 'db> {
             };
             parser.take_token(T![,]);
             From::from(new_eir_node!(eir::CallExpr {
-                expr: raw_code_expr!("Asserts.assert").into(),
+                expr: raw_code_expr!("Asserts.assert"),
                 arg_list: new_eir_node!(eir::ArgList {
                     args: eir_children![
                         self.lower(condition),
@@ -308,7 +308,7 @@ fn log_macro(
     }
 
     From::from(new_eir_node!(eir::CallExpr {
-        expr: raw_code_expr!("Logging.{level}").into(),
+        expr: raw_code_expr!("Logging.{level}"),
         arg_list: new_eir_node!(eir::ArgList {
             args: eir_children![parse_rest_as_format_args(ctx, macro_call, &mut parser).into(),],
             node_info: eir::NodeInfo::None,

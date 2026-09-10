@@ -241,7 +241,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
             }
         }
         if let Some(body) = f.body() {
-            self.emit_returning_block(out, &body);
+            self.emit_returning_block(out, body);
         } else {
             out.wln("throw new System.NotImplementedException(\"builtin-derive\");");
         }
@@ -348,7 +348,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 let then_branch = if_expr.then_branch();
                 let else_branch = if_expr.else_branch();
 
-                let cond = self.emit_expr_str_ast(&condition);
+                let cond = self.emit_expr_str_ast(condition);
                 out.w("if (").w(cond).wln(") {");
                 out.indent();
                 let then_part = self.emit_simple_block_as_stmt(out, then_branch, option.clone());
@@ -400,7 +400,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                     .unwrap_or_default();
                 out.w(label_str)
                     .w("while (")
-                    .w(self.emit_expr_str_ast(&condition))
+                    .w(self.emit_expr_str_ast(condition))
                     .wln(") {");
                 out.indent();
                 self.emit_simple_block_as_stmt(out, body, option.non_last());
@@ -423,10 +423,10 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                     .w("foreach (var ")
                     .w(&temp_name)
                     .w(" in ")
-                    .w(self.emit_expr_str_ast(&iterable))
+                    .w(self.emit_expr_str_ast(iterable))
                     .wln(") {");
                 out.indent();
-                self.emit_let_stmt(out, &pat, code!(&temp_name), Self::emit_unreachable);
+                self.emit_let_stmt(out, pat, code!(&temp_name), Self::emit_unreachable);
                 self.emit_simple_block_as_stmt(out, body, option.non_last());
                 out.dedent();
                 out.wln("}");
@@ -437,19 +437,19 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
             eir::Expr::MatchExpr(match_expr) => {
                 let arms = match_expr.match_arm_list();
                 let match_expr = match_expr.expr();
-                let scrutinee = self.emit_expr_str_ast(&match_expr);
+                let scrutinee = self.emit_expr_str_ast(match_expr);
                 out.w("switch (").w(scrutinee).wln(") {");
                 out.indent();
 
                 let mut result = EmittedExprInfo::diverging();
                 for arm in arms.arms() {
                     // Emit pattern check
-                    let pat_cs = self.emit_pattern_ast(&arm.pat());
+                    let pat_cs = self.emit_pattern_ast(arm.pat());
 
                     out.w("case ").w(pat_cs).w(" ");
                     if let Some(guard) = arm.guard() {
                         out.w("when ");
-                        out.w(self.emit_expr_str_ast(&guard));
+                        out.w(self.emit_expr_str_ast(guard));
                     }
                     out.wln(":{");
                     out.indent();
@@ -476,7 +476,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                     .map(|l| format!(" /*{}*/", self.label_name(l)))
                     .unwrap_or_default();
                 if let Some(e) = break_expr {
-                    let val = self.emit_expr_str_ast(&e);
+                    let val = self.emit_expr_str_ast(e);
                     out.w("/* break ").w(val).wln(" */"); // TODO: break-with-value
                     EmittedExprInfo::non_diverging()
                 } else {
@@ -495,7 +495,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
             }
 
             eir::Expr::AwaitExpr(await_expr) => {
-                let inner_str = self.emit_expr_str_ast(&await_expr.expr());
+                let inner_str = self.emit_expr_str_ast(await_expr.expr());
                 if option.returning {
                     out.wln(code!("return await ", inner_str, ";"));
                     EmittedExprInfo::diverging()
@@ -517,7 +517,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
             }
             _ => {
                 // Generic expression: emit as expression statement
-                let s = self.emit_expr_str_ast_inner(&expr, true);
+                let s = self.emit_expr_str_ast_inner(expr, true);
                 if option.returning && !self.returning_type().is_unit() {
                     out.w("return ").w(s).wln(";");
                     EmittedExprInfo::diverging()
@@ -586,19 +586,19 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                     let else_branch = let_stmt.let_else().map(|x| x.block_expr());
 
                     if let Some(init) = initializer {
-                        let init_str = self.emit_expr_str_ast(&init);
+                        let init_str = self.emit_expr_str_ast(init);
                         if let Some(else_branch) = else_branch {
-                            self.emit_let_stmt(out, &pat, init_str, |this, out| {
+                            self.emit_let_stmt(out, pat, init_str, |this, out| {
                                 out.wln("{").indent();
                                 this.emit_simple_block_as_stmt(out, else_branch, option.non_last());
                                 out.dedent();
                                 out.wln("}");
                             });
                         } else {
-                            self.emit_let_stmt(out, &pat, init_str, Self::emit_unreachable);
+                            self.emit_let_stmt(out, pat, init_str, Self::emit_unreachable);
                         }
                     } else {
-                        let bindings = self.collect_bindings_in_pat_ast(&pat);
+                        let bindings = self.collect_bindings_in_pat_ast(pat);
                         for b in &bindings {
                             let cs_type = self.rust_type_to_cs(&b.ty(self.db));
                             let cs_name = self.alloc_binding_ast(b);
@@ -659,7 +659,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
         match expr {
             //Expr::Missing => "/* missing */default!".into(),
             eir::Expr::Literal(lit) => self.emit_literal_ast(lit),
-            eir::Expr::PathExpr(path) => match self.eir_sem.resolve_path_with_subst(&path.path()) {
+            eir::Expr::PathExpr(path) => match self.eir_sem.resolve_path_with_subst(path.path()) {
                 None => {
                     eprintln!(
                         "Unresolved Path at {loc}",
@@ -815,8 +815,8 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
             eir::Expr::FieldExpr(field_expr) => {
                 //let _name = field_expr.name_ref().unwrap();
                 let receiver_part = field_expr.expr();
-                let receiver_type = self.eir_sem.type_of_expr(&receiver_part);
-                let receiver = self.emit_expr_str_ast(&receiver_part);
+                let receiver_type = self.eir_sem.type_of_expr(receiver_part);
+                let receiver = self.emit_expr_str_ast(receiver_part);
                 let adjuster = if let Some(adjusted) = receiver_type.adjusted
                     && std::iter::successors(
                         receiver_type.original.as_reference().map(|x| x.0),
@@ -848,7 +848,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 }
             }
             eir::Expr::MethodCallExpr(method_call) => {
-                let receiver = self.emit_expr_str_ast(&method_call.receiver());
+                let receiver = self.emit_expr_str_ast(method_call.receiver());
 
                 let db = self.db;
 
@@ -862,7 +862,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                                 || Some(struct_) == self.lang_items.String())
                             && let eir::Expr::PathExpr(receiver_path) = method_call.receiver()
                             && let Some(hir::PathResolution::Local(receiver_var)) =
-                                self.eir_sem.resolve_path(&receiver_path.path())
+                                self.eir_sem.resolve_path(receiver_path.path())
                             && let Some(hir::Adt::Struct(struct_of_reciver_var)) =
                                 receiver_var.ty(db).as_adt()
                             && struct_of_reciver_var == struct_
@@ -871,7 +871,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                         let mut code: Code = (self.binding_name_ast(receiver_var)).into();
                         code.w(" += ");
                         code.w(
-                            self.emit_expr_str_ast(&method_call.arg_list().args().next().unwrap())
+                            self.emit_expr_str_ast(method_call.arg_list().args().next().unwrap())
                         );
                         code
                     }
@@ -894,8 +894,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                                 method_call
                                     .arg_list()
                                     .args()
-                                    .into_iter()
-                                    .map(|arg| self.emit_expr_str_ast(&arg)),
+                                    .map(|arg| self.emit_expr_str_ast(arg)),
                             ),
                         )
                     }
@@ -908,7 +907,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                         let args = method_call
                             .arg_list()
                             .args()
-                            .map(|a| self.emit_expr_str_ast(&a));
+                            .map(|a| self.emit_expr_str_ast(a));
                         code!(receiver, ".", method_cs, "(", join(args, ", "), ")")
                     }
                     None => {
@@ -920,7 +919,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                         let args = method_call
                             .arg_list()
                             .args()
-                            .map(|a| self.emit_expr_str_ast(&a));
+                            .map(|a| self.emit_expr_str_ast(a));
                         code!(receiver, ".", method_cs, "(", join(args, ", "), ")")
                     }
                 }
@@ -929,13 +928,13 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 let callee = call_expr.expr();
                 let args = call_expr.arg_list().args();
                 if let eir::Expr::PathExpr(path) = &callee {
-                    match self.eir_sem.resolve_path_with_subst(&path.path()) {
+                    match self.eir_sem.resolve_path_with_subst(path.path()) {
                         Some((PathResolution::Def(def), _))
                             if let Some(def) = ConstructableDef::from_module_def(def)
                                 && def.adt(self.db).name(self.db).as_str() == "Cow" =>
                         {
                             // The Cow::Borrow() or Cow::Owned() would become raw value so omit
-                            return self.emit_expr_str_ast(&{ args }.nth(0).unwrap());
+                            return self.emit_expr_str_ast({ args }.nth(0).unwrap());
                         }
                         Some((PathResolution::Def(def), _))
                             if let Some(def) = ConstructableDef::from_module_def(def) =>
@@ -944,7 +943,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                             let generic_args = expr_type.expect_adt_of(def.adt(self.db));
                             let callee_type =
                                 self.constructable_name_cs(&Constructable::new(def, generic_args));
-                            let args_str = args.map(|a| self.emit_expr_str_ast(&a));
+                            let args_str = args.map(|a| self.emit_expr_str_ast(a));
                             return code!(callee_type, ".ctor(", join(args_str, ", "), ")");
                         }
                         Some((PathResolution::Def(ModuleDef::Function(f)), subst)) => {
@@ -963,24 +962,24 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                             let resolved = self.resolve_function(f, generics);
                             return self.emit_call_expr(
                                 resolved,
-                                args.into_iter().map(|a| self.emit_expr_str_ast(&a)),
+                                args.into_iter().map(|a| self.emit_expr_str_ast(a)),
                             );
                         }
                         _ => {}
                     }
                 }
 
-                let callee_str = self.emit_expr_str_ast(&callee);
-                let args_str = args.map(|a| self.emit_expr_str_ast(&a));
+                let callee_str = self.emit_expr_str_ast(callee);
+                let args_str = args.map(|a| self.emit_expr_str_ast(a));
                 code!(callee_str, "(", join(args_str, ", "), ")")
             }
             eir::Expr::AwaitExpr(await_expr) => {
-                let inner_str = self.emit_expr_str_ast(&await_expr.expr());
+                let inner_str = self.emit_expr_str_ast(await_expr.expr());
                 code!("(await ", inner_str, ")")
             }
             eir::Expr::BinExpr(bin_expr) => {
-                let lhs_code = self.emit_expr_str_ast(&bin_expr.lhs());
-                let rhs_code = self.emit_expr_str_ast(&bin_expr.rhs());
+                let lhs_code = self.emit_expr_str_ast(bin_expr.lhs());
+                let rhs_code = self.emit_expr_str_ast(bin_expr.rhs());
                 let op_str = match bin_expr.op_kind() {
                     BinaryOp::ArithOp(ArithOp::Add) => "+",
                     BinaryOp::ArithOp(ArithOp::Mul) => "*",
@@ -1044,22 +1043,22 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
             //    code!(target_str, " = ", value_str)
             //}
             eir::Expr::PrefixExpr(prefix_expr) => {
-                let inner_str = self.emit_expr_str_ast(&prefix_expr.expr());
+                let inner_str = self.emit_expr_str_ast(prefix_expr.expr());
                 match prefix_expr.op_kind() {
                     UnaryOp::Deref => code!("(/* deref_op */", inner_str, ")"),
                     UnaryOp::Not => code!("!(", inner_str, ")"),
                     UnaryOp::Neg => code!("-(", inner_str, ")"),
                 }
             }
-            eir::Expr::RefExpr(ref_expr) => self.emit_expr_str_ast(&ref_expr.expr()),
+            eir::Expr::RefExpr(ref_expr) => self.emit_expr_str_ast(ref_expr.expr()),
             //Expr::Box { expr: inner } => self.emit_expr_str(*inner),
             eir::Expr::CastExpr(cast_expr) => {
                 // TODO: Cast might not be compatible
                 code!(
                     "(",
-                    self.rust_type_to_cs(&self.eir_sem.resolve_type(&cast_expr.ty()).unwrap()),
+                    self.rust_type_to_cs(&self.eir_sem.resolve_type(cast_expr.ty()).unwrap()),
                     ") ",
-                    self.emit_expr_str_ast(&cast_expr.expr())
+                    self.emit_expr_str_ast(cast_expr.expr())
                 )
             }
             eir::Expr::IfExpr(if_expr) => self.emit_if_expr_as_expr(if_expr),
@@ -1109,10 +1108,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 if tuple_expr.fields().next().is_none() {
                     "default(global::System.ValueTuple)".into()
                 } else {
-                    let parts = tuple_expr
-                        .fields()
-                        .into_iter()
-                        .map(|e| self.emit_expr_str_ast(&e));
+                    let parts = tuple_expr.fields().map(|e| self.emit_expr_str_ast(e));
                     code!("(", join(parts, ", "), ")")
                 }
             }
@@ -1143,7 +1139,6 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 let field_inits = record_expr
                     .record_expr_field_list()
                     .fields()
-                    .into_iter()
                     .filter(|&f| self.check_cfg(f))
                     .map(|f| {
                         let cs_f = names::field_name(f.field_name().unwrap().text());
@@ -1154,7 +1149,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                         let _cs_ty = field
                             .map(|f| self.rust_type_to_cs(&f.ty(self.db)))
                             .unwrap_or_else(|| "object /*unknown field type*/".into());
-                        let val = self.emit_expr_str_ast(&f.expr());
+                        let val = self.emit_expr_str_ast(f.expr());
                         code!(cs_f, " = (", val, ")")
                     });
                 code!(
@@ -1169,8 +1164,8 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 )
             }
             eir::Expr::IndexExpr(index_expr) => {
-                let base_str = self.emit_expr_str_ast(&index_expr.base());
-                let idx_str = self.emit_expr_str_ast(&index_expr.index());
+                let base_str = self.emit_expr_str_ast(index_expr.base());
+                let idx_str = self.emit_expr_str_ast(index_expr.index());
                 code!(base_str, ".Index(", idx_str, ")")
             }
             eir::Expr::RangeExpr(range_expr) => {
@@ -1192,9 +1187,9 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                             "Range<",
                             self.rust_type_to_cs(&single_generics(&self.eir_sem, expr)),
                             ">.NewRange(",
-                            self.emit_expr_str_ast(&start),
+                            self.emit_expr_str_ast(start),
                             ", ",
-                            self.emit_expr_str_ast(&end),
+                            self.emit_expr_str_ast(end),
                             ")"
                         )
                     }
@@ -1203,9 +1198,9 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                             "Range<",
                             self.rust_type_to_cs(&single_generics(&self.eir_sem, expr)),
                             ">.NewRangeInclusive(",
-                            self.emit_expr_str_ast(&start),
+                            self.emit_expr_str_ast(start),
                             ", ",
-                            self.emit_expr_str_ast(&end),
+                            self.emit_expr_str_ast(end),
                             ")"
                         )
                     }
@@ -1214,7 +1209,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                             "Range<",
                             self.rust_type_to_cs(&single_generics(&self.eir_sem, expr)),
                             ">.NewRangeFrom(",
-                            self.emit_expr_str_ast(&start),
+                            self.emit_expr_str_ast(start),
                             ")"
                         )
                     }
@@ -1226,7 +1221,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                             "Range<",
                             self.rust_type_to_cs(&single_generics(&self.eir_sem, expr)),
                             ">.NewRangeTo(",
-                            self.emit_expr_str_ast(&end),
+                            self.emit_expr_str_ast(end),
                             ")"
                         )
                     }
@@ -1235,15 +1230,15 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                             "Range<",
                             self.rust_type_to_cs(&single_generics(&self.eir_sem, expr)),
                             ">.NewRangeToInclusive(",
-                            self.emit_expr_str_ast(&end),
+                            self.emit_expr_str_ast(end),
                             ")"
                         )
                     }
                 }
             }
             eir::Expr::ArrayRepeatExpr(repeat) => {
-                let val = self.emit_expr_str_ast(&repeat.initializer());
-                let len = self.emit_expr_str_ast(&repeat.repeat());
+                let val = self.emit_expr_str_ast(repeat.initializer());
+                let len = self.emit_expr_str_ast(repeat.repeat());
                 code!("new object[", len, "] /* fill ", val, "*/")
             }
             eir::Expr::ArrayElementListExpr(elem_list) => {
@@ -1253,7 +1248,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                     panic!("");
                 };
                 let cg = self.cg;
-                let parts = (elem_list.elements().into_iter()).map(|e| self.emit_expr_str_ast(&e));
+                let parts = elem_list.elements().map(|e| self.emit_expr_str_ast(e));
                 code!(
                     "new ",
                     cg.rust_type_to_cs(&element),
@@ -1263,7 +1258,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 )
             }
             eir::Expr::ClosureExpr(closure) => {
-                let param_names = closure.param_list().params().into_iter().enumerate();
+                let param_names = closure.param_list().params().enumerate();
                 let params: Vec<String> = (param_names.clone())
                     .map(|(i, p)| {
                         if let eir::Pat::IdentPat(ident_pat) = p.pat()
@@ -1284,7 +1279,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                     } else {
                         self.emit_let_stmt(
                             &mut body_block,
-                            &p.pat(),
+                            p.pat(),
                             code!(&format!("__cp{}", i)),
                             Self::emit_unreachable,
                         );
@@ -1329,7 +1324,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                         "}"
                     )
                 } else {
-                    let body_str = self.emit_expr_str_ast(&closure.body());
+                    let body_str = self.emit_expr_str_ast(closure.body());
                     if body_block.is_empty() {
                         code!("(", join(params, ", "), ") => ", body_str)
                     } else {
@@ -1351,7 +1346,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
             eir::Expr::ReturnExpr(return_expr) => {
                 let val = return_expr
                     .expr()
-                    .map(|e| self.emit_expr_str_ast(&e))
+                    .map(|e| self.emit_expr_str_ast(e))
                     .unwrap_or_else(|| "0 /* unit */".into());
                 code!(
                     "/* return-expr */ throw r2CsRuntime.Helpers.Returns<object>(",
@@ -1360,8 +1355,8 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 )
             }
             eir::Expr::LetExpr(let_expr) => {
-                let val = self.emit_expr_str_ast(&let_expr.expr());
-                let pattern_cs = self.emit_pattern_ast(&let_expr.pat());
+                let val = self.emit_expr_str_ast(let_expr.expr());
+                let pattern_cs = self.emit_pattern_ast(let_expr.pat());
                 code!("(", val, " is ", pattern_cs, ")")
             }
             /*
@@ -1380,10 +1375,10 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
             eir::Expr::MatchExpr(match_expr) => {
                 let arms = match_expr.match_arm_list();
                 let match_expr = match_expr.expr();
-                let scrutinee = self.emit_expr_str_ast(&match_expr);
+                let scrutinee = self.emit_expr_str_ast(match_expr);
 
                 // Since we lower Cow<T> => T, we remove
-                if let Some(cow) = Some(self.eir_sem.type_of_expr(&match_expr)).and_then(|t| {
+                if let Some(cow) = Some(self.eir_sem.type_of_expr(match_expr)).and_then(|t| {
                     if let Some((adt, _args)) = t.adjusted.unwrap_or(t.original).as_adt_with_args()
                         && let hir::Adt::Enum(enum_) = adt
                         && Some(enum_) == self.lang_items.Cow()
@@ -1392,7 +1387,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                             .map(|arm| {
                                 if let eir::Pat::TupleStructPat(pat) = arm.pat()
                                     && let Some(PathResolution::Def(def)) =
-                                        self.eir_sem.resolve_path(&pat.path())
+                                        self.eir_sem.resolve_path(pat.path())
                                     && let ModuleDef::EnumVariant(variant) = def
                                     && (Some(variant) == self.lang_items.CowBorrowed()
                                         || Some(variant) == self.lang_items.CowOwned())
@@ -1423,14 +1418,14 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
 
                     for (pat, arm) in cow {
                         // Emit pattern check
-                        let pat_cs = self.emit_pattern_ast(&{ pat }.next().unwrap());
+                        let pat_cs = self.emit_pattern_ast({ pat }.next().unwrap());
 
                         out.w("").w(pat_cs).w(" ");
                         if let Some(guard) = arm.guard() {
                             out.w("when ");
-                            out.w(self.emit_expr_str_ast(&guard));
+                            out.w(self.emit_expr_str_ast(guard));
                         }
-                        out.w("=> ").w(self.emit_expr_str_ast(&arm.expr())).wln(",");
+                        out.w("=> ").w(self.emit_expr_str_ast(arm.expr())).wln(",");
                     }
                     out.dedent();
 
@@ -1449,14 +1444,14 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                         continue;
                     }
                     // Emit pattern check
-                    let pat_cs = self.emit_pattern_ast(&arm.pat());
+                    let pat_cs = self.emit_pattern_ast(arm.pat());
 
                     out.w("").w(pat_cs).w(" ");
                     if let Some(guard) = arm.guard() {
                         out.w("when ");
-                        out.w(self.emit_expr_str_ast(&guard));
+                        out.w(self.emit_expr_str_ast(guard));
                     }
-                    out.w("=> ").w(self.emit_expr_str_ast(&arm.expr())).wln(",");
+                    out.w("=> ").w(self.emit_expr_str_ast(arm.expr())).wln(",");
                 }
                 out.dedent();
 
@@ -1466,7 +1461,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
             }
             eir::Expr::BreakExpr(break_expr) => break_expr
                 .expr()
-                .map(|e| self.emit_expr_str_ast(&e))
+                .map(|e| self.emit_expr_str_ast(e))
                 .unwrap_or_else(|| "default!".into()),
             eir::Expr::ContinueExpr(_) => "default!".into(),
             //eir::Expr::BecomeExpr(become_expr) =>
@@ -1487,7 +1482,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                         }
                         eir::FormatArgsSegment::Braces(c) => write!(result, "{c}{c}"), // C# also uses '{' '}'
                         eir::FormatArgsSegment::Expr(expr) => {
-                            result.w("{").w(self.emit_expr_str_ast(&expr)).w("}");
+                            result.w("{").w(self.emit_expr_str_ast(expr)).w("}");
                         }
                     }
                 }
@@ -1497,11 +1492,11 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 result
             }
             eir::Expr::TryExpr(try_expr) => {
-                code!("Try(", self.emit_expr_str_ast(&try_expr.expr()), ")")
+                code!("Try(", self.emit_expr_str_ast(try_expr.expr()), ")")
             }
             eir::Expr::VecRepeatExpr(repeat) => {
-                let val = self.emit_expr_str_ast(&repeat.initializer());
-                let len = self.emit_expr_str_ast(&repeat.repeat());
+                let val = self.emit_expr_str_ast(repeat.initializer());
+                let len = self.emit_expr_str_ast(repeat.repeat());
                 code!("new object[", len, "] /* fill ", val, "*/")
             }
             eir::Expr::VecListExpr(elem_list) => {
@@ -1514,7 +1509,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 let element = generics[0].as_ref().unwrap().clone();
                 let cg = self.cg;
                 if elem_list.elements().next().is_some() {
-                    let parts = elem_list.elements().map(|e| self.emit_expr_str_ast(&e));
+                    let parts = elem_list.elements().map(|e| self.emit_expr_str_ast(e));
                     code!(
                         "new List<",
                         cg.rust_type_to_cs(&element),
@@ -1540,7 +1535,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 code!("(", cond, " ? ", then_s, " : ", else_s, ")")
             }
             Some(eir::ElseBranch::IfExpr(if_expr)) => {
-                let cond = self.emit_expr_str_ast(&if_expr.condition());
+                let cond = self.emit_expr_str_ast(if_expr.condition());
                 let then_s = self.emit_simple_block_as_expr(if_expr.then_branch());
                 let else_s = self.emit_if_expr_as_expr(if_expr);
                 code!("(", cond, " ? ", then_s, " : ", else_s, ")")
@@ -1556,7 +1551,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
     fn emit_simple_block_as_expr(&self, block_expr: &eir::BlockExpr) -> Code {
         if block_expr.statements().count() == 0 {
             if let Some(t) = block_expr.tail_expr() {
-                return self.emit_expr_str_ast(&t);
+                return self.emit_expr_str_ast(t);
             }
             return "default!".into();
         }
@@ -1768,7 +1763,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 let local = self.eir_sem.to_def(ident_pat).unwrap();
                 let cs_local_name = self.alloc_binding_ast(&local);
                 if let Some(sub) = ident_pat.pat() {
-                    code!(self.emit_pattern_ast(&sub), " ", cs_local_name)
+                    code!(self.emit_pattern_ast(sub), " ", cs_local_name)
                 } else {
                     code!("var ", cs_local_name)
                 }
@@ -1776,7 +1771,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
             eir::Pat::TupleStructPat(tuple_struct) => {
                 let path = tuple_struct.path();
 
-                let (cs_type_name, field_count) = match self.eir_sem.resolve_path(&path) {
+                let (cs_type_name, field_count) = match self.eir_sem.resolve_path(path) {
                     Some(PathResolution::Def(module_def))
                         if let Some(def) = ConstructableDef::from_module_def(module_def) =>
                     {
@@ -1809,7 +1804,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
             }
             eir::Pat::PathPat(path) => {
                 let path = path.path();
-                match self.eir_sem.resolve_path(&path) {
+                match self.eir_sem.resolve_path(path) {
                     Some(PathResolution::Def(ModuleDef::Const(const_))) => {
                         code!(self.const_path_cs(const_))
                     }
@@ -1831,7 +1826,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
             }
             eir::Pat::RecordPat(record_pat) => {
                 let path = record_pat.path();
-                let (cs_type_name, _field_count) = match self.eir_sem.resolve_path(&path) {
+                let (cs_type_name, _field_count) = match self.eir_sem.resolve_path(path) {
                     Some(PathResolution::Def(module_def))
                         if let Some(def) = ConstructableDef::from_module_def(module_def) =>
                     {
@@ -1865,7 +1860,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                         if let Some(field_pat) = Some(field.pat()) {
                             code!(
                                 format("{field_name_cs}: "),
-                                self.emit_pattern_ast(&field_pat)
+                                self.emit_pattern_ast(field_pat)
                             )
                         } else {
                             eprintln!(
@@ -1882,7 +1877,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 self.emit_expr_str_ast(&eir::Expr::Literal(literal_pat.literal().clone()))
             }
             eir::Pat::OrPat(or_pat) => {
-                let parts = or_pat.pats().map(|p| self.emit_pattern_ast(&p));
+                let parts = or_pat.pats().map(|p| self.emit_pattern_ast(p));
                 code!("(", join(parts, " or "), ")")
             }
             eir::Pat::SlicePat(slice_pat) => {
@@ -1902,7 +1897,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 let field_count = type_.original.tuple_fields(self.db).len();
                 let pattern_codes = self.resolve_tuple_like_struct(
                     field_count,
-                    &tuple_pat.fields().into_iter().collect::<Vec<_>>(),
+                    &tuple_pat.fields().collect::<Vec<_>>(),
                 );
 
                 code!("(", join(pattern_codes, ","), ")")
@@ -1912,29 +1907,29 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                     (Some(lower), RangeOp::Exclusive, Some(upper)) => {
                         code!(
                             "(>=",
-                            self.emit_pattern_ast(&lower),
+                            self.emit_pattern_ast(lower),
                             " and <",
-                            self.emit_pattern_ast(&upper),
+                            self.emit_pattern_ast(upper),
                             ")"
                         )
                     }
                     (Some(lower), RangeOp::Inclusive, Some(upper)) => {
                         code!(
                             "(>=",
-                            self.emit_pattern_ast(&lower),
+                            self.emit_pattern_ast(lower),
                             " and <=",
-                            self.emit_pattern_ast(&upper),
+                            self.emit_pattern_ast(upper),
                             ")"
                         )
                     }
                     (Some(lower), RangeOp::Exclusive, None) => {
-                        code!("(>=", self.emit_pattern_ast(&lower), ")")
+                        code!("(>=", self.emit_pattern_ast(lower), ")")
                     }
                     (None, RangeOp::Exclusive, Some(upper)) => {
-                        code!("(<", self.emit_pattern_ast(&upper), ")")
+                        code!("(<", self.emit_pattern_ast(upper), ")")
                     }
                     (None, RangeOp::Inclusive, Some(upper)) => {
-                        code!("(<=", self.emit_pattern_ast(&upper), ")")
+                        code!("(<=", self.emit_pattern_ast(upper), ")")
                     }
                     (lower, op, upper) => {
                         panic!(
@@ -1945,7 +1940,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                     }
                 }
             }
-            eir::Pat::RefPat(ref_pat) => self.emit_pattern_ast(&ref_pat.pat()),
+            eir::Pat::RefPat(ref_pat) => self.emit_pattern_ast(ref_pat.pat()),
             eir::Pat::RestPat(_) => panic!("Bad pattern: RestPat"),
         }
     }
@@ -1986,41 +1981,43 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
             eir::Pat::IdentPat(ident_pat) if let Some(local) = self.eir_sem.to_def(ident_pat) => {
                 result.push(local);
                 if let Some(sub) = ident_pat.pat() {
-                    self.collect_bindings_recursive_ast(&sub, result);
+                    self.collect_bindings_recursive_ast(sub, result);
                 }
             }
             eir::Pat::IdentPat(_) => {}
             eir::Pat::LiteralPat(_) => {}
             eir::Pat::OrPat(pat) => pat
                 .pats()
-                .for_each(|pat| self.collect_bindings_recursive_ast(&pat, result)),
+                .for_each(|pat| self.collect_bindings_recursive_ast(pat, result)),
             eir::Pat::PathPat(_) => {}
             eir::Pat::RangePat(pat) => {
-                pat.start()
-                    .map(|start| self.collect_bindings_recursive_ast(&start, result));
-                pat.end()
-                    .map(|end| self.collect_bindings_recursive_ast(&end, result));
+                if let Some(start) = pat.start() {
+                    self.collect_bindings_recursive_ast(start, result)
+                }
+                if let Some(end) = pat.end() {
+                    self.collect_bindings_recursive_ast(end, result)
+                }
             }
             eir::Pat::RecordPat(pat) => {
                 pat.record_pat_field_list()
                     .fields()
-                    .for_each(|field| self.collect_bindings_recursive_ast(&field.pat(), result));
+                    .for_each(|field| self.collect_bindings_recursive_ast(field.pat(), result));
             }
-            eir::Pat::RefPat(pat) => self.collect_bindings_recursive_ast(&pat.pat(), result),
+            eir::Pat::RefPat(pat) => self.collect_bindings_recursive_ast(pat.pat(), result),
             eir::Pat::RestPat(_) => {}
             eir::Pat::SlicePat(pat) => {
                 let components = pat.components();
-                (components.prefix().into_iter())
-                    .for_each(|pat| self.collect_bindings_recursive_ast(&pat, result));
-                (components.suffix().into_iter())
-                    .for_each(|pat| self.collect_bindings_recursive_ast(&pat, result));
+                (components.prefix().iter())
+                    .for_each(|pat| self.collect_bindings_recursive_ast(pat, result));
+                (components.suffix().iter())
+                    .for_each(|pat| self.collect_bindings_recursive_ast(pat, result));
             }
             eir::Pat::TuplePat(pat) => pat
                 .fields()
-                .for_each(|pat| self.collect_bindings_recursive_ast(&pat, result)),
+                .for_each(|pat| self.collect_bindings_recursive_ast(pat, result)),
             eir::Pat::TupleStructPat(pat) => pat
                 .fields()
-                .for_each(|pat| self.collect_bindings_recursive_ast(&pat, result)),
+                .for_each(|pat| self.collect_bindings_recursive_ast(pat, result)),
             eir::Pat::WildcardPat(_) => {}
         }
     }
