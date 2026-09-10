@@ -31,12 +31,14 @@ use syntax::ast;
 use syntax::ast::ArrayExprKind;
 use syntax::ast::{HasArgList, HasLoopBody, HasName, RangeItem};
 
+pub use ast::ArithOp;
 pub use ast::BinaryOp;
 pub use ast::CmpOp;
 pub use ast::Item;
 pub use ast::Label;
 pub use ast::Lifetime;
 pub use ast::LiteralKind;
+pub use ast::LogicOp;
 pub use ast::Name;
 pub use ast::Ordering;
 pub use ast::RangeOp;
@@ -90,6 +92,10 @@ pub trait MutatingEirVisitor {
 
     fn visit_expr(&mut self, expr: &mut Expr) -> ControlFlow<Self::Break> {
         expr.accept_children_mut(self)
+    }
+
+    fn visit_stmt(&mut self, stmt: &mut Stmt) -> ControlFlow<Self::Break> {
+        stmt.accept_children_mut(self)
     }
 
     fn visit_pat(&mut self, expr: &mut Pat) -> ControlFlow<Self::Break> {
@@ -217,6 +223,8 @@ macro_rules! ast_eir_node {
 
 lower_identity!(UnaryOp);
 lower_identity!(BinaryOp);
+lower_identity!(ArithOp);
+lower_identity!(LogicOp);
 lower_identity!(RangeOp);
 lower_identity!(BlockModifier);
 lower_identity!(LiteralKind);

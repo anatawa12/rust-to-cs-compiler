@@ -306,6 +306,15 @@ macro_rules! def_eir {
             visitor.visit_expr(self)
         }
     };
+    (@accept_mut [Stmt]) => {
+        #[allow(dead_code)]
+        fn accept_mut<V: ?Sized + MutatingEirVisitor>(
+            &mut self,
+            visitor: &mut V,
+        ) -> ControlFlow<V::Break> {
+            visitor.visit_stmt(self)
+        }
+    };
     (@accept_mut [Pat]) => {
         #[allow(dead_code)]
         fn accept_mut<V: ?Sized + MutatingEirVisitor>(

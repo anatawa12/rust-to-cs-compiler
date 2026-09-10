@@ -9,6 +9,7 @@ use crate::codegen::decl::CsFunctionType;
 use crate::codegen::function_resolution::{ArgSource, ResolvedFunction};
 use crate::codegen::simple_extensions::*;
 use crate::codegen::ty::CsTypeOption;
+use eir::{ArithOp, BinaryOp, LogicOp, RangeOp, UnaryOp};
 use hir::db::HirDatabase;
 use hir::{HasContainer, HasCrate, Local, ModuleDef, PathResolution, StructKind, Type, sym};
 use itertools::Either;
@@ -17,7 +18,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign};
 use std::sync::atomic::AtomicUsize;
-use syntax::ast::{self, ArithOp, BinaryOp, LogicOp, RangeOp, UnaryOp};
+use syntax::ast;
 
 /// Generates C# for the body of a single function.
 pub struct EirEmitter<'g, 'db> {
