@@ -142,7 +142,7 @@ macro_rules! def_eir {
             $vis enum $enum_name {
                 $(
                 $(#[manual_construct$($manual_construct_mark:tt)?])?
-                $variant(_),
+                $variant,
                 )*
             }
 
@@ -174,7 +174,7 @@ macro_rules! def_eir {
         $vis: vis enum $enum_name: ident {
             $(
             $(#[manual_construct$($manual_construct_mark:tt)?])?
-            $variant:ident (_)
+            $variant:ident$(($variant_type: ty))?
             ),* $(,)?
         }
 
@@ -192,7 +192,7 @@ macro_rules! def_eir {
         #[allow(clippy::enum_variant_names)]
         #[derive(Clone)]
         $vis enum $enum_name {
-            $($variant($variant),)*
+            $($variant(def_eir!(@fallback [$($variant_type)?] [$variant])),)*
         }
 
         impl EirNode for $enum_name {
@@ -207,8 +207,8 @@ macro_rules! def_eir {
         }
 
         $(
-        impl From<$variant> for $enum_name {
-            fn from(x: $variant) -> Self {
+        impl From<def_eir!(@fallback [$($variant_type)?] [$variant])> for $enum_name {
+            fn from(x: def_eir!(@fallback [$($variant_type)?] [$variant])) -> Self {
                 $enum_name::$variant(x)
             }
         }
@@ -255,7 +255,7 @@ macro_rules! def_eir {
         }
 
         impl EirNode for $variant {
-            type AstNode = def_eir!(@common_info_type [$($common_info_ast_ty)?] [ast::$variant]);
+            type AstNode = def_eir!(@fallback [$($common_info_ast_ty)?] [ast::$variant]);
 
             fn node_info(&self) -> NodeInfo<Self::AstNode> {
                 self.0.node_info.clone()
@@ -296,8 +296,7 @@ macro_rules! def_eir {
         }
     };
 
-    (@common_info_type [] [$ty: ty]) => { $ty };
-    (@common_info_type [$ty: ty] [$($tt:tt)*]) => { $ty };
+    (@fallback $([])* [$($tt:tt)+] $($rest:tt)*) => { $($tt)+ };
 
     (@ $($tt:tt)* ) => {
         compile_error!(concat!("Bad macro invocation: ", stringify!($($tt)*)));

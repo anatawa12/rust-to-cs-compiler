@@ -244,44 +244,16 @@ impl LowerToEir for ast::BlockModifier {
     }
 }
 
-#[derive(Clone)]
-pub enum ElseBranch {
-    Block(BlockExpr),
-    IfExpr(IfExpr),
-}
-
-impl LowerToEir for ast::ElseBranch {
-    type Eir = ElseBranch;
-    fn lower_to_eir(self, ctx: &LowerToEirCtx) -> ElseBranch {
-        match self {
-            ast::ElseBranch::Block(block) => ElseBranch::from(ctx.lower(block)),
-            ast::ElseBranch::IfExpr(if_expr) => ElseBranch::from(if_expr.lower_to_eir(ctx)),
-        }
+def_eir!(
+    pub enum ElseBranch {
+        Block(BlockExpr),
+        IfExpr,
     }
-}
 
-impl From<BlockExpr> for ElseBranch {
-    fn from(block: BlockExpr) -> Self {
-        Self::Block(block)
+    fn lower_to_eir(self, ctx: &LowerToEirCtx) -> Eir {
+        match self {}
     }
-}
-
-impl From<IfExpr> for ElseBranch {
-    fn from(if_expr: IfExpr) -> Self {
-        Self::IfExpr(if_expr)
-    }
-}
-
-impl EirNode for ElseBranch {
-    type AstNode = ast::ElseBranch;
-
-    fn node_info(&self) -> NodeInfo<Self::AstNode> {
-        match self {
-            ElseBranch::Block(e) => ExprInfoCast::cast(&e.node_info()),
-            ElseBranch::IfExpr(e) => ExprInfoCast::cast(&e.node_info()),
-        }
-    }
-}
+);
 
 def_eir!(
     pub struct MatchArmList {
@@ -345,10 +317,10 @@ def_eir!(
 
 def_eir!(
     pub enum Stmt {
-        ExprStmt(_),
-        LetStmt(_),
+        ExprStmt,
+        LetStmt,
         #[manual_construct]
-        Item(_),
+        Item,
     }
 
     fn lower_to_eir(self, ctx: &LowerToEirCtx) -> Eir {
@@ -555,8 +527,8 @@ impl EirNode for NameRef {
 
 def_eir!(
     pub enum NameOrNameRef {
-        Name(_),
-        NameRef(_),
+        Name,
+        NameRef,
     }
 
     fn lower_to_eir(self, ctx: &LowerToEirCtx) -> Eir {
