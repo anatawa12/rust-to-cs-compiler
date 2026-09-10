@@ -2,7 +2,6 @@ use super::*;
 
 use super::children::ChildrenContainer;
 use super::eir_macros::LowerCast;
-use std::rc::Rc;
 use syntax::ast;
 
 def_eir!(
@@ -274,13 +273,26 @@ impl From<IfExpr> for ElseBranch {
     }
 }
 
+impl EirNode for ElseBranch {
+    type AstNode = ast::ElseBranch;
+
+    fn node_info(&self) -> NodeInfo<Self::AstNode> {
+        match self {
+            ElseBranch::Block(e) => ExprInfoCast::cast(&e.node_info()),
+            ElseBranch::IfExpr(e) => ExprInfoCast::cast(&e.node_info()),
+        }
+    }
+}
+
 def_eir!(
+    #[common_info]
     pub struct MatchArmList {
         arms: ChildrenContainer<MatchArm>,
     }
 );
 
 def_eir!(
+    #[common_info]
     pub struct ArgList {
         args: ChildrenContainer<Expr>,
     }
@@ -304,6 +316,7 @@ impl LowerToEir for ast::MatchGuard {
 }
 
 def_eir!(
+    #[common_info]
     pub struct RecordExprFieldList {
         fields: ChildrenContainer<RecordExprField>,
         spread: Option<Expr>,
@@ -319,6 +332,7 @@ def_eir!(
 );
 
 def_eir!(
+    #[common_info]
     pub struct ParamList {
         self_param: Option<SelfParam>,
         params: ChildrenContainer<Param>,
@@ -359,6 +373,7 @@ def_eir!(
 );
 
 def_eir!(
+    #[common_info]
     pub struct LetStmt {
         pat: Pat,
         // ty: Type, // no type, use analyzed
@@ -368,6 +383,7 @@ def_eir!(
 );
 
 def_eir!(
+    #[common_info]
     pub struct LetElse {
         block_expr: BlockExpr,
     }
@@ -437,6 +453,7 @@ def_eir!(
 );
 
 def_eir!(
+    #[common_info]
     #[manual_construct]
     pub struct RecordPatFieldList {
         fields: ChildrenContainer<RecordPatField>,
@@ -450,11 +467,14 @@ impl LowerToEir for ast::RecordPatFieldList {
         new_eir_node!(RecordPatFieldList {
             fields: ctx.lower(self.fields()),
             rest: self.rest_pat().is_some(),
+            node_info: NodeInfo::Ast(self),
         })
     }
 }
 
 def_eir!(
+    #[common_info]
+    #[common_info_ast_ty = NoNode]
     #[manual_construct]
     pub struct SlicePatComponents {
         prefix: Vec<Pat>,
@@ -468,9 +488,10 @@ impl LowerToEir for ast::SlicePatComponents {
 
     fn lower_to_eir(self, ctx: &LowerToEirCtx) -> SlicePatComponents {
         new_eir_node!(SlicePatComponents {
-            prefix: ctx.lower(self.prefix),
-            slice: ctx.lower(self.slice),
-            suffix: ctx.lower(self.suffix),
+            prefix: ctx.lower(self.prefix.clone()),
+            slice: ctx.lower(self.slice.clone()),
+            suffix: ctx.lower(self.suffix.clone()),
+            node_info: NodeInfo::None,
         })
     }
 }

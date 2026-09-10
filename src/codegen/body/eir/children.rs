@@ -1,30 +1,30 @@
 use crate::codegen::body::eir::{LowerToEir, LowerToEirCtx};
-use std::rc::Rc;
 use syntax::ast;
 
 // Children
-pub struct ChildrenContainer<T>(Rc<[T]>);
+#[derive(Clone)]
+pub struct ChildrenContainer<T>(Box<[T]>);
 
 #[derive(Clone)]
-pub struct Children<T>(Rc<[T]>, usize);
+pub struct Children<'a, T>(&'a [T], usize);
 
-impl<T: Clone> ChildrenContainer<T> {
-    pub fn iterator(&self) -> Children<T> {
-        Children(self.0.clone(), 0)
+impl<T> ChildrenContainer<T> {
+    pub fn iterator(&self) -> Children<'_, T> {
+        Children(&self.0, 0)
     }
 }
 
-impl<T: Clone> Iterator for Children<T> {
-    type Item = T;
+impl<'a, T> Iterator for Children<'a, T> {
+    type Item = &'a T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.0.get(self.1).inspect(|_| self.1 += 1).cloned()
+        self.0.get(self.1).inspect(|_| self.1 += 1)
     }
 }
 
 impl<T> FromIterator<T> for ChildrenContainer<T> {
     fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
-        ChildrenContainer(iter.into_iter().collect::<Rc<[T]>>())
+        ChildrenContainer(iter.into_iter().collect::<Box<[T]>>())
     }
 }
 

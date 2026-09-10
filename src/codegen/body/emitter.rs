@@ -114,7 +114,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
         }
     }
 
-    fn label_name(&self, l: eir::Lifetime) -> String {
+    fn label_name(&self, l: &eir::Lifetime) -> String {
         names::camel(&l.text()[1..])
     }
 
@@ -209,16 +209,16 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
         if let Some(self_param) = params.self_param() {
             match self.cs_type {
                 CsFunctionType::TraitDefaultImpl => {
-                    self.add_local(self.eir_sem.to_def(&self_param).unwrap(), "self".into());
+                    self.add_local(self.eir_sem.to_def(self_param).unwrap(), "self".into());
                 }
                 _ => {
-                    self.add_local(self.eir_sem.to_def(&self_param).unwrap(), "this".into());
+                    self.add_local(self.eir_sem.to_def(self_param).unwrap(), "this".into());
                 }
             }
         }
         for param in params.params() {
             match param.pat() {
-                eir::Pat::IdentPat(ident) if let Some(local) = self.eir_sem.to_def(&ident) => {
+                eir::Pat::IdentPat(ident) if let Some(local) = self.eir_sem.to_def(ident) => {
                     self.alloc_binding_ast(&local);
                 }
                 _ => {
@@ -299,10 +299,10 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
     fn emit_expr_as_stmt_ast(
         &self,
         out: &mut Code,
-        expr: eir::Expr,
+        expr: &eir::Expr,
         option: ExprGenOption,
     ) -> EmittedExprInfo {
-        if !self.check_cfg(&expr) {
+        if !self.check_cfg(expr) {
             return EmittedExprInfo::non_diverging();
         }
 
@@ -337,18 +337,19 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 let cond = self.emit_expr_str_ast(&condition);
                 out.w("if (").w(cond).wln(") {");
                 out.indent();
-                let then_part = self.emit_expr_as_stmt_ast(out, then_branch.into(), option.clone());
+                let then_part = self.emit_simple_block_as_stmt(out, then_branch, option.clone());
                 out.dedent();
                 let else_part = match else_branch {
                     Some(eir::ElseBranch::IfExpr(else_if)) => {
                         out.w("} else ");
-                        self.emit_expr_as_stmt_ast(out, else_if.into(), option.clone())
+                        // TODO: prevent cloning
+                        self.emit_expr_as_stmt_ast(out, &else_if.clone().into(), option.clone())
                     }
                     Some(eir::ElseBranch::Block(else_e)) => {
                         out.w("} else {");
                         out.wln("");
                         out.indent();
-                        let part = self.emit_expr_as_stmt_ast(out, else_e.into(), option.clone());
+                        let part = self.emit_simple_block_as_stmt(out, else_e, option.clone());
                         out.dedent();
                         out.wln("}");
                         part
@@ -366,11 +367,11 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 let body = loop_expr.loop_body();
 
                 let label_str = label
-                    .map(|l| format!("{}: ", self.label_name(l.lifetime().unwrap())))
+                    .map(|l| format!("{}: ", self.label_name(&l.lifetime().unwrap())))
                     .unwrap_or_default();
                 out.w(label_str).wln("while (true) {");
                 out.indent();
-                self.emit_expr_as_stmt_ast(out, body.into(), option.non_last());
+                self.emit_simple_block_as_stmt(out, body, option.non_last());
                 out.dedent();
                 out.wln("}");
                 EmittedExprInfo::diverging()
@@ -381,14 +382,14 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 let body = while_expr.loop_body();
 
                 let label_str = label
-                    .map(|l| format!("{}: ", self.label_name(l.lifetime().unwrap())))
+                    .map(|l| format!("{}: ", self.label_name(&l.lifetime().unwrap())))
                     .unwrap_or_default();
                 out.w(label_str)
                     .w("while (")
                     .w(self.emit_expr_str_ast(&condition))
                     .wln(") {");
                 out.indent();
-                self.emit_expr_as_stmt_ast(out, body.into(), option.non_last());
+                self.emit_simple_block_as_stmt(out, body, option.non_last());
                 out.dedent();
                 out.wln("}");
 
@@ -401,7 +402,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 let body = for_expr.loop_body();
 
                 let label_str = label
-                    .map(|l| format!("{}: ", self.label_name(l.lifetime().unwrap())))
+                    .map(|l| format!("{}: ", self.label_name(&l.lifetime().unwrap())))
                     .unwrap_or_default();
                 let temp_name = format!("__temp_{}", self.inc_match_index());
                 out.w(label_str)
@@ -412,7 +413,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                     .wln(") {");
                 out.indent();
                 self.emit_let_stmt(out, &pat, code!(&temp_name), Self::emit_unreachable);
-                self.emit_expr_as_stmt_ast(out, body.into(), option.non_last());
+                self.emit_simple_block_as_stmt(out, body, option.non_last());
                 out.dedent();
                 out.wln("}");
 
@@ -545,11 +546,20 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
         out.wln("throw new Exception(\"unreachable\");");
     }
 
-    fn emit_block_contents(
+    fn emit_simple_block_as_stmt(
         &self,
         out: &mut Code,
-        statements: impl IntoIterator<Item = eir::Stmt>,
-        tail: Option<eir::Expr>,
+        block: &eir::BlockExpr,
+        option: ExprGenOption,
+    ) -> EmittedExprInfo {
+        self.emit_block_contents(out, block.statements(), block.tail_expr(), option)
+    }
+
+    fn emit_block_contents<'a>(
+        &self,
+        out: &mut Code,
+        statements: impl IntoIterator<Item = &'a eir::Stmt>,
+        tail: Option<&eir::Expr>,
         option: ExprGenOption,
     ) -> EmittedExprInfo {
         let mut info = EmittedExprInfo::non_diverging();
@@ -566,11 +576,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                         if let Some(else_branch) = else_branch {
                             self.emit_let_stmt(out, &pat, init_str, |this, out| {
                                 out.wln("{").indent();
-                                this.emit_expr_as_stmt_ast(
-                                    out,
-                                    else_branch.into(),
-                                    option.non_last(),
-                                );
+                                this.emit_simple_block_as_stmt(out, else_branch, option.non_last());
                                 out.dedent();
                                 out.wln("}");
                             });
@@ -591,27 +597,27 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 }
 
                 eir::Stmt::Item(ast::Item::Fn(fn_)) => {
-                    let f = self.eir_sem.to_def(&fn_).unwrap();
+                    let f = self.eir_sem.to_def(fn_).unwrap();
                     out.wln(format!("// inner fn: {}", f.name(self.db).as_str()));
                     self.add_deferred(f);
                 }
                 eir::Stmt::Item(ast::Item::Enum(adt)) => {
-                    let f = self.eir_sem.to_def(&adt).unwrap();
+                    let f = self.eir_sem.to_def(adt).unwrap();
                     out.wln(format!("// inner enum: {}", f.name(self.db).as_str()));
                     self.add_deferred(f);
                 }
                 eir::Stmt::Item(ast::Item::Struct(adt)) => {
-                    let f = self.eir_sem.to_def(&adt).unwrap();
+                    let f = self.eir_sem.to_def(adt).unwrap();
                     out.wln(format!("// inner enum: {}", f.name(self.db).as_str()));
                     self.add_deferred(f);
                 }
                 eir::Stmt::Item(ast::Item::Impl(impl_)) => {
-                    let f = self.eir_sem.to_def(&impl_).unwrap();
+                    let f = self.eir_sem.to_def(impl_).unwrap();
                     out.wln("// impl");
                     self.add_deferred(f);
                 }
                 eir::Stmt::Item(ast::Item::Const(c)) => {
-                    let c = self.eir_sem.to_def(&c).unwrap();
+                    let c = self.eir_sem.to_def(c).unwrap();
                     out.wln("// const");
                     self.add_deferred(c);
                 }
@@ -1042,35 +1048,9 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                     self.emit_expr_str_ast(&cast_expr.expr())
                 )
             }
-            eir::Expr::IfExpr(if_expr) => match if_expr.else_branch() {
-                Some(eir::ElseBranch::Block(else_block)) => {
-                    let cond = self.emit_expr_str_ast(&if_expr.condition());
-                    let then_s = self.emit_expr_str_ast(&if_expr.then_branch().into());
-                    let else_s = self.emit_expr_str_ast(&else_block.into());
-                    code!("(", cond, " ? ", then_s, " : ", else_s, ")")
-                }
-                Some(eir::ElseBranch::IfExpr(if_expr)) => {
-                    let cond = self.emit_expr_str_ast(&if_expr.condition());
-                    let then_s = self.emit_expr_str_ast(&if_expr.then_branch().into());
-                    let else_s = self.emit_expr_str_ast(&if_expr.into());
-                    code!("(", cond, " ? ", then_s, " : ", else_s, ")")
-                }
-                None => {
-                    let cond = self.emit_expr_str_ast(&if_expr.condition());
-                    let then_s = self.emit_expr_str_ast(&if_expr.then_branch().into());
-                    code!("(", cond, " ? ", then_s, " : ValueTuple)")
-                }
-            },
+            eir::Expr::IfExpr(if_expr) => self.emit_if_expr_as_expr(if_expr),
             eir::Expr::BlockExpr(block_expr) => match block_expr.modifier() {
-                None => {
-                    if block_expr.statements().count() == 0 {
-                        if let Some(t) = block_expr.tail_expr() {
-                            return self.emit_expr_str_ast(&t);
-                        }
-                        return "default!".into();
-                    }
-                    "/* block expr */ default!".into()
-                }
+                None => self.emit_simple_block_as_expr(block_expr),
                 Some(eir::BlockModifier::Async) => {
                     let mut body_code = Code::new();
                     let return_type = (self.eir_sem.type_of_expr(expr))
@@ -1150,7 +1130,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                     .record_expr_field_list()
                     .fields()
                     .into_iter()
-                    .filter(|f| self.check_cfg(f))
+                    .filter(|&f| self.check_cfg(f))
                     .map(|f| {
                         let cs_f = names::field_name(f.field_name().unwrap().text());
                         let field = c
@@ -1273,7 +1253,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 let params: Vec<String> = (param_names.clone())
                     .map(|(i, p)| {
                         if let eir::Pat::IdentPat(ident_pat) = p.pat()
-                            && let Some(local) = self.eir_sem.to_def(&ident_pat)
+                            && let Some(local) = self.eir_sem.to_def(ident_pat)
                         {
                             self.alloc_binding_ast(&local)
                         } else {
@@ -1285,7 +1265,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 let mut body_block = Code::new();
                 for (i, p) in param_names.clone() {
                     if let eir::Pat::IdentPat(ident_pat) = p.pat()
-                        && let Some(_) = self.eir_sem.to_def(&ident_pat)
+                        && let Some(_) = self.eir_sem.to_def(ident_pat)
                     {
                     } else {
                         self.emit_let_stmt(
@@ -1451,7 +1431,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 out.indent();
 
                 for arm in arms.arms() {
-                    if !self.check_cfg(&arm) {
+                    if !self.check_cfg(arm) {
                         continue;
                     }
                     // Emit pattern check
@@ -1532,9 +1512,41 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                     code!("new List<", cg.rust_type_to_cs(&element), ">()")
                 }
             }
-            eir::Expr::RawCodeExpr(raw_cod) => raw_cod.code(),
+            eir::Expr::RawCodeExpr(raw_cod) => raw_cod.code().clone(),
             eir::Expr::MacroStmts(_) => panic!("Unexpected macro stmts"),
         }
+    }
+
+    fn emit_if_expr_as_expr(&self, if_expr: &eir::IfExpr) -> Code {
+        match if_expr.else_branch() {
+            Some(eir::ElseBranch::Block(else_block)) => {
+                let cond = self.emit_expr_str_ast(if_expr.condition());
+                let then_s = self.emit_simple_block_as_expr(if_expr.then_branch());
+                let else_s = self.emit_simple_block_as_expr(else_block);
+                code!("(", cond, " ? ", then_s, " : ", else_s, ")")
+            }
+            Some(eir::ElseBranch::IfExpr(if_expr)) => {
+                let cond = self.emit_expr_str_ast(&if_expr.condition());
+                let then_s = self.emit_simple_block_as_expr(if_expr.then_branch());
+                let else_s = self.emit_if_expr_as_expr(if_expr);
+                code!("(", cond, " ? ", then_s, " : ", else_s, ")")
+            }
+            None => {
+                let cond = self.emit_expr_str_ast(if_expr.condition());
+                let then_s = self.emit_simple_block_as_expr(if_expr.then_branch());
+                code!("(", cond, " ? ", then_s, " : ValueTuple)")
+            }
+        }
+    }
+
+    fn emit_simple_block_as_expr(&self, block_expr: &eir::BlockExpr) -> Code {
+        if block_expr.statements().count() == 0 {
+            if let Some(t) = block_expr.tail_expr() {
+                return self.emit_expr_str_ast(&t);
+            }
+            return "default!".into();
+        }
+        "/* block expr */ default!".into()
     }
 
     fn emit_returning_block(&self, out: &mut Code, block_expr: &eir::BlockExpr) {
@@ -1853,7 +1865,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 }
             }
             eir::Pat::LiteralPat(literal_pat) => {
-                self.emit_expr_str_ast(&eir::Expr::Literal(literal_pat.literal()))
+                self.emit_expr_str_ast(&eir::Expr::Literal(literal_pat.literal().clone()))
             }
             eir::Pat::OrPat(or_pat) => {
                 let parts = or_pat.pats().map(|p| self.emit_pattern_ast(&p));
@@ -1924,7 +1936,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
         }
     }
 
-    fn resolve_tuple_like_struct(&self, field_count: usize, patterns: &[eir::Pat]) -> Vec<Code> {
+    fn resolve_tuple_like_struct(&self, field_count: usize, patterns: &[&eir::Pat]) -> Vec<Code> {
         if matches!(patterns, [eir::Pat::RestPat(_)]) {
             vec![code!("_"); field_count]
         } else if let Some(position) = patterns

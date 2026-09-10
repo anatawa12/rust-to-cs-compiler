@@ -1,3 +1,5 @@
+use crate::codegen::body::eir::EirNode;
+
 pub trait EirNodeConstructHelper {
     type RawStruct;
     fn construct_from_raw(raw: Self::RawStruct) -> Self;
@@ -46,23 +48,66 @@ impl<Eir> LowerCast<Eir> for Option<Eir> {
 }
 
 /// The helper trait for determining the type of eir child access method
-pub trait EirAccessType {
+pub trait EirAccessType<'a> {
     type Result;
-    fn cast(&self) -> Self::Result;
+    fn cast(&'a self) -> Self::Result;
 }
 
-impl<T: Clone> EirAccessType for T {
-    type Result = T;
+macro_rules! ref_eir_access {
+    ($ty: ty) => {
+        impl<'a> EirAccessType<'a> for $ty {
+            type Result = &'a $ty;
+            fn cast(&'a self) -> &'a $ty {
+                self
+            }
+        }
+    };
+}
+macro_rules! clone_eir_access {
+    ($ty: ty) => {
+        impl<'a> EirAccessType<'a> for $ty {
+            type Result = $ty;
+            fn cast(&self) -> $ty {
+                self.clone()
+            }
+        }
+    };
+}
 
-    fn cast(&self) -> T {
-        self.clone()
+ref_eir_access!(crate::codegen::output::Code);
+clone_eir_access!(bool);
+clone_eir_access!(super::BinaryOp);
+clone_eir_access!(super::UnaryOp);
+clone_eir_access!(super::RangeOp);
+clone_eir_access!(super::BlockModifier);
+clone_eir_access!(super::LiteralKind);
+
+impl<'a, T: EirAccessType<'a> + 'a> EirAccessType<'a> for Option<T> {
+    type Result = Option<T::Result>;
+    fn cast(&'a self) -> Self::Result {
+        self.as_ref().map(EirAccessType::cast)
     }
 }
 
-impl<T: Clone> EirAccessType for super::children::ChildrenContainer<T> {
-    type Result = super::children::Children<T>;
+impl<'a, T: 'a> EirAccessType<'a> for Vec<T> {
+    type Result = &'a [T];
+    fn cast(&'a self) -> Self::Result {
+        self
+    }
+}
 
-    fn cast(&self) -> Self::Result {
+impl<'a, T: EirNode + 'a> EirAccessType<'a> for T {
+    type Result = &'a T;
+
+    fn cast(&'a self) -> &'a T {
+        self
+    }
+}
+
+impl<'a, T: 'a> EirAccessType<'a> for super::children::ChildrenContainer<T> {
+    type Result = super::children::Children<'a, T>;
+
+    fn cast(&'a self) -> Self::Result {
         self.iterator()
     }
 }
@@ -196,12 +241,12 @@ macro_rules! def_eir {
     ) => {
         #[allow(dead_code)]
         #[derive(Clone)]
-        $vis struct $variant(Rc<<$variant as $crate::codegen::body::eir::eir_macros::EirNodeConstructHelper>::RawStruct>);
+        $vis struct $variant(Box<<$variant as $crate::codegen::body::eir::eir_macros::EirNodeConstructHelper>::RawStruct>);
 
         impl $variant {
             $(
             #[allow(dead_code)]
-            pub fn $variant_child_name(&self) -> <$variant_child_ty as $crate::codegen::body::eir::eir_macros::EirAccessType>::Result {
+            pub fn $variant_child_name(&self) -> <$variant_child_ty as $crate::codegen::body::eir::eir_macros::EirAccessType<'_>>::Result {
                 $crate::codegen::body::eir::eir_macros::EirAccessType::cast(&self.0.$variant_child_name)
             }
             )*
@@ -222,6 +267,7 @@ macro_rules! def_eir {
                 #[allow(unused_imports)]
                 use super::*;
                 #[allow(dead_code)]
+                #[derive(Clone)]
                 pub struct $variant {
                     $(pub node_info: NodeInfo<def_eir!(@common_info_type [$($common_info_ast_ty)?] [ast::$variant])>,)?
                     $(pub $variant_child_name: $variant_child_ty,)*
@@ -232,7 +278,7 @@ macro_rules! def_eir {
                 type RawStruct = raw_struct::$variant;
 
                 fn construct_from_raw(raw: Self::RawStruct) -> Self {
-                    Self(Rc::new(raw))
+                    Self(Box::new(raw))
                 }
             }
         };

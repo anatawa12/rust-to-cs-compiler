@@ -191,11 +191,13 @@ impl<'g, 'db> LowerToEirCtx<'g, 'db> {
                             param_list: new_eir_node!(eir::ParamList {
                                 self_param: None,
                                 params: eir_children![],
+                                node_info: eir::NodeInfo::None,
                             }),
                             body: parse_rest_as_format_args(self, macro_call, parser).into(),
                             node_info: eir::NodeInfo::None,
                         })),
-                    ]
+                    ],
+                    node_info: eir::NodeInfo::None,
                 }),
                 node_info: eir::NodeInfo::Ast(macro_expr.into()),
             }))
@@ -205,7 +207,8 @@ impl<'g, 'db> LowerToEirCtx<'g, 'db> {
                 From::from(new_eir_node!(eir::CallExpr {
                     expr: raw_code_expr!("Cfg.IsWindows"),
                     arg_list: new_eir_node!(eir::ArgList {
-                        args: eir_children![]
+                        args: eir_children![],
+                        node_info: eir::NodeInfo::None,
                     }),
                     node_info: eir::NodeInfo::Ast(macro_expr.into()),
                 }))
@@ -232,7 +235,10 @@ impl<'g, 'db> LowerToEirCtx<'g, 'db> {
             From::from(new_eir_node!(eir::AwaitExpr {
                 expr: From::from(new_eir_node!(eir::CallExpr {
                     expr: raw_code_expr!("RustTask.TryJoin"),
-                    arg_list: new_eir_node!(eir::ArgList { args: exprs.into() }),
+                    arg_list: new_eir_node!(eir::ArgList {
+                        args: exprs.into(),
+                        node_info: eir::NodeInfo::None,
+                    }),
                     node_info: eir::NodeInfo::None,
                 })),
                 node_info: eir::NodeInfo::Ast(macro_expr.into()),
@@ -305,6 +311,7 @@ fn log_macro(
         expr: raw_code_expr!("Logging.{level}").into(),
         arg_list: new_eir_node!(eir::ArgList {
             args: eir_children![parse_rest_as_format_args(ctx, macro_call, &mut parser).into(),],
+            node_info: eir::NodeInfo::None,
         }),
         node_info: eir::NodeInfo::Ast(macro_expr.into()),
     }))
@@ -621,10 +628,11 @@ fn emit_format_args_to_string(
                 let _ = formatter;
                 result.push(eir::FormatArgsSegment::Expr(From::from(new_eir_node!(
                     eir::MethodCallExpr {
-                        receiver: expr.clone(),
+                        receiver: expr,
                         name_ref: eir::NameRef::CSharp(formatter.to_string()),
                         arg_list: new_eir_node!(eir::ArgList {
-                            args: eir_children![]
+                            args: eir_children![],
+                            node_info: eir::NodeInfo::None,
                         }),
                         node_info: eir::NodeInfo::None,
                     }
