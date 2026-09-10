@@ -5,7 +5,6 @@ use super::eir_macros::LowerCast;
 use syntax::ast;
 
 def_eir!(
-    #[common_info]
     pub enum Expr {
         #[manual_construct]
         #[common_info_ast_ty = NoNode]
@@ -285,21 +284,18 @@ impl EirNode for ElseBranch {
 }
 
 def_eir!(
-    #[common_info]
     pub struct MatchArmList {
         arms: ChildrenContainer<MatchArm>,
     }
 );
 
 def_eir!(
-    #[common_info]
     pub struct ArgList {
         args: ChildrenContainer<Expr>,
     }
 );
 
 def_eir!(
-    #[common_info]
     pub struct MatchArm {
         pat: Pat,
         guard: Option<Expr>,
@@ -316,7 +312,6 @@ impl LowerToEir for ast::MatchGuard {
 }
 
 def_eir!(
-    #[common_info]
     pub struct RecordExprFieldList {
         fields: ChildrenContainer<RecordExprField>,
         spread: Option<Expr>,
@@ -324,7 +319,6 @@ def_eir!(
 );
 
 def_eir!(
-    #[common_info]
     pub struct RecordExprField {
         field_name: Option<NameRef>,
         expr: Expr,
@@ -332,7 +326,6 @@ def_eir!(
 );
 
 def_eir!(
-    #[common_info]
     pub struct ParamList {
         self_param: Option<SelfParam>,
         params: ChildrenContainer<Param>,
@@ -340,7 +333,6 @@ def_eir!(
 );
 
 def_eir!(
-    #[common_info]
     pub struct SelfParam {}
 );
 
@@ -373,7 +365,6 @@ def_eir!(
 );
 
 def_eir!(
-    #[common_info]
     pub struct LetStmt {
         pat: Pat,
         // ty: Type, // no type, use analyzed
@@ -383,7 +374,6 @@ def_eir!(
 );
 
 def_eir!(
-    #[common_info]
     pub struct LetElse {
         block_expr: BlockExpr,
     }
@@ -397,7 +387,6 @@ pub enum FormatArgsSegment {
 }
 
 def_eir!(
-    #[common_info]
     pub enum Pat {
         // BoxPat // nightly
         // ConstBlockPat // nightly
@@ -453,7 +442,6 @@ def_eir!(
 );
 
 def_eir!(
-    #[common_info]
     #[manual_construct]
     pub struct RecordPatFieldList {
         fields: ChildrenContainer<RecordPatField>,
@@ -473,7 +461,6 @@ impl LowerToEir for ast::RecordPatFieldList {
 }
 
 def_eir!(
-    #[common_info]
     #[common_info_ast_ty = NoNode]
     #[manual_construct]
     pub struct SlicePatComponents {
@@ -567,7 +554,6 @@ impl EirNode for NameRef {
 }
 
 def_eir!(
-    #[common_info]
     pub enum NameOrNameRef {
         Name(_),
         NameRef(_),
@@ -580,7 +566,6 @@ def_eir!(
 
 // Container of Expr
 def_eir!(
-    #[common_info]
     pub struct Fn {
         param_list: ParamList,
         body: Option<BlockExpr>,

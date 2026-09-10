@@ -191,3 +191,4 @@ ast_eir_node!(Lifetime);
 ast_eir_node!(Label);
 ast_eir_node!(ast::Type);
 ast_eir_node!(Name);
+ast_eir_node!(Item);

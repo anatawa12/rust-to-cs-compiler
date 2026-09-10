@@ -117,7 +117,6 @@ macro_rules! def_eir {
     (
         @main [$doller: tt]
 
-        #[common_info]
         $vis: vis enum $enum_name: ident {
             $(
             // this attribute notes that
@@ -140,7 +139,6 @@ macro_rules! def_eir {
         }
     ) => {
         def_eir!(
-            #[common_info]
             $vis enum $enum_name {
                 $(
                 $(#[manual_construct$($manual_construct_mark:tt)?])?
@@ -161,7 +159,6 @@ macro_rules! def_eir {
 
         $(
         def_eir!(
-            #[common_info]
             $(#[common_info_ast_ty = $common_info_ast_ty])?
             $(#[manual_construct$($manual_construct_mark:tt)?])?
             $vis struct $variant {
@@ -174,7 +171,6 @@ macro_rules! def_eir {
     (
         @main [$doller: tt]
 
-        $(#[common_info $($common_info_marker:tt)?])?
         $vis: vis enum $enum_name: ident {
             $(
             $(#[manual_construct$($manual_construct_mark:tt)?])?
@@ -199,7 +195,16 @@ macro_rules! def_eir {
             $($variant($variant),)*
         }
 
-        def_eir!(@impl_eir_node [$(common_info $($common_info_marker:)?)?] [$enum_name] [$($variant)*]);
+        impl EirNode for $enum_name {
+            type AstNode = ast::$enum_name;
+
+            #[allow(dead_code)]
+            fn node_info(&self) -> NodeInfo<ast::$enum_name> {
+                match self {
+                    $(Self::$variant(expr) => ExprInfoCast::cast(&expr.node_info()),)*
+                }
+            }
+        }
 
         $(
         impl From<$variant> for $enum_name {
@@ -230,10 +235,7 @@ macro_rules! def_eir {
     (
         @main [$doller: tt]
 
-        $(
-        #[common_info $($common_info:tt)?]
         $(#[common_info_ast_ty = $common_info_ast_ty: ty])?
-        )?
         $(#[manual_construct$($manual_construct_mark:tt)?])?
         $vis: vis struct $variant: ident {
             $($variant_child_name: ident: $variant_child_ty: ty),* $(,)?
@@ -252,7 +254,6 @@ macro_rules! def_eir {
             )*
         }
 
-        $(
         impl EirNode for $variant {
             type AstNode = def_eir!(@common_info_type [$($common_info_ast_ty)?] [ast::$variant]);
 
@@ -260,7 +261,6 @@ macro_rules! def_eir {
                 self.0.node_info.clone()
             }
         }
-        )?
 
         const _: () = {
             mod raw_struct {
@@ -269,7 +269,7 @@ macro_rules! def_eir {
                 #[allow(dead_code)]
                 #[derive(Clone)]
                 pub struct $variant {
-                    $(pub node_info: NodeInfo<def_eir!(@common_info_type [$($common_info_ast_ty)?] [ast::$variant])>,)?
+                    pub node_info: NodeInfo<<super::$variant as EirNode>::AstNode>,
                     $(pub $variant_child_name: $variant_child_ty,)*
                 }
             }
@@ -283,32 +283,14 @@ macro_rules! def_eir {
             }
         };
 
-        def_eir!(@lower_to_eir_variant [$(manual_construct $($manual_construct_mark:tt)?)?] [$variant] [$($variant_child_name)*] [$(node_info $($common_info)?)?]);
-    };
-
-    (@impl_eir_node [] [$enum_name: ident] [$($variant: ident)*]) => {};
-    (@impl_eir_node [common_info] [$enum_name: ident] [$($variant: ident)*]) => {
-        impl EirNode for $enum_name {
-            type AstNode = ast::$enum_name;
-
-            #[allow(dead_code)]
-            fn node_info(&self) -> NodeInfo<ast::$enum_name> {
-                match self {
-                    $(Self::$variant(expr) => ExprInfoCast::cast(&expr.node_info()),)*
-                }
-            }
-        }
-    };
-
-    (@lower_to_eir_variant [manual_construct] $($tt: tt)*) => {};
-    (@lower_to_eir_variant [] [$variant: ident] [$($variant_child_name: ident)*] [$($common_info_name: ident)?]) => {
+        $(#[cfg(false)] $($manual_construct_mark)?)?
         impl LowerToEir for ast::$variant {
             type Eir = $variant;
 
             fn lower_to_eir(self, #[allow(unused)] ctx: &LowerToEirCtx) -> $variant {
                 new_eir_node!($variant {
                     $($variant_child_name: $crate::codegen::body::eir::eir_macros::LowerCast::lower_cast(ctx.lower(self.$variant_child_name()), stringify!($variant_child_name)),)*
-                    $($common_info_name: CommonInfoFrom::common_info_from(self),)?
+                    node_info: CommonInfoFrom::common_info_from(self),
                 })
             }
         }
