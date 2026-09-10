@@ -89,6 +89,25 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
         }
     }
 
+    pub fn deferred(&mut self) -> &mut Vec<ItemInBody> {
+        self.deferred.get_mut()
+    }
+
+    /// Emit the full function body block.
+    pub fn emit_function_body(&self, mut f: eir::Fn, out: &mut Code) {
+        let mut transformer = crate::codegen::body::transformer::EirTransformer::new(self.cg);
+        let std::ops::ControlFlow::Continue(()) = f.accept_mut(&mut transformer);
+        self.emit_function_body_impl(f, out)
+    }
+
+    pub fn emit_expr(&self, mut expr: eir::Expr) -> Code {
+        let mut transformer = crate::codegen::body::transformer::EirTransformer::new(self.cg);
+        let std::ops::ControlFlow::Continue(()) = expr.accept_mut(&mut transformer);
+        self.emit_expr_str_ast(&expr)
+    }
+}
+
+impl<'g, 'db> EirEmitter<'g, 'db> {
     fn alloc_binding_ast(&self, local: &Local<'db>) -> String {
         let rust_name = local.name(self.db).as_str().to_string();
         let mut name_counts = self.name_counts.borrow_mut();
@@ -124,10 +143,6 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
 
     fn add_deferred(&self, deferred: impl Into<ItemInBody>) {
         self.deferred.borrow_mut().push(deferred.into());
-    }
-
-    pub fn deferred(&mut self) -> &mut Vec<ItemInBody> {
-        self.deferred.get_mut()
     }
 
     fn inc_match_index(&self) -> usize {
@@ -195,9 +210,8 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
         }
     }
 
-    /// Emit the full function body block.
     #[tracing::instrument(skip_all)]
-    pub fn emit_function_body(&self, f: eir::Fn, out: &mut Code) {
+    fn emit_function_body_impl(&self, f: eir::Fn, out: &mut Code) {
         let params = f.param_list();
         let f_def = self.eir_sem.to_def(&f).unwrap();
         let _scope = self.new_ctx(CodeContext {
@@ -636,12 +650,12 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
         info
     }
 
-    pub fn emit_expr_str_ast(&self, expr: &eir::Expr) -> Code {
+    fn emit_expr_str_ast(&self, expr: &eir::Expr) -> Code {
         self.emit_expr_str_ast_inner(expr, false)
     }
 
     #[tracing::instrument(skip_all, fields(expr_at = self.eir_sem.location(expr)))]
-    pub fn emit_expr_str_ast_inner(&self, expr: &eir::Expr, statement: bool) -> Code {
+    fn emit_expr_str_ast_inner(&self, expr: &eir::Expr, statement: bool) -> Code {
         match expr {
             //Expr::Missing => "/* missing */default!".into(),
             eir::Expr::Literal(lit) => self.emit_literal_ast(lit),

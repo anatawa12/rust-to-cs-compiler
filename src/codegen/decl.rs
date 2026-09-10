@@ -469,7 +469,7 @@ impl<'db> CodeGenerator<'db> {
         let lowerer = super::body::eir::LowerToEirCtx { cg: self };
         let eir_fn = lowerer.lower(source.value.body().unwrap());
         let mut emitter = EirEmitter::new(self, false, CsFunctionType::Normal);
-        let expr = emitter.emit_expr_str_ast(&eir_fn);
+        let expr = emitter.emit_expr(eir_fn);
 
         out.w("public static readonly ")
             .w(ty)
@@ -495,7 +495,7 @@ impl<'db> CodeGenerator<'db> {
         let lowerer = super::body::eir::LowerToEirCtx { cg: self };
         let eir_fn = lowerer.lower(source.value.body().unwrap());
         let mut emitter = EirEmitter::new(self, false, CsFunctionType::Normal);
-        let expr = emitter.emit_expr_str_ast(&eir_fn);
+        let expr = emitter.emit_expr(eir_fn);
 
         out.w("public static readonly ")
             .w(ty)

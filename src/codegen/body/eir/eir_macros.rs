@@ -1,4 +1,5 @@
-use crate::codegen::body::eir::EirNode;
+use crate::codegen::body::eir::{EirNode, MutatingEirVisitor};
+use std::ops::ControlFlow;
 
 pub trait EirNodeConstructHelper {
     type RawStruct;
@@ -51,6 +52,7 @@ impl<Eir> LowerCast<Eir> for Option<Eir> {
 pub trait EirAccessType<'a> {
     type Result;
     fn cast(&'a self) -> Self::Result;
+    fn accept_mut<V: ?Sized + MutatingEirVisitor>(&mut self, _: &mut V) -> ControlFlow<V::Break>;
 }
 
 macro_rules! ref_eir_access {
@@ -59,6 +61,13 @@ macro_rules! ref_eir_access {
             type Result = &'a $ty;
             fn cast(&'a self) -> &'a $ty {
                 self
+            }
+
+            fn accept_mut<V: ?Sized + MutatingEirVisitor>(
+                &mut self,
+                _: &mut V,
+            ) -> ControlFlow<V::Break> {
+                ControlFlow::Continue(())
             }
         }
     };
@@ -69,6 +78,13 @@ macro_rules! clone_eir_access {
             type Result = $ty;
             fn cast(&self) -> $ty {
                 self.clone()
+            }
+
+            fn accept_mut<V: ?Sized + MutatingEirVisitor>(
+                &mut self,
+                _: &mut V,
+            ) -> ControlFlow<V::Break> {
+                ControlFlow::Continue(())
             }
         }
     };
@@ -87,12 +103,31 @@ impl<'a, T: EirAccessType<'a> + 'a> EirAccessType<'a> for Option<T> {
     fn cast(&'a self) -> Self::Result {
         self.as_ref().map(EirAccessType::cast)
     }
+
+    fn accept_mut<V: ?Sized + MutatingEirVisitor>(
+        &mut self,
+        visitor: &mut V,
+    ) -> ControlFlow<V::Break> {
+        self.as_mut()
+            .map(|x| x.accept_mut(visitor))
+            .unwrap_or(ControlFlow::Continue(()))
+    }
 }
 
-impl<'a, T: 'a> EirAccessType<'a> for Vec<T> {
+impl<'a, T: 'a + for<'b> EirAccessType<'b>> EirAccessType<'a> for Vec<T> {
     type Result = &'a [T];
     fn cast(&'a self) -> Self::Result {
         self
+    }
+
+    fn accept_mut<V: ?Sized + MutatingEirVisitor>(
+        &mut self,
+        visitor: &mut V,
+    ) -> ControlFlow<V::Break> {
+        for child in self {
+            child.accept_mut(visitor)?;
+        }
+        ControlFlow::Continue(())
     }
 }
 
@@ -102,13 +137,32 @@ impl<'a, T: EirNode + 'a> EirAccessType<'a> for T {
     fn cast(&'a self) -> &'a T {
         self
     }
+
+    fn accept_mut<V: ?Sized + MutatingEirVisitor>(
+        &mut self,
+        visitor: &mut V,
+    ) -> ControlFlow<V::Break> {
+        EirNode::accept_mut(self, visitor)
+    }
 }
 
-impl<'a, T: 'a> EirAccessType<'a> for super::children::ChildrenContainer<T> {
+impl<'a, T: 'a + for<'b> EirAccessType<'b>> EirAccessType<'a>
+    for super::children::ChildrenContainer<T>
+{
     type Result = super::children::Children<'a, T>;
 
     fn cast(&'a self) -> Self::Result {
         self.iterator()
+    }
+
+    fn accept_mut<V: ?Sized + MutatingEirVisitor>(
+        &mut self,
+        visitor: &mut V,
+    ) -> ControlFlow<V::Break> {
+        for child in self.iter_mut() {
+            child.accept_mut(visitor)?;
+        }
+        ControlFlow::Continue(())
     }
 }
 
@@ -204,6 +258,17 @@ macro_rules! def_eir {
                     $(Self::$variant(expr) => ExprInfoCast::cast(&expr.node_info()),)*
                 }
             }
+
+            def_eir!(@accept_mut [$enum_name]);
+
+            fn accept_children_mut<V: ?Sized + MutatingEirVisitor>(
+                &mut self,
+                visitor: &mut V,
+            ) -> ControlFlow<V::Break> {
+                match self {
+                    $(Self::$variant(expr) => expr.accept_children_mut(visitor),)*
+                }
+            }
         }
 
         $(
@@ -232,6 +297,26 @@ macro_rules! def_eir {
         }
     };
 
+    (@accept_mut [Expr]) => {
+        #[allow(dead_code)]
+        fn accept_mut<V: ?Sized + MutatingEirVisitor>(
+            &mut self,
+            visitor: &mut V,
+        ) -> ControlFlow<V::Break> {
+            visitor.visit_expr(self)
+        }
+    };
+    (@accept_mut [Pat]) => {
+        #[allow(dead_code)]
+        fn accept_mut<V: ?Sized + MutatingEirVisitor>(
+            &mut self,
+            visitor: &mut V,
+        ) -> ControlFlow<V::Break> {
+            visitor.visit_pat(self)
+        }
+    };
+    (@accept_mut [$variant: ident] $($rest:tt)*) => {};
+
     (
         @main [$doller: tt]
 
@@ -252,6 +337,11 @@ macro_rules! def_eir {
                 $crate::codegen::body::eir::eir_macros::EirAccessType::cast(&self.0.$variant_child_name)
             }
             )*
+
+            #[allow(dead_code)]
+            pub fn into_inner(self) -> <Self as $crate::codegen::body::eir::eir_macros::EirNodeConstructHelper>::RawStruct {
+                *self.0
+            }
         }
 
         impl EirNode for $variant {
@@ -259,6 +349,15 @@ macro_rules! def_eir {
 
             fn node_info(&self) -> NodeInfo<Self::AstNode> {
                 self.0.node_info.clone()
+            }
+
+            #[allow(unused_variables)]
+            fn accept_children_mut<V: ?Sized + MutatingEirVisitor>(
+                &mut self,
+                visitor: &mut V,
+            ) -> ControlFlow<V::Break> {
+                $($crate::codegen::body::eir::eir_macros::EirAccessType::accept_mut(&mut self.0.$variant_child_name, visitor)?;)*
+                ControlFlow::Continue(())
             }
         }
 

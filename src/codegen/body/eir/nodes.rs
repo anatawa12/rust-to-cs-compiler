@@ -358,6 +358,25 @@ pub enum FormatArgsSegment {
     Expr(Expr),
 }
 
+impl<'a> eir_macros::EirAccessType<'a> for FormatArgsSegment {
+    type Result = &'a FormatArgsSegment;
+
+    fn cast(&'a self) -> Self::Result {
+        self
+    }
+
+    fn accept_mut<V: ?Sized + MutatingEirVisitor>(
+        &mut self,
+        visitor: &mut V,
+    ) -> ControlFlow<V::Break> {
+        match self {
+            FormatArgsSegment::Literal(_) => ControlFlow::Continue(()),
+            FormatArgsSegment::Braces(_) => ControlFlow::Continue(()),
+            FormatArgsSegment::Expr(expr) => visitor.visit_expr(expr),
+        }
+    }
+}
+
 def_eir!(
     pub enum Pat {
         // BoxPat // nightly
@@ -489,6 +508,13 @@ impl EirNode for Path {
             Path::ScopedName { .. } => NodeInfo::None,
         }
     }
+
+    fn accept_children_mut<V: ?Sized + MutatingEirVisitor>(
+        &mut self,
+        _: &mut V,
+    ) -> ControlFlow<V::Break> {
+        ControlFlow::Continue(())
+    }
 }
 
 #[derive(Clone)]
@@ -522,6 +548,13 @@ impl EirNode for NameRef {
             NameRef::Ast(ast) => NodeInfo::Ast(ast.clone()),
             NameRef::CSharp(..) => NodeInfo::None,
         }
+    }
+
+    fn accept_children_mut<V: ?Sized + MutatingEirVisitor>(
+        &mut self,
+        _: &mut V,
+    ) -> ControlFlow<V::Break> {
+        ControlFlow::Continue(())
     }
 }
 

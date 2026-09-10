@@ -14,7 +14,8 @@
 //! but non-AST-backed EIR nodes are there.
 
 #[macro_use]
-mod eir_macros;
+#[doc(hidden)]
+pub mod eir_macros;
 
 // needs new_eir_node
 mod children;
@@ -25,6 +26,7 @@ mod nodes;
 use crate::codegen::{CodeGenerator, output};
 use ast::HasAttrs as _;
 use std::fmt::Display;
+use std::ops::ControlFlow;
 use syntax::ast;
 use syntax::ast::ArrayExprKind;
 use syntax::ast::{HasArgList, HasLoopBody, HasName, RangeItem};
@@ -68,6 +70,30 @@ pub trait EirNode {
             NodeInfo::Ast(ast) => Either::Left(ast::AstNode::syntax(&ast).text()),
             NodeInfo::None => Either::Right("no-syntax"),
         }
+    }
+
+    fn accept_mut<V: ?Sized + MutatingEirVisitor>(
+        &mut self,
+        visitor: &mut V,
+    ) -> ControlFlow<V::Break> {
+        self.accept_children_mut(visitor)
+    }
+
+    fn accept_children_mut<V: ?Sized + MutatingEirVisitor>(
+        &mut self,
+        visitor: &mut V,
+    ) -> ControlFlow<V::Break>;
+}
+
+pub trait MutatingEirVisitor {
+    type Break;
+
+    fn visit_expr(&mut self, expr: &mut Expr) -> ControlFlow<Self::Break> {
+        expr.accept_children_mut(self)
+    }
+
+    fn visit_pat(&mut self, expr: &mut Pat) -> ControlFlow<Self::Break> {
+        expr.accept_children_mut(self)
     }
 }
 
@@ -177,6 +203,13 @@ macro_rules! ast_eir_node {
 
             fn node_info(&self) -> NodeInfo<Self::AstNode> {
                 NodeInfo::Ast(self.clone())
+            }
+
+            fn accept_children_mut<V: ?Sized + MutatingEirVisitor>(
+                &mut self,
+                _: &mut V,
+            ) -> ControlFlow<V::Break> {
+                ControlFlow::Continue(())
             }
         }
     };

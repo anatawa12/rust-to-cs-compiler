@@ -12,6 +12,14 @@ impl<T> ChildrenContainer<T> {
     pub fn iterator(&self) -> Children<'_, T> {
         Children(&self.0, 0)
     }
+
+    pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, T> {
+        self.0.iter_mut()
+    }
+
+    pub fn into_iter(self) -> std::vec::IntoIter<T> {
+        self.0.into_iter()
+    }
 }
 
 impl<'a, T> Iterator for Children<'a, T> {
