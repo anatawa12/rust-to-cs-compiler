@@ -20,6 +20,10 @@ impl<T> ChildrenContainer<T> {
     pub fn into_iter(self) -> std::vec::IntoIter<T> {
         self.0.into_iter()
     }
+
+    pub fn into_vec(self) -> Vec<T> {
+        self.0.into_vec()
+    }
 }
 
 impl<'a, T> Iterator for Children<'a, T> {

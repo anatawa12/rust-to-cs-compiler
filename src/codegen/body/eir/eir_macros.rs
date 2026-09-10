@@ -342,6 +342,11 @@ macro_rules! def_eir {
             pub fn into_inner(self) -> <Self as $crate::codegen::body::eir::eir_macros::EirNodeConstructHelper>::RawStruct {
                 *self.0
             }
+
+            #[allow(dead_code)]
+            pub fn as_mut(&mut self) -> &mut <Self as $crate::codegen::body::eir::eir_macros::EirNodeConstructHelper>::RawStruct {
+                &mut self.0
+            }
         }
 
         impl EirNode for $variant {
