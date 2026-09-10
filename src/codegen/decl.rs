@@ -23,10 +23,8 @@ impl<'db> CodeGenerator<'db> {
 
         let (all_params, constraints) = self.generic_def_params_cs(t.into());
 
-        if let Some(compatibility) = t.dyn_compatibility_all_violations(db) {
-            for x in compatibility {
-                out.wln(format!("// dyn incompatible with {x:?}"));
-            }
+        if t.dyn_compatibility_all_violations(db).is_some() {
+            out.wln("// dyn incompatible");
         } else {
             out.wln("// dyn compatible");
         }
