@@ -11,7 +11,7 @@ use crate::codegen::simple_extensions::*;
 use crate::codegen::ty::CsTypeOption;
 use eir::{ArithOp, BinaryOp, LogicOp, RangeOp, UnaryOp};
 use hir::db::HirDatabase;
-use hir::{HasContainer, HasCrate, Local, ModuleDef, PathResolution, StructKind, Type, sym};
+use hir::{HasCrate, Local, ModuleDef, PathResolution, StructKind, Type, sym};
 use itertools::Either;
 use ra_internal::*;
 use std::cell::RefCell;
@@ -854,28 +854,6 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 let db = self.db;
 
                 match self.eir_sem.resolve_method_call_fallback(method_call) {
-                    Some((Either::Left(f), _))
-                        if f.name(db).symbol().as_str() == "push"
-                            && let hir::ItemContainer::Impl(impl_) = f.container(db)
-                            && let Some(hir::Adt::Struct(struct_)) = impl_.self_ty(db).as_adt()
-                            && let None = impl_.trait_(db)
-                            && (Some(struct_) == self.lang_items.OsString()
-                                || Some(struct_) == self.lang_items.String())
-                            && let eir::Expr::PathExpr(receiver_path) = method_call.receiver()
-                            && let Some(hir::PathResolution::Local(receiver_var)) =
-                                self.eir_sem.resolve_path(receiver_path.path())
-                            && let Some(hir::Adt::Struct(struct_of_reciver_var)) =
-                                receiver_var.ty(db).as_adt()
-                            && struct_of_reciver_var == struct_
-                            && statement =>
-                    {
-                        let mut code: Code = (self.binding_name_ast(receiver_var)).into();
-                        code.w(" += ");
-                        code.w(
-                            self.emit_expr_str_ast(method_call.arg_list().args().next().unwrap())
-                        );
-                        code
-                    }
                     Some((Either::Left(f), args)) => {
                         let args = args.map(|args| args.types(self.db)).unwrap_or_else(|| {
                             // this is builtin derive. all except for Hash::hash implementation

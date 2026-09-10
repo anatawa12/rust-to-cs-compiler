@@ -2,7 +2,8 @@ use super::eir::*;
 use crate::codegen::CodeGenerator;
 use crate::codegen::constructable::ConstructableDef;
 use crate::new_eir_node;
-use hir::{ModuleDef, PathResolution};
+use hir::HasContainer;
+use itertools::Either;
 use std::ops::ControlFlow;
 
 /// The struct implements translating EIR for C# generation
@@ -42,6 +43,19 @@ impl ReplaceDefault for Pat {
     fn replace_default() -> Self {
         Pat::from(new_eir_node!(WildcardPat {
             node_info: NodeInfo::None
+        }))
+    }
+}
+
+impl ReplaceDefault for Stmt {
+    fn replace_default() -> Self {
+        Stmt::from(new_eir_node!(ExprStmt {
+            expr: Expr::from(new_eir_node!(RawCodeExpr {
+                code: code!(""),
+                divergent: false,
+                node_info: NodeInfo::None,
+            })),
+            node_info: NodeInfo::None,
         }))
     }
 }
@@ -105,6 +119,44 @@ impl MutatingEirVisitor for EirTransformer<'_, '_> {
 
         expr.accept_children_mut(self)
     }
+
+    fn visit_stmt(&mut self, stmt: &mut Stmt) -> ControlFlow<Self::Break> {
+        let db = self.db;
+
+        if let Stmt::ExprStmt(expr_stmt) = stmt
+            && let expr = &mut expr_stmt.as_mut().expr
+            && let Expr::MethodCallExpr(method_call) = expr
+            && let Some((Either::Left(f), _)) =
+                self.eir_sem.resolve_method_call_fallback(method_call)
+            && f.name(db).symbol().as_str() == "push"
+            && let hir::ItemContainer::Impl(impl_) = f.container(db)
+            && let Some(hir::Adt::Struct(struct_)) = impl_.self_ty(db).as_adt()
+            && let None = impl_.trait_(db)
+            && (Some(struct_) == self.lang_items.OsString()
+                || Some(struct_) == self.lang_items.String())
+            && let Expr::PathExpr(receiver_path) = method_call.receiver()
+            && let Some(hir::PathResolution::Local(receiver_var)) =
+                self.eir_sem.resolve_path(receiver_path.path())
+            && let Some(hir::Adt::Struct(struct_of_reciver_var)) = receiver_var.ty(db).as_adt()
+            && struct_of_reciver_var == struct_
+        {
+            replace_node!(
+                expr as Expr::MethodCallExpr(method_call) = {
+                    let method_call = method_call.into_inner();
+                    Expr::from(new_eir_node!(BinExpr {
+                        lhs: method_call.receiver,
+                        rhs: (method_call.arg_list.into_inner().args.into_iter().nth(0)).unwrap(),
+                        op_kind: BinaryOp::Assignment {
+                            op: Some(ArithOp::Add)
+                        },
+                        node_info: method_call.node_info.cast(),
+                    }))
+                }
+            );
+        }
+
+        stmt.accept_children_mut(self)
+    }
 }
 
 struct EirFixCowPatterns<'g, 'db> {
@@ -121,8 +173,9 @@ impl MutatingEirVisitor for EirFixCowPatterns<'_, '_> {
     type Break = bool;
     fn visit_pat(&mut self, pat: &mut Pat) -> ControlFlow<Self::Break> {
         if let Pat::TupleStructPat(tuple_pat) = pat
-            && let Some(PathResolution::Def(def)) = self.cg.eir_sem.resolve_path(tuple_pat.path())
-            && let ModuleDef::EnumVariant(variant) = def
+            && let Some(hir::PathResolution::Def(def)) =
+                self.cg.eir_sem.resolve_path(tuple_pat.path())
+            && let hir::ModuleDef::EnumVariant(variant) = def
             && (Some(variant) == self.cg.lang_items.CowBorrowed()
                 || Some(variant) == self.cg.lang_items.CowOwned())
         {

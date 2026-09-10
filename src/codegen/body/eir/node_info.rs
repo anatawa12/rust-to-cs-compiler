@@ -4,7 +4,7 @@ pub(super) trait CommonInfoFrom<T> {
     fn common_info_from(_: T) -> Self;
 }
 
-pub(super) trait ExprInfoCast<T, M> {
+pub trait ExprInfoCast<T, M> {
     fn cast(&self) -> T;
 }
 
@@ -28,6 +28,12 @@ impl CommonInfoFrom<ast::CallExpr> for NodeInfo<ast::Expr> {
 
 impl CommonInfoFrom<ast::AwaitExpr> for NodeInfo<ast::Expr> {
     fn common_info_from(ast: ast::AwaitExpr) -> Self {
+        Self::Ast(ast.into())
+    }
+}
+
+impl CommonInfoFrom<ast::BinExpr> for NodeInfo<ast::Expr> {
+    fn common_info_from(ast: ast::BinExpr) -> Self {
         Self::Ast(ast.into())
     }
 }

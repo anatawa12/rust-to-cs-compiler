@@ -29,6 +29,7 @@ def_eir!(
             expr: Expr,
         },
         // BecomeExpr not supported
+        #[common_info_ast_ty = ast::Expr]
         BinExpr {
             lhs: Expr,
             rhs: Expr,
