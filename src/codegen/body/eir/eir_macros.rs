@@ -297,6 +297,15 @@ macro_rules! def_eir {
         }
     };
 
+    (@accept_mut [Fn]) => {
+        #[allow(dead_code)]
+        fn accept_mut<V: ?Sized + MutatingEirVisitor>(
+            &mut self,
+            visitor: &mut V,
+        ) -> ControlFlow<V::Break> {
+            visitor.visit_fn(self)
+        }
+    };
     (@accept_mut [Expr]) => {
         #[allow(dead_code)]
         fn accept_mut<V: ?Sized + MutatingEirVisitor>(
@@ -364,6 +373,8 @@ macro_rules! def_eir {
             fn node_info(&self) -> NodeInfo<Self::AstNode> {
                 self.0.node_info.clone()
             }
+
+            def_eir!(@accept_mut [$variant]);
 
             #[allow(unused_variables)]
             fn accept_children_mut<V: ?Sized + MutatingEirVisitor>(

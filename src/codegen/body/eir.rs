@@ -90,6 +90,10 @@ pub trait EirNode {
 pub trait MutatingEirVisitor {
     type Break;
 
+    fn visit_fn(&mut self, f: &mut Fn) -> ControlFlow<Self::Break> {
+        f.accept_children_mut(self)
+    }
+
     fn visit_expr(&mut self, expr: &mut Expr) -> ControlFlow<Self::Break> {
         expr.accept_children_mut(self)
     }
@@ -98,8 +102,8 @@ pub trait MutatingEirVisitor {
         stmt.accept_children_mut(self)
     }
 
-    fn visit_pat(&mut self, expr: &mut Pat) -> ControlFlow<Self::Break> {
-        expr.accept_children_mut(self)
+    fn visit_pat(&mut self, pat: &mut Pat) -> ControlFlow<Self::Break> {
+        pat.accept_children_mut(self)
     }
 }
 
