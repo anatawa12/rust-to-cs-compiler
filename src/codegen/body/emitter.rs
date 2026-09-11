@@ -96,14 +96,12 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
 
     /// Emit the full function body block.
     pub fn emit_function_body(&self, mut f: eir::Fn, out: &mut Code) {
-        let mut transformer = crate::codegen::body::transformer::EirTransformer::new(self.cg);
-        let std::ops::ControlFlow::Continue(()) = f.accept_mut(&mut transformer);
+        crate::codegen::body::transformer::transform(self.cg, &mut f);
         self.emit_function_body_impl(f, out)
     }
 
     pub fn emit_expr(&self, mut expr: eir::Expr) -> Code {
-        let mut transformer = crate::codegen::body::transformer::EirTransformer::new(self.cg);
-        let std::ops::ControlFlow::Continue(()) = expr.accept_mut(&mut transformer);
+        crate::codegen::body::transformer::transform(self.cg, &mut expr);
         self.emit_expr_str_ast(&expr)
     }
 }

@@ -1,74 +1,15 @@
 use super::eir::*;
-use crate::codegen::CodeGenerator;
 use crate::codegen::constructable::ConstructableDef;
 use crate::new_eir_node;
 use hir::HasContainer;
 use std::ops::ControlFlow;
 
-/// The struct implements translating EIR for C# generation
-pub struct EirTransformer<'a, 'db> {
-    cg: &'a CodeGenerator<'db>,
-}
+def_transformer!(
+    /// Implements basic transformation of EIR nodes
+    pub struct ExpandMacroLikeFunctions;
+);
 
-impl<'g, 'db> std::ops::Deref for EirTransformer<'g, 'db> {
-    type Target = CodeGenerator<'db>;
-
-    fn deref(&self) -> &Self::Target {
-        self.cg
-    }
-}
-
-impl<'g, 'db> EirTransformer<'g, 'db> {
-    pub fn new(cg: &'g CodeGenerator<'db>) -> Self {
-        Self { cg }
-    }
-}
-
-trait ReplaceDefault {
-    fn replace_default() -> Self;
-}
-
-impl ReplaceDefault for Expr {
-    fn replace_default() -> Self {
-        Expr::from(new_eir_node!(RawCodeExpr {
-            code: code!(""),
-            divergent: false,
-            node_info: NodeInfo::None
-        }))
-    }
-}
-
-impl ReplaceDefault for Pat {
-    fn replace_default() -> Self {
-        Pat::from(new_eir_node!(WildcardPat {
-            node_info: NodeInfo::None
-        }))
-    }
-}
-
-impl ReplaceDefault for Stmt {
-    fn replace_default() -> Self {
-        Stmt::from(new_eir_node!(ExprStmt {
-            expr: Expr::from(new_eir_node!(RawCodeExpr {
-                code: code!(""),
-                divergent: false,
-                node_info: NodeInfo::None,
-            })),
-            node_info: NodeInfo::None,
-        }))
-    }
-}
-
-macro_rules! replace_node {
-    ($expr: ident as $($path: ident)::+($casted: ident) = $inner: expr) => {{
-        let $($path)::+($casted) = std::mem::replace($expr, ReplaceDefault::replace_default()) else {
-            panic!("")
-        };
-        *$expr = $inner;
-    }};
-}
-
-impl MutatingEirVisitor for EirTransformer<'_, '_> {
+impl MutatingEirVisitor for ExpandMacroLikeFunctions<'_, '_> {
     type Break = std::convert::Infallible;
 
     fn visit_expr(&mut self, expr: &mut Expr) -> ControlFlow<Self::Break> {
@@ -164,15 +105,9 @@ impl MutatingEirVisitor for EirTransformer<'_, '_> {
     }
 }
 
-struct EirFixCowPatterns<'g, 'db> {
-    cg: &'g CodeGenerator<'db>,
-}
-
-impl<'g, 'db> EirFixCowPatterns<'g, 'db> {
-    fn new(cg: &'g CodeGenerator<'db>) -> Self {
-        Self { cg }
-    }
-}
+def_transformer!(
+    struct EirFixCowPatterns;
+);
 
 impl MutatingEirVisitor for EirFixCowPatterns<'_, '_> {
     type Break = bool;
