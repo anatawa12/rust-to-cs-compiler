@@ -851,8 +851,8 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
             eir::Expr::CallExpr(call_expr) => {
                 let callee = call_expr.expr();
                 let args = call_expr.arg_list().args();
-                if let eir::Expr::PathExpr(path) = &callee {
-                    match self.eir_sem.resolve_path_with_subst(path.path()) {
+                if let eir::Expr::PathExpr(path_expr) = &callee {
+                    match self.eir_sem.resolve_path_with_subst(path_expr.path()) {
                         Some((PathResolution::Def(def), _))
                             if let Some(def) = ConstructableDef::from_module_def(def) =>
                         {
@@ -862,6 +862,14 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                                 self.constructable_name_cs(&Constructable::new(def, generic_args));
                             let args_str = args.map(|a| self.emit_expr_str_ast(a));
                             return code!(callee_type, ".ctor(", join(args_str, ", "), ")");
+                        }
+                        _ if let eir::Path::BuiltinItem(builtin) = path_expr.path()
+                            && let Some(resolved) = self.resolve_builtin_function(builtin) =>
+                        {
+                            return self.emit_call_expr(
+                                resolved,
+                                args.into_iter().map(|a| self.emit_expr_str_ast(a)),
+                            );
                         }
                         Some((PathResolution::Def(ModuleDef::Function(f)), subst)) => {
                             let generics =

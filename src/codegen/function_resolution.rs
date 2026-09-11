@@ -1,4 +1,5 @@
 use crate::codegen::CodeGenerator;
+use crate::codegen::body::eir;
 use crate::codegen::output::Code;
 use crate::codegen::simple_extensions::*;
 use crate::codegen::ty::CsTypeOption;
@@ -208,27 +209,6 @@ impl<'db> CodeGenerator<'db> {
             };
         }
 
-        if Some(f) == self.lang_items.internal_debug_text() {
-            return ResolvedFunction::Method {
-                //self_ty,
-                trait_: None,
-                function_name: "DebugStr".into(),
-                generic_sources: vec![],
-                generic_args: vec![],
-                args_map: Some((ArgSource::Source(0), vec![])),
-            };
-        }
-        if Some(f) == self.lang_items.internal_display_text() {
-            return ResolvedFunction::Method {
-                //self_ty,
-                trait_: None,
-                function_name: "DisplayStr".into(),
-                generic_sources: vec![],
-                generic_args: vec![],
-                args_map: Some((ArgSource::Source(0), vec![])),
-            };
-        }
-
         // generic way
         match f.container(db) {
             hir::ItemContainer::Impl(impl_) => {
@@ -287,6 +267,28 @@ impl<'db> CodeGenerator<'db> {
             unsupported => {
                 panic!("Unsupported function container type: {:?}", unsupported);
             }
+        }
+    }
+
+    pub fn resolve_builtin_function(
+        &self,
+        builtin: &eir::BuiltinItem,
+    ) -> Option<ResolvedFunction<'db>> {
+        match builtin {
+            eir::BuiltinItem::DisplayStr => Some(ResolvedFunction::Method {
+                trait_: None,
+                function_name: "DisplayStr".into(),
+                generic_sources: vec![],
+                generic_args: vec![],
+                args_map: Some((ArgSource::Source(0), vec![])),
+            }),
+            eir::BuiltinItem::DebugStr => Some(ResolvedFunction::Method {
+                trait_: None,
+                function_name: "DebugStr".into(),
+                generic_sources: vec![],
+                generic_args: vec![],
+                args_map: Some((ArgSource::Source(0), vec![])),
+            }),
         }
     }
 }

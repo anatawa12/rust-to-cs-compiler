@@ -183,18 +183,7 @@ impl<'db> EirSemantics<'db> {
                     hir::ScopeDef::Unknown => None,
                 }
             }
-            eir::Path::BuiltinItem(eir::BuiltinItem::DebugStr) => Some((
-                hir::PathResolution::Def(hir::ModuleDef::Function(
-                    self.lang_items.internal_debug_text().unwrap(),
-                )),
-                None,
-            )),
-            eir::Path::BuiltinItem(eir::BuiltinItem::DisplayStr) => Some((
-                hir::PathResolution::Def(hir::ModuleDef::Function(
-                    self.lang_items.internal_display_text().unwrap(),
-                )),
-                None,
-            )),
+            eir::Path::BuiltinItem(_) => None,
         }
     }
 

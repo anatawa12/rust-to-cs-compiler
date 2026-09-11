@@ -62,8 +62,6 @@ fn load_workspace_from_cargo(
         core_contents.push_str(
             r###"
         pub mod __r2cs_internal {
-            pub fn debug_text() {}
-            pub fn display_text() {}
         }
         "###,
         );

@@ -146,8 +146,6 @@ our_lang_items! {
     cfg = core::cfg as Macro;
     Send = core::marker::Send as Trait;
     Into = core::convert::Into as Trait;
-    internal_debug_text = core::__r2cs_internal::debug_text as Function;
-    internal_display_text = core::__r2cs_internal::display_text as Function;
 
     // alloc
     Vec = alloc::vec::Vec as Struct;
