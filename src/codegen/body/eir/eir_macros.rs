@@ -266,7 +266,7 @@ macro_rules! def_eir {
                 visitor: &mut V,
             ) -> ControlFlow<V::Break> {
                 match self {
-                    $(Self::$variant(expr) => expr.accept_children_mut(visitor),)*
+                    $(Self::$variant(expr) => expr.accept_mut(visitor),)*
                 }
             }
         }
@@ -313,6 +313,24 @@ macro_rules! def_eir {
             visitor: &mut V,
         ) -> ControlFlow<V::Break> {
             visitor.visit_expr(self)
+        }
+    };
+    (@accept_mut [BlockExpr]) => {
+        #[allow(dead_code)]
+        fn accept_mut<V: ?Sized + MutatingEirVisitor>(
+            &mut self,
+            visitor: &mut V,
+        ) -> ControlFlow<V::Break> {
+            visitor.visit_block_expr(self)
+        }
+    };
+    (@accept_mut [IfExpr]) => {
+        #[allow(dead_code)]
+        fn accept_mut<V: ?Sized + MutatingEirVisitor>(
+            &mut self,
+            visitor: &mut V,
+        ) -> ControlFlow<V::Break> {
+            visitor.visit_if_expr(self)
         }
     };
     (@accept_mut [Stmt]) => {

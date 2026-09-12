@@ -98,6 +98,14 @@ pub trait MutatingEirVisitor {
         expr.accept_children_mut(self)
     }
 
+    fn visit_block_expr(&mut self, block: &mut BlockExpr) -> ControlFlow<Self::Break> {
+        block.accept_children_mut(self)
+    }
+
+    fn visit_if_expr(&mut self, if_expr: &mut IfExpr) -> ControlFlow<Self::Break> {
+        if_expr.accept_children_mut(self)
+    }
+
     fn visit_stmt(&mut self, stmt: &mut Stmt) -> ControlFlow<Self::Break> {
         stmt.accept_children_mut(self)
     }
