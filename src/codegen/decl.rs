@@ -65,7 +65,7 @@ impl<'db> CodeGenerator<'db> {
             match item {
                 AssocItem::Function(f) => {
                     if f.has_self_param(db) {
-                        self.emit_function_signature(out, f, "", "", CsFunctionType::Normal, None);
+                        self.emit_function_signature(out, f, "", CsFunctionType::Normal, None);
                         out.wln(";");
                     }
                 }
@@ -108,7 +108,6 @@ impl<'db> CodeGenerator<'db> {
                     self.emit_function_signature(
                         out,
                         f,
-                        "",
                         "",
                         CsFunctionType::TraitStaticStruct,
                         None,
@@ -167,7 +166,7 @@ impl<'db> CodeGenerator<'db> {
 
         if is_r2cs_native(f, db) {
             writeln!(out, "// [r2cs_native] - add implementation in r2CsNative/",);
-            self.emit_function_signature(out, f, "public ", "partial ", cs_type, None);
+            self.emit_function_signature(out, f, "partial ", cs_type, None);
             out.wln(";");
             return;
         }
@@ -189,7 +188,6 @@ impl<'db> CodeGenerator<'db> {
             self.emit_function_signature(
                 out,
                 base_method,
-                "public ",
                 "",
                 cs_type,
                 Some((
@@ -217,7 +215,6 @@ impl<'db> CodeGenerator<'db> {
             self.emit_function_signature(
                 out,
                 f,
-                "public ",
                 if is_async { "async " } else { "" },
                 cs_type,
                 None,
@@ -241,7 +238,6 @@ impl<'db> CodeGenerator<'db> {
         &self,
         out: &mut Code,
         f: hir::Function,
-        access: &str,
         additional_modifier: &str,
         function_type: CsFunctionType,
         instanciate: Option<(&[hir::Type<'db>], hir::GenericDef)>,
@@ -268,7 +264,7 @@ impl<'db> CodeGenerator<'db> {
 
         write!(
             out,
-            "{access}{is_static_kw}{additional_modifier}{cs_ret} {m_name}{generics}({params})",
+            "public {is_static_kw}{additional_modifier}{cs_ret} {m_name}{generics}({params})",
         );
         out.indent();
         for constraint in constraints {

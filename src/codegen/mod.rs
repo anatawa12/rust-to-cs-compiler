@@ -547,14 +547,7 @@ impl<'db> CodeGenerator<'db> {
             })
             .collect::<Vec<_>>()
             .join(", ");
-        self.emit_function_signature(
-            out,
-            f,
-            "public ",
-            "",
-            function_type,
-            Some((&type_args, impl_.into())),
-        );
+        self.emit_function_signature(out, f, "", function_type, Some((&type_args, impl_.into())));
         out.wln("");
         out.indent();
         out.wln(fcode!("=> {declared_class}.{f_name}{generics}({params});"));
