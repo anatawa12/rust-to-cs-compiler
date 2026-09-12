@@ -476,6 +476,10 @@ impl<'db> CodeGenerator<'db> {
             if self_ty == arg_ty {
                 out.wln(fcode!("public override bool Equals(object? obj) => obj is {self_ty_cs} cast && this == cast;"));
             }
+        } else if let Some(trait_ref) = impl_.trait_ref(db)
+            && Some(trait_ref.trait_()) == self.lang_items.Display()
+        {
+            out.wln("public override string ToString() => this.m_ToString();");
         }
 
         if let Some(trait_ref) = impl_.trait_ref(db)

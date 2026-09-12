@@ -146,6 +146,7 @@ our_lang_items! {
     cfg = core::cfg as Macro;
     Send = core::marker::Send as Trait;
     Into = core::convert::Into as Trait;
+    Display = core::fmt::Display as Trait;
 
     // alloc
     Vec = alloc::vec::Vec as Struct;

@@ -277,7 +277,7 @@ impl<'db> CodeGenerator<'db> {
         match builtin {
             eir::BuiltinItem::DisplayStr => Some(ResolvedFunction::Method {
                 trait_: None,
-                function_name: "DisplayStr".into(),
+                function_name: "ToString".into(),
                 generic_sources: vec![],
                 generic_args: vec![],
                 args_map: Some((ArgSource::Source(0), vec![])),
