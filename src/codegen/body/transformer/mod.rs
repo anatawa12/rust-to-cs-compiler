@@ -1,7 +1,6 @@
 use crate::codegen::CodeGenerator;
 use crate::codegen::body::eir;
 use crate::codegen::body::eir::EirNode;
-use crate::codegen::body::eir::eir_macros::EirAccessType;
 use crate::new_eir_node;
 
 trait ReplaceDefault {
@@ -40,8 +39,12 @@ impl ReplaceDefault for eir::Stmt {
 }
 
 macro_rules! replace_node {
-    ($expr: ident as $($path: ident)::+($casted: ident) = $inner: expr) => {{
-        let $($path)::+($casted) = std::mem::replace($expr, crate::codegen::body::transformer::ReplaceDefault::replace_default()) else {
+    ($expr: ident as $casted: pat = $inner: expr) => {{
+        #[allow(irrefutable_let_patterns)]
+        let $casted = std::mem::replace(
+            $expr,
+            crate::codegen::body::transformer::ReplaceDefault::replace_default(),
+        ) else {
             panic!("")
         };
         *$expr = $inner;
@@ -76,6 +79,7 @@ macro_rules! def_transformer {
 }
 
 mod expand_macro_like_functions;
+mod implicit_returns;
 
 pub fn transform(cg: &CodeGenerator, node: &mut impl EirNode) {
     macro_rules! accept {
@@ -84,5 +88,6 @@ pub fn transform(cg: &CodeGenerator, node: &mut impl EirNode) {
         };
     }
 
+    accept!(implicit_returns::ImplicitReturns);
     accept!(expand_macro_like_functions::ExpandMacroLikeFunctions);
 }

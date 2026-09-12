@@ -248,17 +248,15 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
 }
 
 #[derive(Clone)]
-struct ExprGenOption {
-    returning: bool,
-}
+struct ExprGenOption {}
 
 impl ExprGenOption {
-    fn returning() -> Self {
-        Self { returning: true }
+    fn default() -> Self {
+        Self {}
     }
 
     fn non_last(&self) -> ExprGenOption {
-        Self { returning: false }
+        Self {}
     }
 }
 
@@ -327,11 +325,9 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
             }
             eir::Expr::ReturnExpr(ret_expr) => {
                 if let Some(value_expr) = ret_expr.expr() {
-                    let info =
-                        self.emit_expr_as_stmt_ast(out, value_expr, ExprGenOption::returning());
-                    if !info.diverging {
-                        self.emit_return_void(out);
-                    }
+                    out.w("return ")
+                        .w(self.emit_expr_str_ast(value_expr))
+                        .wln(";");
                     EmittedExprInfo::diverging()
                 } else {
                     self.emit_return_void(out);
@@ -432,7 +428,6 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
 
                 EmittedExprInfo::non_diverging()
             }
-            // TODO? While and For
             eir::Expr::MatchExpr(match_expr) => {
                 let arms = match_expr.match_arm_list();
                 let match_expr = match_expr.expr();
@@ -493,16 +488,6 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 EmittedExprInfo::diverging()
             }
 
-            eir::Expr::AwaitExpr(await_expr) => {
-                let inner_str = self.emit_expr_str_ast(await_expr.expr());
-                if option.returning {
-                    out.wln(code!("return await ", inner_str, ";"));
-                    EmittedExprInfo::diverging()
-                } else {
-                    out.wln(code!("await ", inner_str, ";"));
-                    EmittedExprInfo::non_diverging()
-                }
-            }
             eir::Expr::MacroStmts(stmts) => {
                 self.emit_block_contents(out, stmts.statements(), stmts.tail_expr(), option)
             }
@@ -517,13 +502,8 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
             _ => {
                 // Generic expression: emit as expression statement
                 let s = self.emit_expr_str_ast_inner(expr, true);
-                if option.returning && !self.returning_type().is_unit() {
-                    out.w("return ").w(s).wln(";");
-                    EmittedExprInfo::diverging()
-                } else {
-                    out.w(s).wln(";");
-                    EmittedExprInfo::non_diverging() // TODO: emit_expr_str_ast_inner's diverging
-                }
+                out.w(s).wln(";");
+                EmittedExprInfo::non_diverging() // TODO: emit_expr_str_ast_inner's diverging
             }
         }
     }
@@ -898,7 +878,11 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
             }
             eir::Expr::AwaitExpr(await_expr) => {
                 let inner_str = self.emit_expr_str_ast(await_expr.expr());
-                code!("(await ", inner_str, ")")
+                if statement {
+                    code!("await ", inner_str)
+                } else {
+                    code!("(await ", inner_str, ")")
+                }
             }
             eir::Expr::BinExpr(bin_expr) => {
                 let lhs_code = self.emit_expr_str_ast(bin_expr.lhs());
@@ -1229,7 +1213,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                         &mut body_block,
                         block.statements(),
                         block.tail_expr(),
-                        ExprGenOption::returning(),
+                        ExprGenOption::default(),
                     );
                     code!(
                         "(",
@@ -1405,7 +1389,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
     fn emit_returning_block(&self, out: &mut Code, block_expr: &eir::BlockExpr) {
         let statements = block_expr.statements();
         let tail = block_expr.tail_expr();
-        let emit_info = self.emit_block_contents(out, statements, tail, ExprGenOption::returning());
+        let emit_info = self.emit_block_contents(out, statements, tail, ExprGenOption::default());
         if !emit_info.diverging && !self.returning_type().is_unit() {
             tracing::error!(
                 "Error emitting expr: non-void returning expr does not diverging at {}",
