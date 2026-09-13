@@ -102,11 +102,8 @@ impl<'db> CodeGenerator<'db> {
         let ty = &ty.resolve_associated_type(db);
 
         if !option.is_static_access && !option.is_static_container && !option.is_constructing {
-            let traits = (hir::Impl::all_for_type(db, ty.clone()).into_iter())
-                .flat_map(|x| x.trait_(db))
-                .collect::<HashSet<_>>();
             for &trait_ in &self.trait_first_traits {
-                if traits.contains(&trait_) {
+                if ty.impls_trait(db, trait_, &[]) {
                     return self.cs_path_with_args(trait_, [ty.clone()]);
                 }
             }
