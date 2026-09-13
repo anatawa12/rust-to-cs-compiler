@@ -841,8 +841,6 @@ checksum = "e7b7def8f7824aca5c7de77f53c384fe81d3f6ec46ebf4aa571b9f150404fa14"
 [[package]]
 name = "ra_ap_hir"
 version = "0.0.351"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94f2e71efc4424bd8a5869730af3cf6f53603f906e32201da97d2429e52e2ee6"
 dependencies = [
  "arrayvec",
  "either",
