@@ -6,7 +6,6 @@ use hir::{
     Adt, AssocItem, AssocItemContainer, GenericDef, GenericParam, HasContainer, HasCrate,
     ItemContainer, Trait, Type, TypeParam, sym,
 };
-use ide_db::base_db::salsa_macros;
 use itertools::Either;
 use ra_internal::adt::AdtExt;
 use ra_internal::function::FunctionExt as _;
