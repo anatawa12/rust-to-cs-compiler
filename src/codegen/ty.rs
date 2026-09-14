@@ -10,8 +10,8 @@ use crate::codegen::ty::generic_params::resolve_cs_type_param_source;
 use hir::db::HirDatabase;
 use hir::{Adt, BuiltinType, GenericDef, ItemContainer, Module, Symbol, Trait, Type};
 use hir::{HasContainer, HasCrate, sym};
+use itertools::Either;
 use ra_internal::*;
-use std::collections::HashSet;
 use std::iter;
 use tracing::*;
 
@@ -374,12 +374,17 @@ impl<'db> CodeGenerator<'db> {
     pub fn register_special_impls(&self, params: &[hir::GenericParam]) {
         let db = self.db;
 
-        for param in generic_types(params) {
-            if param.is_implicit(db) && param.name(db) == sym::Self_ {
-                continue;
-            }
-
-            match self.special_type_param(param) {
+        for (param, target_ty) in generic_types(params)
+            .filter(|param| !param.is_implicit(db) || param.name(db) != sym::Self_)
+            .flat_map(|param| {
+                iter::chain(
+                    [param.ty(db)],
+                    trait_assoc_types::collect_assoc_type_params(param, param.ty(db), db),
+                )
+                .map(move |assoc_type| (param, assoc_type))
+            })
+        {
+            match self.special_type_param(&target_ty) {
                 SpecialImplBounds::Func(output, parameters) => {
                     if output.is_unit() {
                         self.special_types.borrow_mut().insert(
@@ -496,19 +501,28 @@ impl<'db> SpecialImplBounds<'db> {
 }
 
 impl<'db> CodeGenerator<'db> {
-    #[tracing::instrument(skip_all, fields(param = %param.debug_display(self.db)))]
-    fn special_type_param(&self, param: hir::TypeParam) -> SpecialImplBounds<'db> {
+    #[tracing::instrument(skip_all, fields(param = %instance.debug_display(self.db)))]
+    fn special_type_param(&self, instance: &hir::Type<'db>) -> SpecialImplBounds<'db> {
         let db = self.db;
         let _scope = tracing::info_span!(
             "special_type_param",
-            param = %param.debug_display(db),
+            param = %instance.debug_display(db),
         )
         .entered();
 
+        let (param, aliases) = instance
+            .as_assoc_of_type_param(db)
+            .or_else(|| instance.as_type_param(db).map(|param| (param, vec![])))
+            .unwrap();
+
         let lang_items = LangItems::new(db, param.module(db).krate(db));
 
-        if let bounds = param
-            .trait_bounds_with_args(db)
+        let Either::Left(bounds) = param.trait_bounds_of_nested_type_with_args_self(&instance, db)
+        else {
+            return SpecialImplBounds::None;
+        };
+
+        if let bounds = bounds
             .into_iter()
             .filter(|&(t, _)| !ignored_trait(t, db))
             .collect::<Vec<_>>()
@@ -536,23 +550,21 @@ impl<'db> CodeGenerator<'db> {
                 return SpecialImplBounds::Future(output);
             }
 
-            //*
-            let param_ty = param.ty(db);
-            if !self.with_self_in_cs(trait_)
+            if aliases.is_empty()
+                && !self.with_self_in_cs(trait_)
                 && let GenericDef::Function(f) = param.parent(db)
-                && !includes_type_in_type(&f.ret_ty(db), db, &|ty| ty == &param_ty)
+                && !includes_type_in_type(&f.ret_ty(db), db, &|ty| ty == instance)
                 && f.params_without_self(db)
                     .iter()
-                    .any(|p| includes_type_in_type(p.ty(), db, &|ty| ty == &param_ty))
+                    .any(|p| includes_type_in_type(p.ty(), db, &|ty| ty == instance))
             // TODO: consider generic params
             {
                 //self.includes_type_in_generic_params_cs_constraints()
                 if param.name(db).as_str() == "H" {
                     print!("");
                 }
-                return SpecialImplBounds::ArgOnlyTrait(param_ty);
+                return SpecialImplBounds::ArgOnlyTrait(instance.clone());
             }
-            // */
         }
 
         SpecialImplBounds::None

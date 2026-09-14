@@ -72,7 +72,7 @@ impl<'db> CodeGenerator<'db> {
                 continue;
             }
 
-            if !self.special_type_param(param).is_special_impl() {
+            if !self.special_type_param(&param.ty(db)).is_special_impl() {
                 type_params.push(CsTypeParamSource::TypeParam(index));
                 if (param.trait_bounds_with_args(db).iter()).any(|&(t, _)| t.needs_statics(db)) {
                     type_params.push(CsTypeParamSource::TraitStaticTypeParam(index));
@@ -89,6 +89,10 @@ impl<'db> CodeGenerator<'db> {
                     .collect::<Vec<_>>();
 
                 assert_eq!(param_instance, param);
+
+                if self.special_type_param(&instance).is_special_impl() {
+                    continue;
+                }
 
                 type_params.push(CsTypeParamSource::AliasOfParam(index, aliases.clone()));
 
