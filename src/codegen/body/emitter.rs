@@ -108,6 +108,9 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
 
 impl<'g, 'db> EirEmitter<'g, 'db> {
     fn alloc_binding_ast(&self, local: &Local<'db>) -> String {
+        if let Some(local) = self.locals.borrow().get(&local) {
+            return local.clone();
+        }
         let rust_name = local.name(self.db).as_str().to_string();
         let mut name_counts = self.name_counts.borrow_mut();
         let count = name_counts.entry(rust_name.clone()).or_insert(0);
