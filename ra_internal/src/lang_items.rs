@@ -188,6 +188,7 @@ lang_item_wrapper! {
         Default: Trait,
 
         Iterator: Trait,
+        IteratorItem: TypeAlias,
 
         OwnedBox: Struct, // alloc::boxed::Box
         String: Struct,

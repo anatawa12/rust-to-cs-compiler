@@ -63,7 +63,8 @@ fn map_impl_to_adt<'db>(
             generic_args[arg_as_impl_type_param.param_index(db)] = Some(
                 variant_or_none!(adt_args[i], hir::GenericParam::TypeParam)
                     .unwrap()
-                    .ty(db),
+                    .ty(db)
+                    .with_owner(impl_),
             )
         }
     }
