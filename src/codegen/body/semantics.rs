@@ -129,19 +129,33 @@ impl<T: Clone + Into<eir::Pat>> NodeWithLocation<NodeWithLocationEirPat> for T {
 impl<'db> EirSemantics<'db> {
     #[track_caller]
     pub fn type_of_expr(&self, expr: &eir::Expr) -> hir::TypeInfo<'db> {
+        self.type_of_expr_impl(expr).unwrap()
+    }
+
+    #[track_caller]
+    pub fn type_of_expr_opt(&self, expr: &eir::Expr) -> Option<hir::TypeInfo<'db>> {
+        self.type_of_expr_impl(expr).ok()
+    }
+
+    #[track_caller]
+    fn type_of_expr_impl(&self, expr: &eir::Expr) -> Result<hir::TypeInfo<'db>, String> {
         match expr.node_info() {
             eir::NodeInfo::Ast(expr) => self
                 .hir
                 .type_of_expr(&expr)
-                .unwrap_or_else(|| panic!("unknown type expr at {}", self.location(&expr))),
-            eir::NodeInfo::None => panic!("no type for expr info"),
+                .ok_or_else(|| format!("unknown type expr at {}", self.location(&expr))),
+            eir::NodeInfo::None => Err("no type for expr info".to_string()),
         }
     }
-    #[track_caller]
-    pub fn type_of_expr_opt(&self, expr: &eir::Expr) -> Option<hir::TypeInfo<'db>> {
-        match expr.node_info() {
-            eir::NodeInfo::Ast(expr) => self.hir.type_of_expr(&expr),
-            eir::NodeInfo::None => None,
+
+    pub fn is_divergent(&self, expr: &eir::Expr) -> bool {
+        if let eir::Expr::RawCodeExpr(raw) = expr
+            && raw.divergent()
+        {
+            true
+        } else {
+            self.type_of_expr_opt(expr)
+                .is_some_and(|x| x.original().is_never())
         }
     }
 

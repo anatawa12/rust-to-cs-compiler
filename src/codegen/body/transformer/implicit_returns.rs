@@ -212,13 +212,24 @@ fn visit_block_like(
             })));
         }
     } else {
-        statements.push(Stmt::from(new_eir_node!(ExprStmt {
-            expr: Expr::ReturnExpr(new_eir_node!(ReturnExpr {
-                expr: None,
+        if statements.iter().any(|x| {
+            if let Stmt::ExprStmt(expr) = x {
+                visitor.eir_sem.is_divergent(&expr.expr())
+            } else {
+                false
+            }
+        }) {
+            trace!("generating unnecessarily orphan return");
+        } else {
+            trace!("generating orphan return");
+            statements.push(Stmt::from(new_eir_node!(ExprStmt {
+                expr: Expr::ReturnExpr(new_eir_node!(ReturnExpr {
+                    expr: None,
+                    node_info: NodeInfo::None,
+                })),
                 node_info: NodeInfo::None,
-            })),
-            node_info: NodeInfo::None,
-        })));
+            })));
+        }
     }
     *statements_stmts = statements.into();
 }
