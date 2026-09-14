@@ -852,13 +852,5 @@ pub fn is_omit_trait_assoc_type(db: &dyn HirDatabase, alias: hir::TypeAlias) -> 
     if trait_.name(db).symbol() == &sym::IntoIterator && alias.name(db).symbol() == &sym::IntoIter {
         return true;
     }
-    if trait_.name(db).as_str() == "IoTrait"
-        && matches!(
-            alias.name(db).as_str(),
-            "DirEntry" | "ReadDirStream" | "FileStream"
-        )
-    {
-        return true;
-    }
     false
 }
