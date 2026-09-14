@@ -637,7 +637,15 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
     fn emit_expr_str_ast_inner(&self, expr: &eir::Expr, statement: bool) -> Code {
         match expr {
             //Expr::Missing => "/* missing */default!".into(),
-            eir::Expr::Literal(lit) => self.emit_literal_ast(lit),
+            eir::Expr::Literal(lit) => {
+                let literal = self.emit_literal_ast(lit);
+                if let Some(ty) = self.eir_sem.type_of_expr_opt(expr) {
+                    let ty = self.rust_type_to_cs(&ty.adjusted());
+                    code!("((", ty, ")", literal, ")")
+                } else {
+                    literal
+                }
+            }
             eir::Expr::PathExpr(path) => match self.eir_sem.resolve_path_with_subst(path.path()) {
                 None => {
                     eprintln!(
