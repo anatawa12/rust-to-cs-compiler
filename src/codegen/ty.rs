@@ -411,6 +411,17 @@ impl<'db> CodeGenerator<'db> {
                         );
                     }
                 }
+                SpecialImplBounds::Iterator(output) => {
+                    self.special_types.borrow_mut().insert(
+                        param,
+                        Box::new(move |this| {
+                            generic_args(
+                                "System.Collections.Generic.IEnumerator".to_string(),
+                                [this.rust_type_to_cs(&output)],
+                            )
+                        }),
+                    );
+                }
                 SpecialImplBounds::Future(output) => {
                     self.special_types.borrow_mut().insert(
                         param,
@@ -491,6 +502,7 @@ enum SpecialImplBounds<'db> {
     None,
     Func(Type<'db>, Vec<Type<'db>>),
     Future(Type<'db>),
+    Iterator(Type<'db>),
     ArgOnlyTrait(Type<'db>),
 }
 
@@ -548,6 +560,14 @@ impl<'db> CodeGenerator<'db> {
                     .expect("No output for fn");
 
                 return SpecialImplBounds::Future(output);
+            } else if Some(trait_) == lang_items.Iterator() {
+                assert_eq!(args.len(), 1); // one for self
+                let self_ty = &args[0];
+                let output = self_ty
+                    .normalize_trait_assoc_type(db, &args[1..], lang_items.IteratorItem().unwrap())
+                    .expect("No output for fn");
+
+                return SpecialImplBounds::Iterator(output);
             }
 
             if aliases.is_empty()

@@ -70,6 +70,9 @@ impl<'db> CodeGenerator<'db> {
         if let Some(future) = lang_items.Future() {
             trait_first_traits.push(future);
         }
+        if let Some(iterator) = lang_items.Iterator() {
+            trait_first_traits.push(iterator);
+        }
         eprintln!("trait_first_traits: ");
         for &trait_ in &trait_first_traits {
             eprintln!("  {}", trait_.debug_display(db));
