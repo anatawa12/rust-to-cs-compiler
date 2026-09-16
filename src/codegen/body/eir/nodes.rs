@@ -470,9 +470,9 @@ def_eir!(
     #[common_info_ast_ty = NoNode]
     #[manual_construct]
     pub struct SlicePatComponents {
-        prefix: Vec<Pat>,
+        prefix: ChildrenContainer<Pat>,
         slice: Option<Pat>,
-        suffix: Vec<Pat>,
+        suffix: ChildrenContainer<Pat>,
     }
 );
 
@@ -481,9 +481,9 @@ impl LowerToEir for ast::SlicePatComponents {
 
     fn lower_to_eir(self, ctx: &LowerToEirCtx) -> SlicePatComponents {
         new_eir_node!(SlicePatComponents {
-            prefix: ctx.lower(self.prefix.clone()),
+            prefix: ctx.lower(self.prefix.clone()).into(),
             slice: ctx.lower(self.slice.clone()),
-            suffix: ctx.lower(self.suffix.clone()),
+            suffix: ctx.lower(self.suffix.clone()).into(),
             node_info: NodeInfo::None,
         })
     }

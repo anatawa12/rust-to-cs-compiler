@@ -1723,10 +1723,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 assert!(components.slice().is_none());
                 code!(
                     "[",
-                    join(
-                        components.prefix().iter().map(|p| self.emit_pattern_ast(p)),
-                        ","
-                    ),
+                    join(components.prefix().map(|p| self.emit_pattern_ast(p)), ","),
                     "]"
                 )
             }
@@ -1845,9 +1842,9 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
             eir::Pat::RestPat(_) => {}
             eir::Pat::SlicePat(pat) => {
                 let components = pat.components();
-                (components.prefix().iter())
+                (components.prefix())
                     .for_each(|pat| self.collect_bindings_recursive_ast(pat, result));
-                (components.suffix().iter())
+                (components.suffix())
                     .for_each(|pat| self.collect_bindings_recursive_ast(pat, result));
             }
             eir::Pat::TuplePat(pat) => pat
