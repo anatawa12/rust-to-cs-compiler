@@ -24,6 +24,10 @@ impl<T> ChildrenContainer<T> {
     pub fn into_vec(self) -> Vec<T> {
         self.0.into_vec()
     }
+
+    pub fn as_mut(&mut self) -> &mut [T] {
+        self.0.as_mut()
+    }
 }
 
 impl<'a, T> Iterator for Children<'a, T> {

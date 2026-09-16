@@ -1,6 +1,6 @@
 use crate::codegen::CodeGenerator;
 use crate::codegen::body::eir;
-use crate::codegen::body::eir::EirNode;
+use crate::codegen::body::eir::{ChildrenContainer, EirNode};
 use crate::new_eir_node;
 
 trait ReplaceDefault {
@@ -35,6 +35,12 @@ impl ReplaceDefault for eir::Stmt {
             })),
             node_info: eir::NodeInfo::None,
         }))
+    }
+}
+
+impl<T> ReplaceDefault for ChildrenContainer<T> {
+    fn replace_default() -> Self {
+        vec![].into()
     }
 }
 
@@ -78,8 +84,13 @@ macro_rules! def_transformer {
     };
 }
 
+fn take_eir<T: ReplaceDefault>(value: &mut T) -> T {
+    std::mem::replace(value, ReplaceDefault::replace_default())
+}
+
 mod expand_macro_like_functions;
 mod implicit_returns;
+mod match_or_pattern_definition;
 
 pub fn transform(cg: &CodeGenerator, node: &mut impl EirNode) {
     macro_rules! accept {
@@ -90,4 +101,6 @@ pub fn transform(cg: &CodeGenerator, node: &mut impl EirNode) {
 
     accept!(implicit_returns::ImplicitReturns);
     accept!(expand_macro_like_functions::ExpandMacroLikeFunctions);
+
+    accept!(match_or_pattern_definition::MatchOrPatternDefinitions);
 }
