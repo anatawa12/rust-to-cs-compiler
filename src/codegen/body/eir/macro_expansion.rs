@@ -217,7 +217,49 @@ impl<'g, 'db> LowerToEirCtx<'g, 'db> {
             }
         } else if Some(macro_) == self.cg.lang_items.lazy_static() {
             // TODO? consider generating static initializer pattern?
-            raw_code_expr!("/* lazy_static placeholder */")
+            let parser = &mut MacroParser::new(self.cg, &tt);
+
+            let mut stmts: Vec<eir::Stmt> = vec![];
+
+            while !parser.is_end() {
+                assert!(parser.take_token(T![static]), "static expected");
+                assert!(parser.take_token(T![ref]), "static ref expected");
+                let ident = parser.take_token_value(T![ident]).expect("ident");
+                assert!(parser.take_token(T![:]), "expected : after ident");
+                // skip type
+                let ty = parser
+                    .next_type()
+                    .expect("static ref ident: ty = expr; expected");
+                assert!(parser.take_token(T![=]), "expected = after type");
+                let expr = parser
+                    .next_expr()
+                    .expect("static ref ident: ty = expr; expected");
+                let _semi = parser
+                    .take_token_value(T![;])
+                    .expect("static ref ident: ty = expr; expected");
+
+                let name = self
+                    .cg
+                    .eir_sem
+                    .descend_into_macros(ident)
+                    .into_iter()
+                    .find_map(|token| token.parent_ancestors().find_map(eir::Name::cast))
+                    .expect("static ref ident: ty = expr; ident is not Name");
+
+                stmts.push(From::from(new_eir_node!(eir::Static {
+                    name,
+                    body: self.lower(expr),
+                    ty,
+                    node_info: eir::NodeInfo::None,
+                    place: macro_expr.syntax().clone(),
+                })))
+            }
+
+            From::from(new_eir_node!(eir::MacroStmts {
+                statements: stmts.into(),
+                tail_expr: None,
+                node_info: eir::NodeInfo::None,
+            }))
         } else if Some(macro_) == self.cg.lang_items.try_join() {
             let parser = &mut MacroParser::new(self.cg, &tt);
 
@@ -396,6 +438,67 @@ impl<'g, 'db, I: Iterator<Item = TokenTreeElement>> MacroParser<'g, 'db, I> {
                 })
             })
             .last();
+        self.descend_to_token(first, last)
+    }
+
+    pub fn next_type(&mut self) -> Option<ast::Type> {
+        let first = self.next()?;
+        let mut angle_nest = 0;
+        let last = (self.iterator)
+            .peeking_take_while(|x| {
+                if let TokenTreeElement::Token(t) = x {
+                    match t.kind() {
+                        T![<] => {
+                            angle_nest += 1;
+                            return true;
+                        }
+                        T![>] => {
+                            assert!(angle_nest > 0);
+                            angle_nest -= 1;
+                            return true;
+                        }
+                        T![>>] => {
+                            assert!(angle_nest > 1, "token splitting not supported");
+                            angle_nest -= 2;
+                            return true;
+                        }
+                        _ => {}
+                    }
+                }
+                if angle_nest != 0 {
+                    return true;
+                }
+
+                match x {
+                    TokenTreeElement::Node(n) if n.l_curly_token().is_some() => false,
+                    TokenTreeElement::Node(n) if n.l_brack_token().is_some() => false,
+                    TokenTreeElement::Token(t) => match t.kind() {
+                        T![=>]
+                        | T![,]
+                        | T![=]
+                        | T![|]
+                        | T![;]
+                        | T![:]
+                        | T![>]
+                        | T![>>]
+                        | T!['[']
+                        | T!['{']
+                        | T![as]
+                        | T![where] => false,
+                        _ => true,
+                    },
+                    _ => true,
+                }
+            })
+            .last();
+        self.descend_to_token(first, last)
+    }
+
+    fn descend_to_token<T: AstNode>(
+        &self,
+        first: TokenTreeElement,
+        last: Option<TokenTreeElement>,
+    ) -> Option<T> {
         let first_token = first_token(first.clone());
         let last_token = last.map(last_token);
         let first_descenders = self.cg.eir_sem.descend_into_macros(first_token.clone());
@@ -403,20 +506,11 @@ impl<'g, 'db, I: Iterator<Item = TokenTreeElement>> MacroParser<'g, 'db, I> {
             .clone()
             .map(|token| self.cg.eir_sem.descend_into_macros(token));
         let last_descenders = last_descenders.as_ref().unwrap_or(&first_descenders);
-        Some(
-            (first_descenders.iter())
-                .find_map(|tok| {
-                    tok.parent_ancestors()
-                        .filter(|x| last_descenders.contains(&x.last_token().unwrap()))
-                        .find_map(ast::Expr::cast)
-                })
-                .unwrap_or_else(|| {
-                    panic!(
-                        "failed to resolve expr {}, {first:?}",
-                        self.cg.eir_sem.location(&first_token.parent().unwrap()),
-                    )
-                }),
-        )
+        (first_descenders.iter()).find_map(|tok| {
+            tok.parent_ancestors()
+                .filter(|x| last_descenders.contains(&x.last_token().unwrap()))
+                .find_map(T::cast)
+        })
     }
 }
 

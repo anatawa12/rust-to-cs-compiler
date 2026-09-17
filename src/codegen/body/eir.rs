@@ -144,6 +144,12 @@ impl From<NoNode> for ast::Expr {
     }
 }
 
+impl From<NoNode> for ast::Stmt {
+    fn from(value: NoNode) -> Self {
+        match value {}
+    }
+}
+
 #[derive(Clone)]
 pub struct AnySyntax(syntax::SyntaxNode);
 impl ast::AstNode for AnySyntax {

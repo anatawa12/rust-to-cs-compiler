@@ -38,15 +38,23 @@ pub struct EirEmitter<'g, 'db> {
 
 /// Items emitting are deferred.
 /// Caller must generate those items.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 pub enum ItemInBody {
     Function(hir::Function),
     Adt(hir::Adt),
     Const(hir::Const),
     Impl(hir::Impl),
+    Static(hir::Static),
+    EirStatic(EirStatic),
 }
 
-impl_from!(hir::Function, hir::Adt(hir::Enum, hir::Struct), hir::Impl, hir::Const for ItemInBody);
+#[derive(Debug, Clone)]
+pub struct EirStatic {
+    pub node: std::sync::Arc<eir::Static>,
+    pub module: hir::Module,
+}
+
+impl_from!(hir::Function, hir::Adt(hir::Enum, hir::Struct), hir::Impl, hir::Const, hir::Static, EirStatic for ItemInBody);
 
 impl hir::HasContainer for ItemInBody {
     fn container(&self, db: &dyn HirDatabase) -> hir::ItemContainer {
@@ -56,7 +64,9 @@ impl hir::HasContainer for ItemInBody {
             ItemInBody::Adt(hir::Adt::Struct(i)) => hir::HasContainer::container(i, db),
             ItemInBody::Adt(hir::Adt::Enum(i)) => hir::HasContainer::container(i, db),
             ItemInBody::Adt(hir::Adt::Union(i)) => hir::HasContainer::container(i, db),
+            ItemInBody::Static(i) => hir::HasContainer::container(i, db),
             ItemInBody::Impl(i) => hir::ItemContainer::Module(i.module(db)),
+            ItemInBody::EirStatic(s) => hir::ItemContainer::Module(s.module),
         }
     }
 }
@@ -613,6 +623,22 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                     let c = self.eir_sem.to_def(c).unwrap();
                     out.wln("// const");
                     self.add_deferred(c);
+                }
+                eir::Stmt::Item(ast::Item::Static(s)) => {
+                    let s = self.eir_sem.to_def(s).unwrap();
+                    out.wln("// static");
+                    self.add_deferred(s);
+                }
+                eir::Stmt::Static(eir_static) => {
+                    let block = (eir_static.place().first_token().unwrap().parent_ancestors())
+                        .find_map(<ast::BlockExpr as syntax::AstNode>::cast)
+                        .expect("not in block");
+                    out.wln("// static");
+                    let block_module = self.eir_sem.module_of_block(&block);
+                    self.add_deferred(EirStatic {
+                        node: eir_static.clone().into(),
+                        module: block_module,
+                    });
                 }
                 // TODO: impl
                 // TODO: use, type alias: remove with comment?

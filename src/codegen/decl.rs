@@ -9,6 +9,7 @@ use itertools::Itertools;
 use ra_internal::function::FunctionExt;
 use ra_internal::*;
 use std::collections::HashMap;
+use syntax::ast;
 
 /// Generates C# type declarations from Rust HIR types.
 impl<'db> CodeGenerator<'db> {
@@ -288,7 +289,7 @@ impl<'db> CodeGenerator<'db> {
         };
 
         let mut module_path = vec![];
-        for &item in deferred {
+        for item in deferred {
             module_path.clear();
             let hir::ItemContainer::Module(mut mod_) = item.container(self.db) else {
                 panic!("deferred item is not a module");
@@ -320,7 +321,7 @@ impl<'db> CodeGenerator<'db> {
                 path = &mut path.children[index];
             }
 
-            path.items.push(item);
+            path.items.push(item.clone());
         }
 
         assert!(root.items.is_empty());
@@ -330,8 +331,8 @@ impl<'db> CodeGenerator<'db> {
         }
 
         let mut adt_impls = HashMap::<_, Vec<_>>::default();
-        let all_impls = deferred.iter().flat_map(|&item| match item {
-            ItemInBody::Impl(impl_) => vec![impl_],
+        let all_impls = deferred.iter().flat_map(|item| match item {
+            &ItemInBody::Impl(impl_) => vec![impl_],
             ItemInBody::Adt(adt) => adt.module(self.db).impl_defs(self.db),
             _ => vec![],
         });
@@ -362,21 +363,27 @@ impl<'db> CodeGenerator<'db> {
             out.wln(format!("public static partial class {} {{", module_name,));
             out.indent();
             for item in &module.items {
-                match *item {
-                    ItemInBody::Function(f) => {
+                match item {
+                    &ItemInBody::Function(f) => {
                         this.emit_function(out, f, None);
                     }
-                    ItemInBody::Adt(adt) => {
+                    &ItemInBody::Adt(adt) => {
                         this.emit_adt_with_impls(
                             out,
                             adt,
                             adt_impls.get(&adt).map(Vec::as_slice).unwrap_or(&[]),
                         );
                     }
-                    ItemInBody::Const(c) => {
+                    &ItemInBody::Const(c) => {
                         this.emit_const(out, c);
                     }
+                    &ItemInBody::Static(s) => {
+                        this.emit_static(out, s);
+                    }
                     ItemInBody::Impl(_) => {}
+                    ItemInBody::EirStatic(s) => {
+                        this.emit_eir_static(out, s);
+                    }
                 }
             }
             for child in &module.children {
@@ -500,6 +507,25 @@ impl<'db> CodeGenerator<'db> {
             .wln(";");
 
         self.deferred(out, emitter.deferred(), s.module(self.db));
+    }
+
+    #[tracing::instrument(skip(self, out, s))]
+    pub fn emit_eir_static(&self, out: &mut Code, s: &crate::codegen::body::EirStatic) {
+        let ty = self.rust_type_to_cs(&self.eir_sem.resolve_type(s.node.ty()).unwrap());
+        let name = names::static_name(s.node.name().text());
+
+        let mut emitter = EirEmitter::new(self, false, CsFunctionType::Normal);
+        let expr = emitter.emit_expr(s.node.body().clone());
+
+        out.w("public static readonly ")
+            .w(ty)
+            .w(" ")
+            .w(name)
+            .w(" = ")
+            .w(expr)
+            .wln(";");
+
+        self.deferred(out, emitter.deferred(), s.module);
     }
 }
 

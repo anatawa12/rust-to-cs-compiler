@@ -97,6 +97,7 @@ clone_eir_access!(super::UnaryOp);
 clone_eir_access!(super::RangeOp);
 clone_eir_access!(super::BlockModifier);
 clone_eir_access!(super::LiteralKind);
+clone_eir_access!(syntax::SyntaxNode);
 
 impl<'a, T: EirAccessType<'a> + 'a> EirAccessType<'a> for Option<T> {
     type Result = Option<T::Result>;

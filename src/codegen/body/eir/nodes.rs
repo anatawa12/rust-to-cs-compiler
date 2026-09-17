@@ -336,6 +336,8 @@ def_eir!(
         LetStmt,
         #[manual_construct]
         Item,
+        #[manual_construct]
+        Static,
     }
 
     fn lower_to_eir(self, ctx: &LowerToEirCtx) -> Eir {
@@ -365,6 +367,25 @@ def_eir!(
         block_expr: BlockExpr,
     }
 );
+
+def_eir!(
+    #[common_info_ast_ty = NoNode]
+    #[manual_construct]
+    pub struct Static {
+        name: Name,
+        ty: ast::Type,
+        body: Expr,
+        place: syntax::SyntaxNode,
+    }
+);
+
+impl std::fmt::Debug for Static {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Static")
+            .field("name", &self.name().text())
+            .finish_non_exhaustive()
+    }
+}
 
 #[derive(Clone)]
 pub enum FormatArgsSegment {

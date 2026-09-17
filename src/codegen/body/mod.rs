@@ -4,5 +4,6 @@ mod semantics;
 mod transformer;
 
 pub use emitter::EirEmitter;
+pub use emitter::EirStatic;
 pub use emitter::ItemInBody;
 pub use semantics::EirSemantics;

@@ -239,6 +239,13 @@ impl<'db> EirSemantics<'db> {
     pub fn resolve_type(&self, ty: &ast::Type) -> Option<hir::Type<'db>> {
         self.hir.resolve_type(ty)
     }
+
+    pub fn module_of_block(&self, block: &ast::BlockExpr) -> hir::Module {
+        self.hir
+            .scope(syntax::AstNode::syntax(block))
+            .unwrap()
+            .module()
+    }
 }
 
 impl<'db> EirSemantics<'db> {
@@ -293,6 +300,7 @@ to_def_hir!(ast::Enum => hir::Enum);
 to_def_hir!(ast::Struct => hir::Struct);
 to_def_hir!(ast::Impl => hir::Impl);
 to_def_hir!(ast::Const => hir::Const);
+to_def_hir!(ast::Static => hir::Static);
 
 impl ToDef for eir::IdentPat {
     type Result<'db> = hir::Local<'db>;
