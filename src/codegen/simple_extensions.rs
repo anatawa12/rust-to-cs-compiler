@@ -273,6 +273,8 @@ impl TypeParamExt for hir::TypeParam {
                     }
                 }
 
+                traits.retain(|&(trait_, _)| !crate::codegen::ty::ignored_trait(trait_, db));
+
                 Either::Left(traits)
             }
             Either::Right(t) => Either::Right(t),
