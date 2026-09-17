@@ -176,6 +176,8 @@ our_lang_items! {
 
     // futures
     try_join = futures::try_join as Macro;
+    TryFuture = futures::TryFuture as Trait;
+    FusedFuture = futures::FusedFuture as Trait;
 }
 
 lang_item_wrapper! {

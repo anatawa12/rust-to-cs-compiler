@@ -552,7 +552,10 @@ impl<'db> CodeGenerator<'db> {
                     .expect("No output for fn");
 
                 return SpecialImplBounds::Func(output, parameters);
-            } else if Some(trait_) == lang_items.Future() {
+            } else if Some(trait_) == lang_items.Future()
+                || Some(trait_) == lang_items.TryFuture()
+                || Some(trait_) == lang_items.FusedFuture()
+            {
                 assert_eq!(args.len(), 1); // one for self
                 let self_ty = &args[0];
                 let output = self_ty
