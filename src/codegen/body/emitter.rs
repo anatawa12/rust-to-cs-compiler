@@ -640,8 +640,15 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                         module: block_module,
                     });
                 }
-                // TODO: impl
-                // TODO: use, type alias: remove with comment?
+                eir::Stmt::Item(ast::Item::Use(_)) => {
+                    out.wln("// use ****");
+                }
+                eir::Stmt::Item(ast::Item::MacroDef(_)) => {
+                    out.wln("// macro ");
+                }
+                eir::Stmt::Item(ast::Item::MacroRules(_)) => {
+                    out.wln("// macro_rules!");
+                }
                 eir::Stmt::Item(item) => {
                     out.wln(format!("/* unsupported inner item: {:?} */", item));
                 }
