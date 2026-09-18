@@ -65,40 +65,72 @@ impl MutatingEirVisitor for ExpandMacroLikeFunctions<'_, '_> {
 
         if let Stmt::ExprStmt(expr_stmt) = stmt
             && let expr = &mut expr_stmt.as_mut().expr
+            // is a call expr
             && let Expr::CallExpr(call_expr) = expr
+            // is non-trait method on some ADT
             && let Expr::PathExpr(path) = call_expr.expr()
             && let Some(hir::PathResolution::Def(hir::ModuleDef::Function(f))) =
-                self.eir_sem.resolve_path(path.path())
-            && f.name(db).symbol().as_str() == "push"
+            self.eir_sem.resolve_path(path.path())
+            && let _ = {
+            if f.name(db).symbol().as_str() == "clear" {
+                eprint!("");
+            }
+        }
             && let hir::ItemContainer::Impl(impl_) = f.container(db)
-            && let Some(hir::Adt::Struct(struct_)) = impl_.self_ty(db).as_adt()
+            && let Some(f_adt) = impl_.self_ty(db).as_adt()
             && let None = impl_.trait_(db)
-            && (Some(struct_) == self.lang_items.OsString()
-                || Some(struct_) == self.lang_items.String())
+            // is `variable.call()`
             && let arg_list = call_expr.arg_list()
             && let receiver = arg_list.args().nth(0).unwrap()
             && let Expr::PathExpr(receiver_path) = receiver
             && let Some(hir::PathResolution::Local(receiver_var)) =
                 self.eir_sem.resolve_path(receiver_path.path())
-            && let Some(hir::Adt::Struct(struct_of_reciver_var)) = receiver_var.ty(db).as_adt()
-            && struct_of_reciver_var == struct_
+            && let Some(receiver_adt) = receiver_var.ty(db).as_adt()
+            // there is no type change because of deref coleace
+            && receiver_adt == f_adt
         {
-            replace_node!(
-                expr as Expr::CallExpr(call_expr) = {
-                    let method_call = call_expr.into_inner();
-                    let mut args = method_call.arg_list.into_inner().args.into_iter();
-                    let receiver = args.next().unwrap();
-                    let operand = args.next().unwrap();
-                    Expr::from(new_eir_node!(BinExpr {
-                        lhs: receiver,
-                        rhs: operand,
-                        op_kind: BinaryOp::Assignment {
-                            op: Some(ArithOp::Add)
-                        },
-                        node_info: method_call.node_info.cast(),
-                    }))
-                }
-            );
+            if f.name(db).symbol().as_str() == "push"
+                && (Some(f_adt) == self.lang_items.OsString().map(hir::Adt::Struct)
+                    || Some(f_adt) == self.lang_items.String().map(hir::Adt::Struct))
+            {
+                replace_node!(
+                    expr as Expr::CallExpr(call_expr) = {
+                        let method_call = call_expr.into_inner();
+                        let mut args = method_call.arg_list.into_inner().args.into_iter();
+                        let receiver = args.next().unwrap();
+                        let operand = args.next().unwrap();
+                        Expr::from(new_eir_node!(BinExpr {
+                            lhs: receiver,
+                            rhs: operand,
+                            op_kind: BinaryOp::Assignment {
+                                op: Some(ArithOp::Add)
+                            },
+                            node_info: method_call.node_info.cast(),
+                        }))
+                    }
+                );
+            } else if f.name(db).symbol().as_str() == "clear"
+                && (Some(f_adt) == self.lang_items.OsString().map(hir::Adt::Struct)
+                    || Some(f_adt) == self.lang_items.String().map(hir::Adt::Struct))
+            {
+                replace_node!(
+                    expr as Expr::CallExpr(call_expr) = {
+                        let method_call = call_expr.into_inner();
+                        let mut args = method_call.arg_list.into_inner().args.into_iter();
+                        let receiver = args.next().unwrap();
+                        Expr::from(new_eir_node!(BinExpr {
+                            lhs: receiver,
+                            rhs: Expr::from(new_eir_node!(RawCodeExpr {
+                                code: r##""""##.into(),
+                                divergent: false,
+                                node_info: NodeInfo::None,
+                            })),
+                            op_kind: BinaryOp::Assignment { op: None },
+                            node_info: method_call.node_info.cast(),
+                        }))
+                    }
+                );
+            }
         }
 
         stmt.accept_children_mut(self)
