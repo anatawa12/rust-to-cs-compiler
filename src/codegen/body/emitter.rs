@@ -1003,9 +1003,9 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                     self.emit_expr_str_ast(cast_expr.expr())
                 )
             }
-            eir::Expr::IfExpr(if_expr) => self.emit_if_expr_as_expr(if_expr),
+            eir::Expr::IfExpr(if_expr) => self.emit_if_expr_as_expr(if_expr, expr),
             eir::Expr::BlockExpr(block_expr) => match block_expr.modifier() {
-                None => self.emit_simple_block_as_expr(block_expr),
+                None => self.emit_simple_block_as_expr(block_expr, expr),
                 Some(eir::BlockModifier::Async) => {
                     let mut body_code = Code::new();
                     let return_type = (self.eir_sem.type_of_expr(expr))
@@ -1395,36 +1395,40 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
         }
     }
 
-    fn emit_if_expr_as_expr(&self, if_expr: &eir::IfExpr) -> Code {
+    fn emit_if_expr_as_expr(&self, if_expr: &eir::IfExpr, expr: &eir::Expr) -> Code {
         match if_expr.else_branch() {
             Some(eir::ElseBranch::Block(else_block)) => {
                 let cond = self.emit_expr_str_ast(if_expr.condition());
-                let then_s = self.emit_simple_block_as_expr(if_expr.then_branch());
-                let else_s = self.emit_simple_block_as_expr(else_block);
+                let then_s = self.emit_simple_block_as_expr(if_expr.then_branch(), expr);
+                let else_s = self.emit_simple_block_as_expr(else_block, expr);
                 code!("(", cond, " ? ", then_s, " : ", else_s, ")")
             }
             Some(eir::ElseBranch::IfExpr(if_expr)) => {
                 let cond = self.emit_expr_str_ast(if_expr.condition());
-                let then_s = self.emit_simple_block_as_expr(if_expr.then_branch());
-                let else_s = self.emit_if_expr_as_expr(if_expr);
+                let then_s = self.emit_simple_block_as_expr(if_expr.then_branch(), expr);
+                let else_s = self.emit_if_expr_as_expr(if_expr, expr);
                 code!("(", cond, " ? ", then_s, " : ", else_s, ")")
             }
             None => {
                 let cond = self.emit_expr_str_ast(if_expr.condition());
-                let then_s = self.emit_simple_block_as_expr(if_expr.then_branch());
+                let then_s = self.emit_simple_block_as_expr(if_expr.then_branch(), expr);
                 code!("(", cond, " ? ", then_s, " : ValueTuple)")
             }
         }
     }
 
-    fn emit_simple_block_as_expr(&self, block_expr: &eir::BlockExpr) -> Code {
+    fn emit_simple_block_as_expr(&self, block_expr: &eir::BlockExpr, expr: &eir::Expr) -> Code {
         if block_expr.statements().count() == 0 {
             if let Some(t) = block_expr.tail_expr() {
                 return self.emit_expr_str_ast(t);
             }
             return "default!".into();
         }
-        "/* block expr */ default!".into()
+        code!(
+            "Dummy.Block<",
+            self.rust_type_to_cs(&self.eir_sem.type_of_expr(expr).adjusted()),
+            ">()"
+        )
     }
 
     fn emit_returning_block(&self, out: &mut Code, block_expr: &eir::BlockExpr) {
