@@ -40,6 +40,12 @@ impl MutatingEirVisitor for ImplicitReturns<'_, '_> {
                     let _ = block_expr.accept_mut(&mut ImplicitReturnsImpl::new(self.cg));
                 }
             }
+            Expr::WhileExpr(w) => {
+                visit_non_returning_block(&mut w.as_mut().loop_body);
+            }
+            Expr::ForExpr(w) => {
+                visit_non_returning_block(&mut w.as_mut().loop_body);
+            }
             _ => {}
         }
 
@@ -77,8 +83,29 @@ impl MutatingEirVisitor for ImplicitReturns<'_, '_> {
                 }
             }
         }
+        if let Stmt::ExprStmt(expr) = stmt
+            && let Expr::BlockExpr(block_expr) = &mut expr.as_mut().expr
+        {
+            visit_non_returning_block(block_expr);
+        }
 
         stmt.accept_children_mut(self)
+    }
+}
+
+fn visit_non_returning_block(block: &mut BlockExpr) {
+    if let Some(expr) = take(&mut block.as_mut().tail_expr) {
+        let statements = &mut block.as_mut().statements;
+        replace_node!(
+            statements as stmts = {
+                let mut vec = stmts.into_vec();
+                vec.push(Stmt::ExprStmt(new_eir_node!(ExprStmt {
+                    expr,
+                    node_info: NodeInfo::None,
+                })));
+                vec.into()
+            }
+        )
     }
 }
 
