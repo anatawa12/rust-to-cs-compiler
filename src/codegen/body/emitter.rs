@@ -833,27 +833,10 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 }
             },
             eir::Expr::FieldExpr(field_expr) => {
-                //let _name = field_expr.name_ref().unwrap();
                 let receiver_part = field_expr.expr();
                 let receiver_type = self.eir_sem.type_of_expr(receiver_part);
                 let receiver = self.emit_expr_str_ast(receiver_part);
-                let adjuster = if let Some(adjusted) = receiver_type.adjusted
-                    && std::iter::successors(
-                        receiver_type.original.as_reference().map(|x| x.0),
-                        |c| c.as_reference().map(|x| x.0),
-                    )
-                    .all(|remove_ref| adjusted != remove_ref)
-                {
-                    tracing::trace!(
-                        "adjusted type {original} to {adjusted} to access {name}",
-                        original = receiver_type.original.debug_display(self.db),
-                        adjusted = adjusted.debug_display(self.db),
-                        name = field_expr.name_ref().text(),
-                    );
-                    ".m_Deref()"
-                } else {
-                    ""
-                };
+                let adjuster = self.emit_adjuster(receiver_type, field_expr.name_ref().text());
                 match self.eir_sem.resolve_field(field_expr) {
                     None => {
                         eprintln!("Unresolved field at {}", self.eir_sem.location(field_expr));
@@ -904,7 +887,20 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                             let resolved = self.resolve_function(f, generics);
                             return self.emit_call_expr(
                                 resolved,
-                                args.into_iter().map(|a| self.emit_expr_str_ast(a)),
+                                args.into_iter().enumerate().map(|(i, a)| {
+                                    let adjuster = if i == 0 {
+                                        if let Some(ty) = self.eir_sem.type_of_expr_opt(a) {
+                                            self.emit_adjuster(ty, f.name(self.db).as_str())
+                                        } else {
+                                            ""
+                                        }
+                                    } else {
+                                        ""
+                                    };
+                                    let mut code = self.emit_expr_str_ast(a);
+                                    code.w(adjuster);
+                                    code
+                                }),
                             );
                         }
                         _ => {}
@@ -1600,6 +1596,71 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 let value = args.next().unwrap();
                 code!(comment, "(", value, ")")
             }
+        }
+    }
+
+    fn emit_adjuster(&self, receiver_type: hir::TypeInfo<'db>, name: &str) -> &'static str {
+        fn ref_removed<'db>(cg: &CodeGenerator<'db>, ty: hir::Type<'db>) -> hir::Type<'db> {
+            std::iter::successors(Some(ty), |c| {
+                c.as_reference().map(|x| x.0).or_else(|| {
+                    c.as_adt_with_args().and_then(|(adt, args)| {
+                        (Some(adt) == cg.lang_items.OwnedBox().map(From::from))
+                            .then(|| { args }.remove(0))
+                            .flatten()
+                    })
+                })
+            })
+            .last()
+            .unwrap()
+        }
+
+        fn is_string<'db>(cg: &CodeGenerator<'db>, ty: &hir::Type<'db>) -> bool {
+            ty.as_adt()
+                .is_some_and(|x| Some(x) == cg.lang_items.String().map(From::from))
+                || ty
+                    .as_adt()
+                    .is_some_and(|x| Some(x) == cg.lang_items.OsString().map(From::from))
+                || ty
+                    .as_adt()
+                    .is_some_and(|x| Some(x) == cg.lang_items.OsStr().map(From::from))
+                || ty.as_builtin().is_some_and(|x| x.is_str())
+        }
+
+        fn is_slice<'db>(cg: &CodeGenerator<'db>, ty: &hir::Type<'db>) -> bool {
+            ty.as_slice().is_some()
+                || ty
+                    .as_adt()
+                    .is_some_and(|x| Some(x) == cg.lang_items.Vec().map(From::from))
+        }
+
+        fn is_path<'db>(cg: &CodeGenerator<'db>, ty: &hir::Type<'db>) -> bool {
+            ty.as_adt()
+                .is_some_and(|x| Some(x) == cg.lang_items.Path().map(From::from))
+                || ty
+                    .as_adt()
+                    .is_some_and(|x| Some(x) == cg.lang_items.PathBuf().map(From::from))
+        }
+
+        if let Some(adjusted) = receiver_type.adjusted.clone()
+            && let original_ref_removed = ref_removed(self.cg, receiver_type.original.clone())
+            && let adjusted_ref_removed = ref_removed(self.cg, adjusted.clone())
+            && original_ref_removed != adjusted_ref_removed
+            && !(is_string(self.cg, &original_ref_removed)
+                && is_string(self.cg, &adjusted_ref_removed))
+            && !(is_slice(self.cg, &original_ref_removed)
+                && is_slice(self.cg, &adjusted_ref_removed))
+            && !(is_path(self.cg, &original_ref_removed) && is_path(self.cg, &adjusted_ref_removed))
+        {
+            tracing::warn!(
+                "adjusted type {original} to {adjusted} to access {name}\n{original_debug:?}\n{adjusted_debug:?}",
+                original = receiver_type.original.debug_display(self.db),
+                adjusted = adjusted.debug_display(self.db),
+                original_debug = receiver_type.original,
+                adjusted_debug = adjusted,
+            );
+            ".m_Deref()"
+        } else {
+            ""
         }
     }
 

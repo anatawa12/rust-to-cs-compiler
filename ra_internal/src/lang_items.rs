@@ -163,6 +163,8 @@ our_lang_items! {
     OsString = std::ffi::OsString as Struct;
     IntoIterator = std::iter::IntoIterator as Trait;
     Result = std::result::Result as Enum;
+    Path = std::path::Path as Struct;
+    PathBuf = std::path::PathBuf as Struct;
 
     // log
     log_trace = log::trace as Macro;
