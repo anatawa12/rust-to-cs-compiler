@@ -577,9 +577,10 @@ impl<'db> CodeGenerator<'db> {
                 && !self.with_self_in_cs(trait_)
                 && let GenericDef::Function(f) = param.parent(db)
                 && !includes_type_in_type(&f.ret_ty(db), db, &|ty| ty == instance)
-                && f.params_without_self(db)
-                    .iter()
-                    .any(|p| includes_type_in_type(p.ty(), db, &|ty| ty == instance))
+                && f.params_without_self(db).iter().any(|p| {
+                    p.ty() == instance
+                        || p.ty().as_reference().map(|x| x.0).as_ref() == Some(instance)
+                })
             // TODO: consider generic params
             {
                 //self.includes_type_in_generic_params_cs_constraints()
