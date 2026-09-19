@@ -50,7 +50,7 @@ impl<'db> CodeGenerator<'db> {
     pub fn resolve_function(
         &self,
         f: hir::Function,
-        args: Vec<(hir::Symbol, hir::Type<'db>)>,
+        args: Vec<hir::Type<'db>>,
     ) -> ResolvedFunction<'db> {
         let (parent_args, f_args) = self.extract_generic_args(f, args);
         let db = self.db;

@@ -640,9 +640,8 @@ impl<'db> CodeGenerator<'db> {
     pub fn extract_generic_args(
         &self,
         generic_def: impl Copy + HasContainer + DebugDisplay<'db> + Into<GenericDef>,
-        args: Vec<(Symbol, Type<'db>)>,
+        args: Vec<Type<'db>>,
     ) -> (Option<Vec<Type<'db>>>, Vec<Type<'db>>) {
-        let db = self.db;
         let container = generic_def.container(self.db);
         let resolved_as_generic_def = generic_def.into();
 
@@ -675,7 +674,7 @@ impl<'db> CodeGenerator<'db> {
 
         assert_eq!(
             args.len(),
-            parent_params_len + self_params_len,
+            parent_params_len + self_params_len + implicit_args_len,
             "container: {container:?}, params: {self_params_len}, parent_params: {parent_params_len}, f: {f}",
             f = generic_def.debug_display(self.db),
         );
@@ -695,21 +694,7 @@ impl<'db> CodeGenerator<'db> {
             (parent_params, self_args)
         };
 
-        assert!(self_params.iter().zip(self_args.iter()).all(
-            |(param, (arg_symbol, _arg_type))| { param.name(self.db).symbol() == arg_symbol }
-        ));
-
-        let implicit_args = iter::repeat_n(
-            hir::Type::error(self.db, resolved_as_generic_def.module(db).krate(db)),
-            implicit_args_len,
-        );
-
-        let self_type_args = (self_args.into_iter().map(|(_, ty)| ty))
-            .chain(implicit_args)
-            .collect();
-        let parent_type_args = (parent_params.into_iter().map(|(_, ty)| ty)).collect();
-
-        (parent_def.map(|_| parent_type_args), self_type_args)
+        (parent_def.map(|_| parent_params), self_args)
     }
 
     pub fn const_path_cs(&self, const_: hir::Const) -> String {

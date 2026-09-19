@@ -688,7 +688,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                     fcode!("/* {} */", path.syntax_text())
                 }
                 Some((hir::PathResolution::Def(hir::ModuleDef::Function(f)), args)) => {
-                    let args = args.map(|x| x.types(self.db)).unwrap_or_default();
+                    let args = args.map(|x| x.all_types(self.db)).unwrap_or_default();
                     match self.resolve_function(f, args) {
                         // simple: path simply represents static or module functions
                         ResolvedFunction::Static {
@@ -891,14 +891,12 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                             );
                         }
                         Some((PathResolution::Def(ModuleDef::Function(f)), subst)) => {
-                            let generics =
-                                subst.map(|args| args.types(self.db)).unwrap_or_else(|| {
+                            let generics = subst
+                                .map(|args| args.all_types(self.db))
+                                .unwrap_or_else(|| {
                                     // this is builtin derive. all except for Hash::hash implementation
                                     if *f.name(self.db).symbol() == sym::hash {
-                                        vec![(
-                                            hir::Symbol::intern("H"),
-                                            hir::Type::error(self.db, f.krate(self.db)),
-                                        )]
+                                        vec![hir::Type::error(self.db, f.krate(self.db))]
                                     } else {
                                         vec![]
                                     }

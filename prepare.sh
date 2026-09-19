@@ -26,3 +26,4 @@ prepare_patched() {
 
 prepare_patched hir 0.0.351 \
   1c4c342b0daecbd5731fabfd053fff460cdaaff7 "PR#23352 panic when we call impls_trait for self type of builtin derive impls for generic types" \
+  e4eab3428132dcd9b621359318f52ff1fb69ecd2 "PR#23398 feat: add all_types that exposes implicit type parameters from GenericSubstitution - #23398" \
