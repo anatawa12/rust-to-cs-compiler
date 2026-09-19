@@ -1678,7 +1678,16 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 let path = path.path();
                 match self.eir_sem.resolve_path(path) {
                     Some(PathResolution::Def(ModuleDef::Const(const_))) => {
-                        code!(self.const_path_cs(const_))
+                        let evaluated = const_.eval_value(self.db).unwrap_or_else(|e| {
+                            panic!(
+                                "failed to evaluate const at {}: {e:?}",
+                                self.eir_sem.location(pat),
+                            )
+                        });
+
+                        let pat = self.emit_const_pat(evaluated);
+
+                        code!("/* const ", self.const_path_cs(const_), " */ ", pat)
                     }
                     Some(PathResolution::Def(module_def))
                         if let Some(def) = ConstructableDef::from_module_def(module_def) =>
@@ -1836,6 +1845,76 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
             let pattern_codes = patterns.iter().map(|pat| self.emit_pattern_ast(pat));
             pattern_codes.collect::<Vec<_>>()
         }
+    }
+
+    fn emit_const_pat(&self, c: ConstValue<'db>) -> Code {
+        match c.kind() {
+            ConstValueKind::Bool(b) => code!(b.to_string()),
+            ConstValueKind::Char(c) => fcode!("'{}'", c.escape_default()),
+            ConstValueKind::Int(v) => fcode!("{v}"),
+            ConstValueKind::Uint(v) => fcode!("{v}"),
+            ConstValueKind::F32(v) => fcode!("{v}f"),
+            ConstValueKind::F64(v) => fcode!("{v}"),
+            ConstValueKind::Struct(v) => self.emit_const_constructable(v.into()),
+            ConstValueKind::Enum(v) => self.emit_const_constructable(v.into()),
+            ConstValueKind::Array(ary) => {
+                code!(
+                    "[",
+                    join(ary.into_iter().map(|p| self.emit_const_pat(p)), ","),
+                    "]"
+                )
+            }
+            ConstValueKind::RawPtr(_) => panic!("Unexpected raw pointer constant"),
+            ConstValueKind::Ref(value) => match value {
+                ConstRefValue::Str(s) => fcode!("\"{}\"", s.escape_default()),
+                ConstRefValue::Slice(ary) => {
+                    code!(
+                        "[",
+                        join(ary.into_iter().map(|p| self.emit_const_pat(p)), ","),
+                        "]"
+                    )
+                }
+                ConstRefValue::Dyn(inner) => self.emit_const_pat(inner),
+                ConstRefValue::Ref(inner) => self.emit_const_pat(inner),
+            },
+            ConstValueKind::FnPtr(_) => panic!("Unexpected function pointer constant"),
+            ConstValueKind::Tuple(tuple) => {
+                code!(
+                    "(",
+                    join(tuple.into_iter().map(|(_, p)| self.emit_const_pat(p)), ","),
+                    ")"
+                )
+            }
+            ConstValueKind::Error(msg) => panic!("Unexpected error constant: {msg}"),
+        }
+    }
+
+    fn emit_const_constructable(&self, v: ConstVariantValue<'db, hir::Variant>) -> Code {
+        let db = self.db;
+        let cs_variant = self.constructable_name_cs(&Constructable::new(
+            match v.def {
+                hir::Variant::Struct(s) => s.into(),
+                hir::Variant::Union(u) => panic!(),
+                hir::Variant::EnumVariant(v) => v.into(),
+            },
+            generic_args_types(v.args, hir::GenericDef::from(v.def.adt(db))),
+        ));
+        code!(
+            cs_variant,
+            "{",
+            join(
+                v.fields(db).iter().map(|&field| {
+                    let field_value = v.get_field(field);
+                    let field_name_cs = names::field_name(field.name(db).as_str());
+                    code!(
+                        format("{field_name_cs}: "),
+                        self.emit_const_pat(field_value)
+                    )
+                }),
+                ","
+            ),
+            "}"
+        )
     }
 
     /// Collect all binding IDs in a pattern.

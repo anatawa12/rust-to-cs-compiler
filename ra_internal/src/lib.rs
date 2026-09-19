@@ -13,6 +13,7 @@ mod internal;
 
 pub mod adt;
 mod assoc_item;
+mod consts;
 mod debug;
 pub mod function;
 pub mod generic_def;
@@ -26,6 +27,7 @@ pub mod type_alias;
 mod type_param;
 
 pub use assoc_item::*;
+pub use consts::*;
 pub use debug::*;
 pub use impl_::*;
 pub use lang_items::*;

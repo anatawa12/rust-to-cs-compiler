@@ -2,6 +2,7 @@ mod resolve_assoc;
 mod type_to_string;
 
 use super::internal::{TyExt, TyFromType};
+use crate::TypeOwnerId;
 use crate::ty::type_to_string::TypeToString;
 use hir::HasContainer;
 use hir_def::{GenericParamId, HasModule, TypeAliasId};
@@ -310,4 +311,15 @@ impl<'db> TyEq<'db> {
     pub fn wrap<P: ty_eq::WrapWithTyEq>(ty: P) -> P::Wrapped {
         ty.wrap()
     }
+}
+
+pub fn generic_args_types<'db>(
+    args: GenericArgs<'db>,
+    owner: impl Into<TypeOwnerId<'db>>,
+) -> Vec<hir::Type<'db>> {
+    use crate::internal::TyFromType;
+    let owner = owner.into();
+    args.iter()
+        .filter_map(|x| Some(hir::Type::from_ty_owner(EarlyBinder::bind(x.ty()?), owner)))
+        .collect()
 }
