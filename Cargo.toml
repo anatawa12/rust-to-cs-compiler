@@ -59,3 +59,6 @@ debug = true
 
 [patch.crates-io]
 ra_ap_hir = { path = "patched/ra_ap_hir-0.0.351" }
+
+[profile.dev.package."*"]
+opt-level = 3
