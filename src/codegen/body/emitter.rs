@@ -607,7 +607,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                         for b in &bindings {
                             let cs_type = self.rust_type_to_cs(&b.ty(self.db));
                             let cs_name = self.alloc_binding_ast(b);
-                            out.wln(format!("{} {} = (default!);", cs_type, cs_name));
+                            out.wln(format!("{} {};", cs_type, cs_name));
                         }
                     }
                 }
