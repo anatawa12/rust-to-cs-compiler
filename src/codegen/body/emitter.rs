@@ -143,7 +143,15 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
     }
 
     fn label_name(&self, l: &eir::Lifetime) -> String {
-        names::camel(&l.text()[1..])
+        names::camel(&l.text()[1..]) + "_l"
+    }
+
+    fn break_label_name(&self, l: &eir::Lifetime) -> String {
+        names::camel(&l.text()[1..]) + "_b"
+    }
+
+    fn continue_label_name(&self, l: &eir::Lifetime) -> String {
+        names::camel(&l.text()[1..]) + "_c"
     }
 
     fn add_local(&self, local: Local<'db>, name: String) {
@@ -395,8 +403,16 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 out.w(label_str).wln("while (true) {");
                 out.indent();
                 self.emit_simple_block_as_stmt(out, body, option.non_last());
+                if let Some(label) = label {
+                    out.w(self.continue_label_name(&label.lifetime().unwrap()))
+                        .wln(":;");
+                }
                 out.dedent();
                 out.wln("}");
+                if let Some(label) = label {
+                    out.w(self.break_label_name(&label.lifetime().unwrap()))
+                        .wln(":;");
+                }
                 EmittedExprInfo::diverging()
             }
             eir::Expr::WhileExpr(while_expr) => {
@@ -413,8 +429,16 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                     .wln(") {");
                 out.indent();
                 self.emit_simple_block_as_stmt(out, body, option.non_last());
+                if let Some(label) = label {
+                    out.w(self.continue_label_name(&label.lifetime().unwrap()))
+                        .wln(":;");
+                }
                 out.dedent();
                 out.wln("}");
+                if let Some(label) = label {
+                    out.w(self.break_label_name(&label.lifetime().unwrap()))
+                        .wln(":;");
+                }
 
                 EmittedExprInfo::non_diverging()
             }
@@ -480,15 +504,6 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 let break_expr = break_expr.expr();
 
                 // TODO: Labelled break
-                let label_str = if let Some(label) = label {
-                    tracing::error!(
-                        "Unsupported labelled break at {}",
-                        self.eir_sem.location(expr)
-                    );
-                    format!(" /*{}*/", self.label_name(label))
-                } else {
-                    String::new()
-                };
                 if let Some(e) = break_expr {
                     tracing::error!(
                         "Unsupported valued break at {}",
@@ -498,8 +513,16 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                     out.w("/* break ").w(val).wln(" */");
                     EmittedExprInfo::non_diverging()
                 } else {
-                    out.wln(format!("break{};", label_str));
-                    EmittedExprInfo::diverging()
+                    if let Some(label) = label {
+                        out.wln(format!(
+                            "goto {}; /* label break */",
+                            self.break_label_name(label)
+                        ));
+                        EmittedExprInfo::diverging()
+                    } else {
+                        out.wln("break;");
+                        EmittedExprInfo::diverging()
+                    }
                 }
             }
             eir::Expr::ContinueExpr(continue_expr) => {
