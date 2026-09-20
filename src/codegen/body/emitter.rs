@@ -1651,7 +1651,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 && is_slice(self.cg, &adjusted_ref_removed))
             && !(is_path(self.cg, &original_ref_removed) && is_path(self.cg, &adjusted_ref_removed))
         {
-            tracing::warn!(
+            tracing::trace!(
                 "adjusted type {original} to {adjusted} to access {name}\n{original_debug:?}\n{adjusted_debug:?}",
                 original = receiver_type.original.debug_display(self.db),
                 adjusted = adjusted.debug_display(self.db),

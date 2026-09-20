@@ -71,11 +71,6 @@ impl MutatingEirVisitor for ExpandMacroLikeFunctions<'_, '_> {
             && let Expr::PathExpr(path) = call_expr.expr()
             && let Some(hir::PathResolution::Def(hir::ModuleDef::Function(f))) =
             self.eir_sem.resolve_path(path.path())
-            && let _ = {
-            if f.name(db).symbol().as_str() == "clear" {
-                eprint!("");
-            }
-        }
             && let hir::ItemContainer::Impl(impl_) = f.container(db)
             && let Some(f_adt) = impl_.self_ty(db).as_adt()
             && let None = impl_.trait_(db)

@@ -85,7 +85,7 @@ pub fn should_emit(
     db: &dyn HirDatabase,
 ) -> bool {
     let path = adt.rust_path(db);
-    eprintln!("path: {path:?} for {adt:?}");
+    //eprintln!("path: {path:?} for {adt:?}");
     !matches!(
         path.as_deref(),
         Some(

@@ -323,7 +323,7 @@ fn log_macro(
         .is_some_and(|x| x.as_token().is_some_and(|x| x.kind() == SyntaxKind::STRING))
     {
         // kv
-        eprintln!("parsing kv with {:?}", parser.peek());
+        tracing::trace!("parsing kv with {:?}", parser.peek());
         assert!(
             parser
                 .next()
