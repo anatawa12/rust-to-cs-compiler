@@ -533,16 +533,32 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
         value_cs: Code,
         else_gen: impl FnOnce(&EirEmitter<'g, 'db>, &mut Code),
     ) {
-        if let eir::Pat::IdentPat(ident_pat) = pat {
-            let local = self.eir_sem.to_def(ident_pat).unwrap();
-            let cs_local_name = self.alloc_binding_ast(&local);
-            out.w("var ").w(cs_local_name).w(" = ").w(value_cs).wln(";");
+        if self.is_cs_supported_decl(pat) {
+            out.w(self.emit_pattern_ast(pat))
+                .w(" = ")
+                .w(value_cs)
+                .wln(";");
         } else {
             let pattern_cs = self.emit_pattern_ast(pat);
 
             out.w("if (!(").w(value_cs).w(" is ").w(pattern_cs).w(")) ");
             else_gen(self, out);
         }
+    }
+
+    fn is_cs_supported_decl(&self, pat: &eir::Pat) -> bool {
+        if let eir::Pat::IdentPat(_) = pat {
+            return true;
+        } else if let eir::Pat::WildcardPat(_) = pat {
+            return true;
+        }
+        if let eir::Pat::RefPat(ref_pat) = pat {
+            return self.is_cs_supported_decl(&ref_pat.pat());
+        }
+        if let eir::Pat::TuplePat(tuple) = pat {
+            return tuple.fields().all(|field| self.is_cs_supported_decl(field));
+        }
+        false
     }
 
     fn emit_unreachable(&self, out: &mut Code) {
@@ -1667,7 +1683,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
     /// Emit a pattern as a condition check against a scrutinee expression.
     fn emit_pattern_ast(&self, pat: &eir::Pat) -> Code {
         match pat {
-            eir::Pat::WildcardPat(_w) => "{} _".into(),
+            eir::Pat::WildcardPat(_w) => "var _".into(),
             eir::Pat::IdentPat(ident_pat)
                 if let Some(const_ref) = self.eir_sem.resolve_bind_pat_to_const(ident_pat) =>
             {
