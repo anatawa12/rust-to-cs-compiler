@@ -335,7 +335,7 @@ impl<'db> CodeGenerator<'db> {
         for field in s.fields(db) {
             let cs_ty = self.rust_type_to_cs(&field.ty(db));
             let f_name = names::field_name(field.name(db).as_str());
-            out.wln(format!("public {} {} = default!;", cs_ty, f_name));
+            out.wln(format!("public required {} {};", cs_ty, f_name));
         }
 
         match s.kind(self.db) {
