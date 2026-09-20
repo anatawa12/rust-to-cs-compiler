@@ -135,6 +135,7 @@ our_lang_items! {
         extern crate lazy_static;
         extern crate futures;
         extern crate either;
+        extern crate url;
     }
 
     // core
@@ -166,6 +167,12 @@ our_lang_items! {
     Result = std::result::Result as Enum;
     Path = std::path::Path as Struct;
     PathBuf = std::path::PathBuf as Struct;
+    Arc = std::sync::Arc as Struct;
+    Rc = std::rc::Rc as Struct;
+    Mutex = std::sync::Mutex as Struct;
+    RwLock = std::sync::RwLock as Struct;
+    HashMap = std::collections::hash_map::HashMap as Struct;
+    HashSet = std::collections::hash_set::HashSet as Struct;
 
     // log
     log_trace = log::trace as Macro;
@@ -182,7 +189,11 @@ our_lang_items! {
     TryFuture = futures::TryFuture as Trait;
     FusedFuture = futures::FusedFuture as Trait;
 
+    // either
     Either = either::Either as Enum;
+
+    // url
+    Url = url::Url as Struct;
 }
 
 lang_item_wrapper! {

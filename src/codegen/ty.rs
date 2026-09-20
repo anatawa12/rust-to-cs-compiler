@@ -153,7 +153,7 @@ impl<'db> CodeGenerator<'db> {
         // ADT (struct/enum/union)
         if let Some((adt, args)) = ty.as_adt_with_args() {
             // Check std library mappings first
-            if let Some(mapped) = self.map_std_type(adt.name(db).as_str(), &args, db) {
+            if let Some(mapped) = self.map_std_type(adt, &args, db) {
                 return mapped;
             }
 
@@ -290,61 +290,52 @@ impl<'db> CodeGenerator<'db> {
     /// Maps well-known std types to C# equivalents.
     fn map_std_type(
         &self,
-        rust_name: &str,
+        adt: Adt,
         args: &[Option<Type<'db>>],
         _db: &'db dyn HirDatabase,
     ) -> Option<String> {
-        match rust_name {
-            // There is no CoW in this world
-            "Cow" => Some(self.rust_type_to_cs(args.iter().flatten().nth(0).unwrap())),
-            "String" | "str" => Some("string".to_string()),
-            "Vec" => {
-                let inner = args.first()?.as_ref()?;
-                Some(format!(
-                    "System.Collections.Generic.List<{}>",
-                    self.rust_type_to_cs(inner)
-                ))
-            }
-            "Box" => {
-                let inner = args.first()?.as_ref()?;
-                Some(self.rust_type_to_cs(inner))
-            }
-            "Arc" | "Rc" | "Mutex" | "RwLock" => {
-                let inner = args.first()?.as_ref()?;
-                Some(self.rust_type_to_cs(inner))
-            }
-            // indexmap is orderedm but Dictionary is not
-            "HashMap" | "BTreeMap" | /*"IndexMap" | */"AHashMap" => {
-                let k = args.first()?.as_ref()?;
-                let v = args.get(1)?.as_ref()?;
-                Some(format!(
-                    "System.Collections.Generic.Dictionary<{}, {}>",
-                    self.rust_type_to_cs(k),
-                    self.rust_type_to_cs(v)
-                ))
-            }
-            "HashSet" => {
-                let inner = args.first()?.as_ref()?;
-                Some(format!(
-                    "System.Collections.Generic.HashSet<{}>",
-                    self.rust_type_to_cs(inner)
-                ))
-            }
-            "OsString" | "OsStr" | "CString" | "CStr" => Some("string".to_string()),
-            "Duration" => Some("System.TimeSpan".to_string()),
-            "Url" => Some("System.Uri".to_string()),
-            "Bytes" | "BytesMut" => Some("byte[]".to_string()),
-            "RustTask" => {
-                // Already mapped
-                let inner = args.first()?.as_ref()?;
-                let t = self.rust_type_to_cs(inner);
-                if t == "void" {
-                    Some("r2CsRuntime.RustTask<int>".to_string()) // unit tasks use int
-                } else {
-                    Some(format!("r2CsRuntime.RustTask<{}>", t))
-                }
-            }
-            _ => None,
+        if Some(adt) == self.lang_items.Cow().map(Into::into) {
+            Some(self.rust_type_to_cs(args.iter().flatten().nth(0).unwrap()))
+        } else if Some(adt) == self.lang_items.String().map(Into::into) {
+            Some("string".to_string())
+        } else if Some(adt) == self.lang_items.Vec().map(Into::into) {
+            let inner = args.first()?.as_ref()?;
+            Some(format!(
+                "System.Collections.Generic.List<{}>",
+                self.rust_type_to_cs(inner)
+            ))
+        } else if Some(adt) == self.lang_items.OwnedBox().map(Into::into)
+            || Some(adt) == self.lang_items.Arc().map(Into::into)
+            || Some(adt) == self.lang_items.Rc().map(Into::into)
+            || Some(adt) == self.lang_items.Mutex().map(Into::into)
+            || Some(adt) == self.lang_items.RwLock().map(Into::into)
+        {
+            let inner = args.first()?.as_ref()?;
+            Some(self.rust_type_to_cs(inner))
+        } else if Some(adt) == self.lang_items.HashMap().map(Into::into) {
+            let k = args.first()?.as_ref()?;
+            let v = args.get(1)?.as_ref()?;
+            Some(format!(
+                "System.Collections.Generic.Dictionary<{}, {}>",
+                self.rust_type_to_cs(k),
+                self.rust_type_to_cs(v)
+            ))
+        } else if Some(adt) == self.lang_items.HashSet().map(Into::into) {
+            let inner = args.first()?.as_ref()?;
+            Some(format!(
+                "System.Collections.Generic.HashSet<{}>",
+                self.rust_type_to_cs(inner)
+            ))
+        } else if Some(adt) == self.lang_items.OsString().map(Into::into)
+            || Some(adt) == self.lang_items.OsStr().map(Into::into)
+        //|| Some(adt) == self.lang_items.CString().map(Into::into)
+        //|| Some(adt) == self.lang_items.CStr().map(Into::into)
+        {
+            Some("string".to_string())
+        } else if Some(adt) == self.lang_items.Url().map(Into::into) {
+            Some("System.Uri".to_string())
+        } else {
+            None
         }
     }
 
