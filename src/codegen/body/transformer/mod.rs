@@ -88,6 +88,7 @@ fn take_eir<T: ReplaceDefault>(value: &mut T) -> T {
     std::mem::replace(value, ReplaceDefault::replace_default())
 }
 
+mod block_expr;
 mod expand_macro_like_functions;
 mod implicit_returns;
 mod match_or_pattern_definition;
@@ -101,6 +102,7 @@ pub fn transform(cg: &CodeGenerator, node: &mut impl EirNode) {
 
     accept!(implicit_returns::ImplicitReturns);
     accept!(expand_macro_like_functions::ExpandMacroLikeFunctions);
+    accept!(block_expr::ExpandBlockExpr);
 
     accept!(match_or_pattern_definition::MatchOrPatternDefinitions);
 }

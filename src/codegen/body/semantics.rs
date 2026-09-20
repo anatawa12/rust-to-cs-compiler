@@ -174,6 +174,9 @@ impl<'db> EirSemantics<'db> {
                 }
                 _ => None,
             },
+            eir::Path::IdentPat(ident) => {
+                Some((hir::PathResolution::Local(self.hir.to_def(ident)?), None))
+            }
             eir::Path::ScopedName { scope, name } => {
                 let mut resolved = None;
                 self.hir

@@ -1434,6 +1434,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
             }
             return "default!".into();
         }
+        // TODO:
         code!(
             "Dummy.Block<",
             self.rust_type_to_cs(&self.eir_sem.type_of_expr(expr).adjusted()),

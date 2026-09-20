@@ -522,6 +522,7 @@ def_eir!(
 pub enum Path {
     Ast(ast::Path),
     MethodCall(ast::MethodCallExpr),
+    IdentPat(ast::IdentPat),
     BuiltinItem(BuiltinItem),
     ScopedName {
         scope: syntax::SyntaxNode,
@@ -544,6 +545,9 @@ impl EirNode for Path {
         match self {
             Path::Ast(ast) => NodeInfo::Ast(AnySyntax(syntax::AstNode::syntax(ast).clone())),
             Path::MethodCall(ast) => NodeInfo::Ast(AnySyntax(syntax::AstNode::syntax(ast).clone())),
+            Path::IdentPat(ident) => {
+                NodeInfo::Ast(AnySyntax(syntax::AstNode::syntax(ident).clone()))
+            }
             Path::BuiltinItem(_) => NodeInfo::None,
             Path::ScopedName { .. } => NodeInfo::None,
         }
