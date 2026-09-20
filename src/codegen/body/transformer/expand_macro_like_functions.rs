@@ -13,7 +13,26 @@ impl MutatingEirVisitor for ExpandMacroLikeFunctions<'_, '_> {
     type Break = std::convert::Infallible;
 
     fn visit_expr(&mut self, expr: &mut Expr) -> ControlFlow<Self::Break> {
-        let db = self.db;
+        fn should_flatten_enum(
+            visitor: &ExpandMacroLikeFunctions<'_, '_>,
+            expr: &Expr,
+            def: hir::EnumVariant,
+        ) -> bool {
+            let db = visitor.db;
+            if visitor.lang_items.Cow() == Some(def.parent_enum(db)) {
+                return true;
+            }
+            if visitor.lang_items.Either() == Some(def.parent_enum(db))
+                && let Some(ty) = visitor.eir_sem.type_of_expr_opt(expr)
+                && let original = ty.original()
+                && (visitor.trait_first_traits.iter())
+                    .any(|&trait_| original.impls_trait(db, trait_, &[]))
+            {
+                return true;
+            }
+
+            false
+        }
 
         if let Expr::CallExpr(call_expr) = expr
             && let callee = call_expr.expr()
@@ -21,7 +40,7 @@ impl MutatingEirVisitor for ExpandMacroLikeFunctions<'_, '_> {
             && let Some((hir::PathResolution::Def(def), _)) =
                 self.eir_sem.resolve_path_with_subst(path.path())
             && let Some(ConstructableDef::EnumVariant(def)) = ConstructableDef::from_module_def(def)
-            && self.lang_items.Cow() == Some(def.parent_enum(db))
+            && should_flatten_enum(self, expr, def)
         {
             replace_node!(
                 expr as Expr::CallExpr(call_expr) = {

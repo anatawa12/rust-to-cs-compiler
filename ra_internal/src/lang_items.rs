@@ -134,6 +134,7 @@ our_lang_items! {
         extern crate log;
         extern crate lazy_static;
         extern crate futures;
+        extern crate either;
     }
 
     // core
@@ -180,6 +181,8 @@ our_lang_items! {
     try_join = futures::try_join as Macro;
     TryFuture = futures::TryFuture as Trait;
     FusedFuture = futures::FusedFuture as Trait;
+
+    Either = either::Either as Enum;
 }
 
 lang_item_wrapper! {
