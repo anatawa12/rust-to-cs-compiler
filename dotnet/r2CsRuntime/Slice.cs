@@ -17,7 +17,7 @@ public partial struct Slice<T> : IEnumerable<T>
     }
 
     public int Length => _len;
-    public T this[Index index] => throw null;
+    public T this[Index index] => m_Get((nuint)index.ToIndex(Length)).m_Unwrap();
 
     public static implicit operator Slice<T>(List<T> list) => new Slice<T>(list, 0, list.Count);
     public static implicit operator Slice<T>(T[] list) => new Slice<T>(list, 0, list.Length);
