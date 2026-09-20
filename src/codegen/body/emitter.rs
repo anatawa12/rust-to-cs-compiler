@@ -246,6 +246,10 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 }
                 _ => {
                     // TODO
+                    tracing::error!(
+                        "Unsupported function parameter pattern at {}",
+                        self.eir_sem.location(param.pat())
+                    );
                 }
             }
         }
@@ -476,12 +480,22 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 let break_expr = break_expr.expr();
 
                 // TODO: Labelled break
-                let label_str = label
-                    .map(|l| format!(" /*{}*/", self.label_name(l)))
-                    .unwrap_or_default();
+                let label_str = if let Some(label) = label {
+                    tracing::error!(
+                        "Unsupported labelled break at {}",
+                        self.eir_sem.location(expr)
+                    );
+                    format!(" /*{}*/", self.label_name(label))
+                } else {
+                    String::new()
+                };
                 if let Some(e) = break_expr {
+                    tracing::error!(
+                        "Unsupported valued break at {}",
+                        self.eir_sem.location(expr)
+                    );
                     let val = self.emit_expr_str_ast(e);
-                    out.w("/* break ").w(val).wln(" */"); // TODO: break-with-value
+                    out.w("/* break ").w(val).wln(" */");
                     EmittedExprInfo::non_diverging()
                 } else {
                     out.wln(format!("break{};", label_str));
@@ -490,10 +504,15 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
             }
             eir::Expr::ContinueExpr(continue_expr) => {
                 let label = continue_expr.lifetime();
-                // TODO: Labelled continue
-                let label_str = label
-                    .map(|l| format!(" /*{}*/", self.label_name(l)))
-                    .unwrap_or_default();
+                let label_str = if let Some(label) = label {
+                    tracing::error!(
+                        "Unsupported labelled break at {}",
+                        self.eir_sem.location(expr)
+                    );
+                    format!(" /*{}*/", self.label_name(label))
+                } else {
+                    String::new()
+                };
                 out.wln(format!("continue{};", label_str));
                 EmittedExprInfo::diverging()
             }
@@ -1341,14 +1360,29 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
 
                 out
             }
-            eir::Expr::BreakExpr(break_expr) => break_expr
-                .expr()
-                .map(|e| self.emit_expr_str_ast(e))
-                .unwrap_or_else(|| "default!".into()),
-            eir::Expr::ContinueExpr(_) => "default!".into(),
+            eir::Expr::BreakExpr(break_expr) => {
+                tracing::error!(
+                    "Unsupported break expression at {}",
+                    self.eir_sem.location(expr)
+                );
+                break_expr
+                    .expr()
+                    .map(|e| self.emit_expr_str_ast(e))
+                    .unwrap_or_else(|| "default!".into())
+            }
+            eir::Expr::ContinueExpr(_) => {
+                tracing::error!(
+                    "Unsupported continue expression at {}",
+                    self.eir_sem.location(expr)
+                );
+                "default!".into()
+            }
             eir::Expr::UnderscoreExpr(_) => "_".into(),
             eir::Expr::LoopExpr(_) | eir::Expr::ForExpr(_) | eir::Expr::WhileExpr(_) => {
-                // TODO
+                tracing::error!(
+                    "Unsupported looping expression at {}",
+                    self.eir_sem.location(expr)
+                );
                 "/* loop */ default!".into()
             }
             eir::Expr::FormatArgsExpr(args) => {
@@ -1705,7 +1739,10 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                         )
                     }
                     _ => {
-                        // TODO
+                        tracing::error!(
+                            "Unsupported ident pattern at {}",
+                            self.eir_sem.location(pat)
+                        );
                         code!(format!("/* Unresolved ident */{:?}", const_ref))
                     }
                 }
