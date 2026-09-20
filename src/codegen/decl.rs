@@ -9,7 +9,6 @@ use itertools::Itertools;
 use ra_internal::function::FunctionExt;
 use ra_internal::*;
 use std::collections::HashMap;
-use syntax::ast;
 
 /// Generates C# type declarations from Rust HIR types.
 impl<'db> CodeGenerator<'db> {
@@ -205,8 +204,7 @@ impl<'db> CodeGenerator<'db> {
             out.wln("");
             out.open_brace();
             // Try to generate a real body using BodyGen
-            let lowerer = super::body::eir::LowerToEirCtx { cg: self };
-            let eir_fn = lowerer.lower(self.eir_sem.source(f).unwrap().value);
+            let eir_fn = self.eir_sem.eir_node(f).unwrap();
             let mut emitter = EirEmitter::new(self, is_async, cs_type);
             emitter.emit_function_body(eir_fn, out);
             out.close_brace();
@@ -224,8 +222,7 @@ impl<'db> CodeGenerator<'db> {
             out.wln("");
             out.open_brace();
             // Try to generate a real body using BodyGen
-            let lowerer = super::body::eir::LowerToEirCtx { cg: self };
-            let eir_fn = lowerer.lower(self.eir_sem.source(f).unwrap().value);
+            let eir_fn = self.eir_sem.eir_node(f).unwrap();
             let mut emitter = EirEmitter::new(self, is_async, cs_type);
             emitter.emit_function_body(eir_fn, out);
             out.close_brace();
@@ -467,8 +464,7 @@ impl<'db> CodeGenerator<'db> {
         };
         let name = names::const_name(name.as_str());
 
-        let lowerer = super::body::eir::LowerToEirCtx { cg: self };
-        let eir_fn = lowerer.lower(source.value.body().unwrap());
+        let eir_fn = self.eir_sem.lower(source.value.body().unwrap());
         let mut emitter = EirEmitter::new(self, false, CsFunctionType::Normal);
         let expr = emitter.emit_expr(eir_fn);
 
@@ -493,8 +489,7 @@ impl<'db> CodeGenerator<'db> {
         let name = s.name(db);
         let name = names::static_name(name.as_str());
 
-        let lowerer = super::body::eir::LowerToEirCtx { cg: self };
-        let eir_fn = lowerer.lower(source.value.body().unwrap());
+        let eir_fn = self.eir_sem.lower(source.value.body().unwrap());
         let mut emitter = EirEmitter::new(self, false, CsFunctionType::Normal);
         let expr = emitter.emit_expr(eir_fn);
 

@@ -1,8 +1,6 @@
-use crate::codegen::body::eir;
 use crate::codegen::body::eir::*;
 use crate::codegen::body::transformer::has_stmt_in_expr;
 use crate::new_eir_node;
-use hir::mir::BinOp;
 use std::convert::Infallible;
 use std::mem::{replace, take};
 use std::ops::ControlFlow;

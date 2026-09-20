@@ -23,7 +23,8 @@ mod macro_expansion;
 mod node_info;
 mod nodes;
 
-use crate::codegen::{CodeGenerator, output};
+use crate::codegen::body::EirSemantics;
+use crate::codegen::output;
 use ast::HasAttrs as _;
 use std::fmt::Display;
 use std::ops::ControlFlow;
@@ -49,7 +50,7 @@ pub use node_info::*;
 pub use nodes::*;
 
 pub struct LowerToEirCtx<'g, 'db> {
-    pub cg: &'g CodeGenerator<'db>,
+    pub eir_sem: &'g EirSemantics<'db>,
 }
 
 impl LowerToEirCtx<'_, '_> {

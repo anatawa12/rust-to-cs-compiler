@@ -1,5 +1,5 @@
 use crate::codegen::body::eir;
-use crate::codegen::body::eir::EirNode;
+use crate::codegen::body::eir::{EirNode, LowerToEir};
 use hir::HasSource;
 use hir::db::HirDatabase;
 use ide_db::line_index;
@@ -14,10 +14,10 @@ use vfs::Vfs;
 /// There are few other functions that are not avaiable in hir::Semantics, but we do use for
 /// semantics analysis.
 pub struct EirSemantics<'db> {
-    db: &'db dyn HirDatabase,
+    pub db: &'db dyn HirDatabase,
     hir: hir::Semantics<'db, dyn HirDatabase>,
     vfs: &'db Vfs,
-    lang_items: &'db LangItems,
+    pub lang_items: &'db LangItems,
 }
 
 impl<'db> EirSemantics<'db> {
@@ -256,6 +256,15 @@ impl<'db> EirSemantics<'db> {
         self.hir.source(def)
     }
 
+    pub fn lower<A: LowerToEir>(&self, def: A) -> A::Eir {
+        let lowerer = eir::LowerToEirCtx { eir_sem: self };
+        lowerer.lower(def)
+    }
+
+    pub fn eir_node<Def: HasEir>(&self, def: Def) -> Option<Def::Eir> {
+        def.to_eir(self)
+    }
+
     pub fn resolve_macro_call(&self, macro_call: &ast::MacroCall) -> Option<hir::Macro> {
         self.hir.resolve_macro_call(macro_call)
     }
@@ -335,5 +344,19 @@ impl ToDef for eir::Fn {
             eir::NodeInfo::Ast(ast) => sem.hir.to_def(ast),
             eir::NodeInfo::None => None,
         }
+    }
+}
+
+pub trait HasEir {
+    type Eir;
+
+    fn to_eir<'db>(&self, sem: &EirSemantics<'db>) -> Option<Self::Eir>;
+}
+
+impl HasEir for hir::Function {
+    type Eir = eir::Fn;
+
+    fn to_eir<'db>(&self, sem: &EirSemantics<'db>) -> Option<Self::Eir> {
+        Some(sem.lower(sem.hir.source(*self)?.value))
     }
 }

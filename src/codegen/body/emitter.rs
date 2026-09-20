@@ -2033,7 +2033,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
         let cs_variant = self.constructable_name_cs(&Constructable::new(
             match v.def {
                 hir::Variant::Struct(s) => s.into(),
-                hir::Variant::Union(u) => panic!(),
+                hir::Variant::Union(_) => panic!(),
                 hir::Variant::EnumVariant(v) => v.into(),
             },
             generic_args_types(v.args, hir::GenericDef::from(v.def.adt(db))),

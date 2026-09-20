@@ -8,7 +8,7 @@ use crate::codegen::simple_extensions::*;
 use crate::codegen::ty::generic_params::resolve_cs_type_param_source;
 /// Converts Rust HIR types to C# type strings.
 use hir::db::HirDatabase;
-use hir::{Adt, BuiltinType, GenericDef, ItemContainer, Module, Symbol, Trait, Type};
+use hir::{Adt, BuiltinType, GenericDef, ItemContainer, Module, Trait, Type};
 use hir::{HasContainer, HasCrate, sym};
 use itertools::Either;
 use ra_internal::*;

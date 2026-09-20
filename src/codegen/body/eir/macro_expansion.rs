@@ -1,6 +1,6 @@
-use crate::codegen::body::eir;
 use crate::codegen::body::eir::LowerToEirCtx;
-use crate::codegen::{CodeGenerator, item_exclusion};
+use crate::codegen::body::{EirSemantics, eir};
+use crate::codegen::item_exclusion;
 use ide_db::FxHashMap;
 use itertools::{Either, Itertools};
 use std::iter;
@@ -84,17 +84,17 @@ ___raw_code_expr_generator!(
 impl<'g, 'db> LowerToEirCtx<'g, 'db> {
     pub(super) fn emit_expr_macro(&self, macro_expr: ast::MacroExpr) -> eir::Expr {
         let macro_call = &macro_expr.macro_call().unwrap();
-        let Some(macro_) = self.cg.eir_sem.resolve_macro_call(macro_call) else {
+        let Some(macro_) = self.eir_sem.resolve_macro_call(macro_call) else {
             panic!(
                 "Unresolved macro call at {}",
-                self.cg.eir_sem.location(macro_call)
+                self.eir_sem.location(macro_call)
             )
         };
         let tt = macro_call.token_tree().unwrap();
 
         if self.should_inline_macro(macro_call) {
             // Macro that expands
-            let expanded = self.cg.eir_sem.expand_macro_call(macro_call).unwrap().value;
+            let expanded = self.eir_sem.expand_macro_call(macro_call).unwrap().value;
             if let Some(stmts) = ast::MacroStmts::cast(expanded.clone()) {
                 From::from(new_eir_node!(eir::MacroStmts {
                     statements: self.lower(stmts.statements()),
@@ -104,13 +104,13 @@ impl<'g, 'db> LowerToEirCtx<'g, 'db> {
             } else if let Some(expr) = ast::Expr::cast(expanded.clone()) {
                 self.lower(expr)
             } else {
-                panic!("{:?} at {}", expanded, self.cg.eir_sem.location(macro_call))
+                panic!("{:?} at {}", expanded, self.eir_sem.location(macro_call))
             }
-        } else if Some(macro_) == self.cg.lang_items.unreachable() {
+        } else if Some(macro_) == self.eir_sem.lang_items.unreachable() {
             raw_code_expr!(divergent: true, r#"throw new PanicException("unreachable")"#)
-        } else if Some(macro_) == self.cg.lang_items.panic() {
+        } else if Some(macro_) == self.eir_sem.lang_items.panic() {
             raw_code_expr!(divergent: true, r#"throw new PanicException("panic")"#)
-        } else if Some(macro_) == self.cg.lang_items.vec() {
+        } else if Some(macro_) == self.eir_sem.lang_items.vec() {
             // let ty = (self.cg.sem.type_of_expr(expr)).unwrap_or_else(|| {
             //     panic!(
             //         "Unresolved macro call at {}",
@@ -119,14 +119,14 @@ impl<'g, 'db> LowerToEirCtx<'g, 'db> {
             // });
             //let (_vec, args) = ty.original().as_adt_with_args().unwrap();
             //let element_ty = { args }.swap_remove(0).unwrap();
-            let mut parser = MacroParser::new(self.cg, &tt);
+            let mut parser = MacroParser::new(self.eir_sem, &tt);
 
             if let Some(first_expr) = parser.next_expr() {
                 if parser.take_token(T![;]) {
                     //let count = parser.next_expr().unwrap();
                     panic!(
                         "Unsupported vec![T; N] call at {}",
-                        self.cg.eir_sem.location(macro_call)
+                        self.eir_sem.location(macro_call)
                     )
                 } else if parser.take_token(T![,]) || parser.is_end() {
                     let mut args = Vec::new();
@@ -145,7 +145,7 @@ impl<'g, 'db> LowerToEirCtx<'g, 'db> {
                 } else {
                     panic!(
                         "Unsupported vec![] call at {}",
-                        self.cg.eir_sem.location(macro_call)
+                        self.eir_sem.location(macro_call)
                     )
                 }
             } else {
@@ -154,30 +154,31 @@ impl<'g, 'db> LowerToEirCtx<'g, 'db> {
                     node_info: eir::NodeInfo::Ast(macro_expr),
                 }))
             }
-        } else if Some(macro_) == self.cg.lang_items.pin() {
-            let mut parser = MacroParser::new(self.cg, &tt);
+        } else if Some(macro_) == self.eir_sem.lang_items.pin() {
+            let mut parser = MacroParser::new(self.eir_sem, &tt);
             self.lower(parser.next_expr().unwrap())
-        } else if Some(macro_) == self.cg.lang_items.format_args()
-            || Some(macro_) == self.cg.lang_items.format()
+        } else if Some(macro_) == self.eir_sem.lang_items.format_args()
+            || Some(macro_) == self.eir_sem.lang_items.format()
         {
             // NOTE: this might breaks execution order of each format args
-            parse_rest_as_format_args(self, macro_call, &mut MacroParser::new(self.cg, &tt)).into()
-        } else if Some(macro_) == self.cg.lang_items.log_trace() {
+            parse_rest_as_format_args(self, macro_call, &mut MacroParser::new(self.eir_sem, &tt))
+                .into()
+        } else if Some(macro_) == self.eir_sem.lang_items.log_trace() {
             log_macro("trace", self, macro_expr, macro_call, tt)
-        } else if Some(macro_) == self.cg.lang_items.log_debug() {
+        } else if Some(macro_) == self.eir_sem.lang_items.log_debug() {
             log_macro("debug", self, macro_expr, macro_call, tt)
-        } else if Some(macro_) == self.cg.lang_items.log_info() {
+        } else if Some(macro_) == self.eir_sem.lang_items.log_info() {
             log_macro("info", self, macro_expr, macro_call, tt)
-        } else if Some(macro_) == self.cg.lang_items.log_warn() {
+        } else if Some(macro_) == self.eir_sem.lang_items.log_warn() {
             log_macro("warn", self, macro_expr, macro_call, tt)
-        } else if Some(macro_) == self.cg.lang_items.log_error() {
+        } else if Some(macro_) == self.eir_sem.lang_items.log_error() {
             log_macro("error", self, macro_expr, macro_call, tt)
-        } else if Some(macro_) == self.cg.lang_items.assert() {
-            let parser = &mut MacroParser::new(self.cg, &tt);
+        } else if Some(macro_) == self.eir_sem.lang_items.assert() {
+            let parser = &mut MacroParser::new(self.eir_sem, &tt);
             let Some(condition) = parser.next_expr() else {
                 panic!(
                     "Expected assert!() first argument to be a condition at {}",
-                    self.cg.eir_sem.location(macro_call)
+                    self.eir_sem.location(macro_call)
                 )
             };
             parser.take_token(T![,]);
@@ -201,7 +202,7 @@ impl<'g, 'db> LowerToEirCtx<'g, 'db> {
                 }),
                 node_info: eir::NodeInfo::Ast(macro_expr.into()),
             }))
-        } else if Some(macro_) == self.cg.lang_items.cfg() {
+        } else if Some(macro_) == self.eir_sem.lang_items.cfg() {
             let tt_as_str = tt.syntax().to_string();
             if tt_as_str == "(windows)" {
                 From::from(new_eir_node!(eir::CallExpr {
@@ -215,9 +216,9 @@ impl<'g, 'db> LowerToEirCtx<'g, 'db> {
             } else {
                 panic!("Unsupported cfg expression: {}", tt_as_str);
             }
-        } else if Some(macro_) == self.cg.lang_items.lazy_static() {
+        } else if Some(macro_) == self.eir_sem.lang_items.lazy_static() {
             // TODO? consider generating static initializer pattern?
-            let parser = &mut MacroParser::new(self.cg, &tt);
+            let parser = &mut MacroParser::new(self.eir_sem, &tt);
 
             let mut stmts: Vec<eir::Stmt> = vec![];
 
@@ -239,7 +240,6 @@ impl<'g, 'db> LowerToEirCtx<'g, 'db> {
                     .expect("static ref ident: ty = expr; expected");
 
                 let name = self
-                    .cg
                     .eir_sem
                     .descend_into_macros(ident)
                     .into_iter()
@@ -260,8 +260,8 @@ impl<'g, 'db> LowerToEirCtx<'g, 'db> {
                 tail_expr: None,
                 node_info: eir::NodeInfo::None,
             }))
-        } else if Some(macro_) == self.cg.lang_items.try_join() {
-            let parser = &mut MacroParser::new(self.cg, &tt);
+        } else if Some(macro_) == self.eir_sem.lang_items.try_join() {
+            let parser = &mut MacroParser::new(self.eir_sem, &tt);
 
             let mut exprs = vec![];
             while !parser.is_end() {
@@ -270,7 +270,7 @@ impl<'g, 'db> LowerToEirCtx<'g, 'db> {
                 };
                 exprs.push(self.lower(expr));
                 if !parser.take_token(T![,]) && !parser.is_end() {
-                    panic!("Expected comma at {}", self.cg.eir_sem.location(macro_call));
+                    panic!("Expected comma at {}", self.eir_sem.location(macro_call));
                 }
             }
 
@@ -289,22 +289,22 @@ impl<'g, 'db> LowerToEirCtx<'g, 'db> {
             panic!(
                 "unsupported macro {macro_path} at {loc}",
                 macro_path = macro_call.path().unwrap().syntax().text(),
-                loc = self.cg.eir_sem.location(macro_call),
+                loc = self.eir_sem.location(macro_call),
             );
         }
     }
 
     pub(super) fn should_inline_macro(&self, macro_call: &ast::MacroCall) -> bool {
-        let Some(macro_) = self.cg.eir_sem.resolve_macro_call(macro_call) else {
+        let Some(macro_) = self.eir_sem.resolve_macro_call(macro_call) else {
             panic!(
                 "Unresolved macro call at {}",
-                self.cg.eir_sem.location(macro_call)
+                self.eir_sem.location(macro_call)
             )
         };
-        let is_inline = item_exclusion::has_attr(macro_, "r2cs_inline", self.cg.db);
-        Some(macro_) == self.cg.lang_items.matches()
-            || Some(macro_) == self.cg.lang_items.ready()
-            || Some(macro_) == self.cg.lang_items.write()
+        let is_inline = item_exclusion::has_attr(macro_, "r2cs_inline", self.eir_sem.db);
+        Some(macro_) == self.eir_sem.lang_items.matches()
+            || Some(macro_) == self.eir_sem.lang_items.ready()
+            || Some(macro_) == self.eir_sem.lang_items.write()
             || is_inline
     }
 }
@@ -316,7 +316,7 @@ fn log_macro(
     macro_call: &ast::MacroCall,
     tt: ast::TokenTree,
 ) -> eir::Expr {
-    let mut parser = MacroParser::new(ctx.cg, &tt);
+    let mut parser = MacroParser::new(ctx.eir_sem, &tt);
 
     while !parser
         .peek()
@@ -329,14 +329,14 @@ fn log_macro(
                 .next()
                 .is_some_and(|x| x.as_token().is_some_and(|x| x.kind() == SyntaxKind::IDENT)),
             "not ident at {}",
-            ctx.cg.eir_sem.location(parser.peek().unwrap())
+            ctx.eir_sem.location(parser.peek().unwrap())
         );
         assert!(
             parser
                 .next()
                 .is_some_and(|x| x.as_token().is_some_and(|x| x.kind() == SyntaxKind::EQ)),
             "not eq at {}",
-            ctx.cg.eir_sem.location(parser.peek().unwrap())
+            ctx.eir_sem.location(parser.peek().unwrap())
         );
         parser.next_expr();
         assert!(
@@ -345,7 +345,7 @@ fn log_macro(
                     .is_some_and(|x| x.kind() == SyntaxKind::SEMICOLON)
             }),
             "not SEMI at {}",
-            ctx.cg.eir_sem.location(parser.peek().unwrap())
+            ctx.eir_sem.location(parser.peek().unwrap())
         );
     }
 
@@ -363,7 +363,7 @@ type TokenTreeElement = NodeOrToken<ast::TokenTree, SyntaxToken>;
 
 #[derive(Clone)]
 struct MacroParser<'g, 'db, I: Iterator<Item = TokenTreeElement>> {
-    cg: &'g CodeGenerator<'db>,
+    cg: &'g EirSemantics<'db>,
     #[allow(dead_code)]
     surrounding: SyntaxToken,
     iterator: iter::Peekable<I>,
@@ -371,7 +371,7 @@ struct MacroParser<'g, 'db, I: Iterator<Item = TokenTreeElement>> {
 
 impl<'g, 'db> MacroParser<'g, 'db, std::vec::IntoIter<TokenTreeElement>> {
     pub fn new(
-        cg: &'g CodeGenerator<'db>,
+        cg: &'g EirSemantics<'db>,
         token: &ast::TokenTree,
     ) -> MacroParser<'g, 'db, impl Iterator<Item = TokenTreeElement> + Clone> {
         let mut iterator = token
@@ -501,10 +501,10 @@ impl<'g, 'db, I: Iterator<Item = TokenTreeElement>> MacroParser<'g, 'db, I> {
     ) -> Option<T> {
         let first_token = first_token(first.clone());
         let last_token = last.map(last_token);
-        let first_descenders = self.cg.eir_sem.descend_into_macros(first_token.clone());
+        let first_descenders = self.cg.descend_into_macros(first_token.clone());
         let last_descenders = last_token
             .clone()
-            .map(|token| self.cg.eir_sem.descend_into_macros(token));
+            .map(|token| self.cg.descend_into_macros(token));
         let last_descenders = last_descenders.as_ref().unwrap_or(&first_descenders);
         (first_descenders.iter()).find_map(|tok| {
             tok.parent_ancestors()
@@ -564,7 +564,7 @@ fn parse_rest_as_format_args(
     } else {
         panic!(
             "Expected format_args!() first argument to be a literal at {}",
-            ctx.cg.eir_sem.location(macro_call)
+            ctx.eir_sem.location(macro_call)
         )
     };
 
@@ -573,7 +573,7 @@ fn parse_rest_as_format_args(
     let Some(segments) = parse_format_string(&format) else {
         panic!(
             "Invalid format string at {}",
-            ctx.cg.eir_sem.location(macro_call)
+            ctx.eir_sem.location(macro_call)
         )
     };
 
@@ -657,7 +657,7 @@ fn parse_format_args_params(
             let Some(expr) = parser.next_expr() else {
                 panic!(
                     "expected expression but not after '{ident} =' at {}",
-                    ctx.cg.eir_sem.location(macro_call)
+                    ctx.eir_sem.location(macro_call)
                 );
             };
 
@@ -668,7 +668,7 @@ fn parse_format_args_params(
             let Some(expr) = parser.next_expr() else {
                 panic!(
                     "expected expression but not at {} ({token:?})",
-                    ctx.cg.eir_sem.location(macro_call)
+                    ctx.eir_sem.location(macro_call)
                 );
             };
             exprs.push(ctx.lower(expr));
@@ -715,7 +715,7 @@ fn emit_format_args_to_string(
                     "?" => eir::BuiltinItem::DebugStr,
                     _ => panic!(
                         "Unsupported format specifier: {f} at {}",
-                        ctx.cg.eir_sem.location(macro_call)
+                        ctx.eir_sem.location(macro_call)
                     ),
                 };
 
