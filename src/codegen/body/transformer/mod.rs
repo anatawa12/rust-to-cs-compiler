@@ -1,6 +1,6 @@
 use crate::codegen::CodeGenerator;
 use crate::codegen::body::eir;
-use crate::codegen::body::eir::{ChildrenContainer, EirNode};
+use crate::codegen::body::eir::{BlockExpr, ChildrenContainer, EirNode, ElseBranch, Expr};
 use crate::new_eir_node;
 
 trait ReplaceDefault {
@@ -86,6 +86,35 @@ macro_rules! def_transformer {
 
 fn take_eir<T: ReplaceDefault>(value: &mut T) -> T {
     std::mem::replace(value, ReplaceDefault::replace_default())
+}
+
+fn has_stmt_in_expr(expr: &Expr) -> bool {
+    fn is_block_like_expression_block(block: &BlockExpr) -> bool {
+        block.statements().next().is_some()
+    }
+    match expr {
+        Expr::BlockExpr(block) => is_block_like_expression_block(block),
+        Expr::IfExpr(if_expr) => {
+            let mut if_expr = if_expr;
+            loop {
+                if is_block_like_expression_block(if_expr.then_branch()) {
+                    return true;
+                }
+                match if_expr.else_branch() {
+                    Some(ElseBranch::IfExpr(else_if_expr)) => if_expr = else_if_expr,
+                    Some(ElseBranch::Block(block)) => {
+                        return is_block_like_expression_block(block);
+                    }
+                    None => break false,
+                }
+            }
+        }
+        Expr::MatchExpr(match_expr) => match_expr
+            .match_arm_list()
+            .arms()
+            .any(|arm| has_stmt_in_expr(arm.expr())),
+        _ => false,
+    }
 }
 
 mod block_expr;

@@ -1,4 +1,5 @@
 use super::eir::*;
+use crate::codegen::body::transformer::has_stmt_in_expr;
 use crate::new_eir_node;
 use std::mem::{replace, take};
 use std::ops::ControlFlow;
@@ -36,8 +37,27 @@ impl MutatingEirVisitor for ImplicitReturns<'_, '_> {
             }
             Expr::ClosureExpr(closure) => {
                 let body = &mut closure.as_mut().body;
-                if let Expr::BlockExpr(block_expr) = body {
-                    let _ = block_expr.accept_mut(&mut ImplicitReturnsImpl::new(self.cg));
+                if has_stmt_in_expr(body) || matches!(body, Expr::BlockExpr(_)) {
+                    let emitted_return = body
+                        .accept_mut(&mut ImplicitReturnsImpl::new(self.cg))
+                        .break_value()
+                        .unwrap_or_default();
+                    if !matches!(body, Expr::BlockExpr(_)) && emitted_return {
+                        replace_node!(
+                            body as expr = {
+                                Expr::BlockExpr(new_eir_node!(BlockExpr {
+                                    modifier: None,
+                                    statements: vec![Stmt::ExprStmt(new_eir_node!(ExprStmt {
+                                        expr,
+                                        node_info: NodeInfo::None,
+                                    }))]
+                                    .into(),
+                                    tail_expr: None,
+                                    node_info: NodeInfo::None,
+                                }))
+                            }
+                        );
+                    }
                 }
             }
             Expr::WhileExpr(w) => {

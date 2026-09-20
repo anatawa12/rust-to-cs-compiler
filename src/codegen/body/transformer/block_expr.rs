@@ -1,5 +1,6 @@
 use crate::codegen::body::eir;
 use crate::codegen::body::eir::*;
+use crate::codegen::body::transformer::has_stmt_in_expr;
 use crate::new_eir_node;
 use hir::mir::BinOp;
 use std::convert::Infallible;
@@ -24,7 +25,7 @@ impl MutatingEirVisitor for ExpandBlockExpr<'_, '_> {
         if let Stmt::LetStmt(let_stmt) = stmt
             && let_stmt.let_else().is_none()
             && let Some(initializer) = let_stmt.initializer()
-            && is_block_like_expression(initializer)
+            && has_stmt_in_expr(initializer)
             && let Some(place_expr) = pat_to_assignee_expr(let_stmt.pat())
         {
             replace_node!(
@@ -104,35 +105,6 @@ fn pat_to_assignee_expr(pat: &Pat) -> Option<Expr> {
         Pat::RefPat(_) => None,
         Pat::RestPat(_) => None,
         Pat::TupleStructPat(_) => None,
-    }
-}
-
-fn is_block_like_expression(expr: &Expr) -> bool {
-    fn is_block_like_expression_block(block: &BlockExpr) -> bool {
-        block.statements().next().is_some()
-    }
-    match expr {
-        Expr::BlockExpr(block) => is_block_like_expression_block(block),
-        Expr::IfExpr(if_expr) => {
-            let mut if_expr = if_expr;
-            loop {
-                if is_block_like_expression_block(if_expr.then_branch()) {
-                    return true;
-                }
-                match if_expr.else_branch() {
-                    Some(ElseBranch::IfExpr(else_if_expr)) => if_expr = else_if_expr,
-                    Some(ElseBranch::Block(block)) => {
-                        return is_block_like_expression_block(block);
-                    }
-                    None => break false,
-                }
-            }
-        }
-        Expr::MatchExpr(match_expr) => match_expr
-            .match_arm_list()
-            .arms()
-            .any(|arm| is_block_like_expression(arm.expr())),
-        _ => false,
     }
 }
 
