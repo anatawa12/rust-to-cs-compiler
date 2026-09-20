@@ -1434,7 +1434,10 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
             }
             return "default!".into();
         }
-        // TODO:
+        tracing::error!(
+            "Unsupported expression place block expr with statements at {}: ",
+            self.eir_sem.location(block_expr)
+        );
         code!(
             "Dummy.Block<",
             self.rust_type_to_cs(&self.eir_sem.type_of_expr(expr).adjusted()),
