@@ -484,6 +484,12 @@ impl<'db> CodeGenerator<'db> {
                 out.wln(fcode!("public override bool Equals(object? obj) => obj is {self_ty_cs} cast && this == cast;"));
             }
         } else if let Some(trait_ref) = impl_.trait_ref(db)
+            && self.lang_items.Hash() == Some(trait_ref.trait_())
+        {
+            out.wln(fcode!(
+                "public override int GetHashCode() => HashHelper.HashCode(this);"
+            ));
+        } else if let Some(trait_ref) = impl_.trait_ref(db)
             && Some(trait_ref.trait_()) == self.lang_items.Display()
         {
             out.wln("public override string ToString() => this.m_ToString();");
