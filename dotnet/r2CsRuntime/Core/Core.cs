@@ -781,19 +781,31 @@ public static partial class crt_Core
         {
             public class s_Error : crt_Core.mod_Error.t_Error
             {
-                public static s_Error m_New<T>(s_ErrorKind error, T t) => throw null;
+                private s_ErrorKind error;
+                private string message;
 
-                public s_ErrorKind m_Kind() => throw null;
+                public s_Error(s_ErrorKind error, string message)
+                {
+                    this.error = error;
+                    this.message = message;
+                }
+
+                public static s_Error m_New(s_ErrorKind error, string message) => new s_Error(error, message);
+                public static s_Error m_New<T>(s_ErrorKind error, T t)
+                    where T : mod_Fmt.t_Display => m_New(error, t.m_ToString());
+
+                public s_ErrorKind m_Kind() => error;
 
                 public crt_Core.mod_Result.s_Result<ValueTuple, crt_Core.mod_Fmt.s_Error> DisplayFmt(
-                    crt_Core.mod_Fmt.s_Formatter f) => throw null;
+                    crt_Core.mod_Fmt.s_Formatter f) => f.m_WriteStr(this.message);
 
                 public crt_Core.mod_Result.s_Result<ValueTuple, crt_Core.mod_Fmt.s_Error> DebugFmt(crt_Core.mod_Fmt.s_Formatter p_0)
                 {
-                    throw null;
+                    return p_0.m_WriteStr(this.message);
                 }
 
-                public static s_Error m_From(crt_SerdeJson.mod_Error.s_Error lValue0) => throw null;
+                public static s_Error m_From(crt_SerdeJson.mod_Error.s_Error lValue0) =>
+                    m_New(s_ErrorKind.v_InvalidData.instance, lValue0);
             }
 
             [Union]
