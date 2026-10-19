@@ -414,7 +414,7 @@ public static partial class crt_Core
                 }
             }
 
-            public T m_Unwrap() => throw null;
+            public T m_Unwrap() => m_UnwrapOrElse(() => throw new PanicException($"Unwrap on value: {(inner as mod_Fmt.t_Debug)?.DebugStr() ?? "value not implements Debug"}"));
         }
     }
 
