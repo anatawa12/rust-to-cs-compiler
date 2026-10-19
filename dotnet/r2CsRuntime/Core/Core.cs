@@ -659,7 +659,7 @@ public static partial class crt_Core
             {
                 private bool m_value;
                 private s_Atomic(bool value) => m_value = value;
-                public static s_Atomic<bool, crt_Core.mod_Sync.mod_Atomic.mod_Private.s_Align1<byte>> m_New(bool value) => throw null;
+                public static s_Atomic<bool, crt_Core.mod_Sync.mod_Atomic.mod_Private.s_Align1<byte>> m_New(bool value) => new(value);
                 public bool m_Load(s_Ordering ordering) => Volatile.Read(ref m_value);
                 public void m_Store(bool value, s_Ordering ordering) => Volatile.Write(ref m_value, value);
             }
