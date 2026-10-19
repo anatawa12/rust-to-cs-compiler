@@ -22,24 +22,53 @@ public static partial class crt_Core
 
         public class s_Formatter
         {
-            public s_DebugStruct m_DebugStruct(string packageinfo) => throw null;
-            public global::VrcGetVpm.crt_Core.mod_Result.s_Result<global::System.ValueTuple, global::VrcGetVpm.crt_Core.mod_Fmt.s_Error> m_WriteChar(char packageinfo) => throw null;
-            public global::VrcGetVpm.crt_Core.mod_Result.s_Result<global::System.ValueTuple, global::VrcGetVpm.crt_Core.mod_Fmt.s_Error> m_WriteStr(string value) => throw null;
-            public global::VrcGetVpm.crt_Core.mod_Result.s_Result<global::System.ValueTuple, global::VrcGetVpm.crt_Core.mod_Fmt.s_Error> m_WriteFmt(string value) => throw null;
+            private StringBuilder _builder;
 
-            public void Write(string value) => throw null;
+            public s_Formatter(StringBuilder? builder = null)
+            {
+                _builder = builder ?? new StringBuilder();
+            }
+
+            public s_DebugStruct m_DebugStruct(string typeName) => new(_builder, typeName);
+
+            public mod_Result.s_Result<ValueTuple, s_Error> m_WriteChar(char c)
+            {
+                _builder.Append(c);
+                return mod_Result.s_Result<ValueTuple, s_Error>.v_Ok.ctor(default);
+            }
+
+            public mod_Result.s_Result<ValueTuple, s_Error> m_WriteStr(string value)
+            {
+                _builder.Append(value);
+                return mod_Result.s_Result<ValueTuple, s_Error>.v_Ok.ctor(default);
+            }
+            public mod_Result.s_Result<ValueTuple, s_Error> m_WriteFmt(string value) => m_WriteStr(value);
         }
 
         public class s_DebugStruct
         {
+            bool first = true;
+            private readonly StringBuilder _builder;
+
+            public s_DebugStruct(StringBuilder builder, string typeName)
+            {
+                _builder = builder;
+                builder.Append(typeName).Append(" {");
+            }
+
             public s_DebugStruct m_Field(string field, t_Debug debug)
             {
-                throw new NotImplementedException();
+                if (!first) _builder.Append(", ");
+                first = false;
+                _builder.Append(field).Append(": ");
+                debug.DebugFmt(new s_Formatter(_builder));
+                return this;
             }
 
             public mod_Result.s_Result<ValueTuple, s_Error> m_Finish()
             {
-                throw new NotImplementedException();
+                _builder.Append("}");
+                return mod_Result.s_Result<ValueTuple, s_Error>.v_Ok.ctor(default);
             }
         }
 
@@ -772,5 +801,26 @@ public static partial class crt_Core
         public static T m_Take<T, T_Statics>(T fUserRepos)
             //where T_Statics : struct, mod_Default.t_Default<T, T_Statics>.Statics 
             => throw null;
+    }
+}
+
+public static class DebugDisplayExt
+{
+    extension(crt_Core.mod_Fmt.t_Debug self)
+    {
+        public string DebugStr() => FormatterToString(self.DebugFmt);
+    }
+    
+    extension(crt_Core.mod_Fmt.t_Display self)
+    {
+        public string m_ToString() => FormatterToString(self.DisplayFmt);
+    }
+
+    private static string FormatterToString(Func<crt_Core.mod_Fmt.s_Formatter, crt_Core.mod_Result.s_Result<ValueTuple, crt_Core.mod_Fmt.s_Error>> fmt)
+    {
+        var builder = new StringBuilder();
+        var result = fmt(new crt_Core.mod_Fmt.s_Formatter(builder));
+        if (!result.m_IsOk()) throw new PanicException("Formatting");
+        return builder.ToString();
     }
 }
