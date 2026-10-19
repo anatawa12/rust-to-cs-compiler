@@ -9,7 +9,7 @@
 
   <ItemGroup>
     <!--<ProjectReference Include="../r2CsRuntime/r2CsRuntime.csproj" />-->
-    <Compile Include="../r2CsRuntime/*.cs" />
+    <Compile Include="../r2CsRuntime/**/*.cs" Exclude="../r2CsRuntime/obj/**;../r2CsRuntime/bin/**" />
     <PackageReference Include="System.Memory" Version="4.6.3" />
   </ItemGroup>
 
