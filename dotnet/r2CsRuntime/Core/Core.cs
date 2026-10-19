@@ -564,7 +564,10 @@ public static partial class crt_Core
         {
         }
     }
+}
 
+public static partial class crt_Core
+{
     public static class mod_Num
     {
         public static class mod_Error
@@ -579,7 +582,7 @@ public static partial class crt_Core
         {
             public class s_NonZero<T, A_NonZero>
             {
-                public T m_Get() => throw null;
+                public required A_NonZero inner;
             }
         }
 
@@ -587,11 +590,51 @@ public static partial class crt_Core
         {
             public class s_NonZeroU8Inner
             {
-                
+                public required byte inner;
             }
         }
     }
+}
 
+public static class NonZeroExt
+{
+    extension(crt_Core.mod_Num.mod_Nonzero.s_NonZero<byte, crt_Core.mod_Num.mod_NicheTypes.s_NonZeroU8Inner> self)
+    {
+        public static crt_Core.mod_Result.s_Result<crt_Core.mod_Num.mod_Nonzero.s_NonZero<byte, crt_Core.mod_Num.mod_NicheTypes.s_NonZeroU8Inner>,
+                crt_Core.mod_Num.mod_Error.s_ParseIntError> m_FromStr(string data)
+        {
+            if (byte.TryParse(data, out byte result) && result != 0)
+            {
+                return crt_Core.mod_Result.s_Result<crt_Core.mod_Num.mod_Nonzero.s_NonZero<byte,
+                        crt_Core.mod_Num.mod_NicheTypes.s_NonZeroU8Inner>,
+                    crt_Core.mod_Num.mod_Error.s_ParseIntError>.v_Ok.ctor(
+                    new crt_Core.mod_Num.mod_Nonzero.s_NonZero<byte,
+                        crt_Core.mod_Num.mod_NicheTypes.s_NonZeroU8Inner>
+                    {
+                        inner = new crt_Core.mod_Num.mod_NicheTypes.s_NonZeroU8Inner
+                        {
+                            inner = result
+                        }
+                    }
+                );
+                ;
+            }
+            else
+            {
+                return crt_Core.mod_Result.s_Result<crt_Core.mod_Num.mod_Nonzero.s_NonZero<byte,
+                        crt_Core.mod_Num.mod_NicheTypes.s_NonZeroU8Inner>,
+                    crt_Core.mod_Num.mod_Error.s_ParseIntError>.v_Err.ctor(
+                    crt_Core.mod_Num.mod_Error.s_ParseIntError.instance
+                );
+            }
+        }
+
+        public byte m_Get() => self.inner.inner;
+    }
+}
+
+public static partial class crt_Core
+{
     public static class mod_Hash
     {
         public interface t_Hash
