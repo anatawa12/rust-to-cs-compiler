@@ -682,7 +682,7 @@ public static partial class crt_Core
         {
             public interface t_Deref<P_T>
             {
-                
+                public P_T m_Deref();
             }
         }
     }
