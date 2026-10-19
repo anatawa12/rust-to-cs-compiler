@@ -501,7 +501,7 @@ public static partial class crt_Core
                 v_Equal => 0,
                 v_Greater => 1,
                 v_Less => -1,
-                _ => throw null!,
+                _ => throw new InvalidOperationException($"Bad Value: {this}"),
             };
 
             public class v_Equal : s_Ordering
