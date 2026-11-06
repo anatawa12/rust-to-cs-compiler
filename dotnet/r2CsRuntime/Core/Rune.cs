@@ -3,7 +3,7 @@ namespace VrcGetVpm;
 /// <summary>
 ///  Corresponds to char in rust.
 /// </summary>
-public struct Rune
+public struct Rune : IEquatable<Rune>
 {
     public int Value;
 
@@ -43,6 +43,9 @@ public struct Rune
 
     public static bool operator==(Rune a, Rune b) => a.Value == b.Value;
     public static bool operator!=(Rune a, Rune b) => a.Value != b.Value;
+    public bool Equals(Rune other) => this == other;
+    public override bool Equals(object? obj) => obj is Rune other && Equals(other);
+    public override int GetHashCode() => Value.GetHashCode();
 
     public static Rune Of(int b) => new Rune { Value = b };
 }
