@@ -106,7 +106,7 @@ public class RustStr : crt_Core.mod_Fmt.t_Display, crt_Core.mod_Fmt.t_Debug, crt
         var (begin, end) = range.GetIndexRage(m_Len());
         if (begin != m_Len() && !IsUtf8StartByte(Inner[(int)begin])) throw new PanicException("Begin Not At Char Boundary.");
         if (end != m_Len() && !IsUtf8StartByte(Inner[(int)end])) throw new PanicException("End Not At Char Boundary.");
-        return begin == 0 ? new RustStr(data, (int)end) : new RustStr(Inner.Slice((int)begin, (int)end));
+        return begin == 0 ? new RustStr(data, (int)end) : new RustStr(Inner.Slice((int)begin, (int)(end - begin)));
     }
 
     public IEnumerator<Rune> m_Chars() => CharsWithIndex().m_Map(x => x.Item2);
