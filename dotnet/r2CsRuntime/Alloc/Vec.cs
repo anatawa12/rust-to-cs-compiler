@@ -117,6 +117,13 @@ public static partial class crt_Alloc
                     m_Push(iteratorInner.Current);
             }
 
+            public void ExtendFromSpan(ReadOnlySpan<T> data)
+            {
+                m_Reserve((nuint)data.Length);
+                data.CopyTo(body.AsSpan(length));
+                length += data.Length;
+            }
+
             public IEnumerator<T> m_ExtractIf(Range<nuint> range, Func<T, bool> pred) => new ExtractIf(this, range, pred);
 
             class ExtractIf : IEnumerator<T>
@@ -172,6 +179,11 @@ public static partial class crt_Alloc
                     }
                     _vec.length = _old_len - _del;
                 }
+            }
+
+            public void m_Clear()
+            {
+                length = 0;
             }
 
             // slice functions

@@ -6,25 +6,41 @@ public static partial class crt_Alloc
 {
     public static class mod_String
     {
-        public class s_String : RustStr
+        public class s_String : crt_Core.mod_Fmt.t_Display, crt_Core.mod_Fmt.t_Debug, crt_Core.mod_Cmp.t_Ord<RustStr>, crt_Core.mod_Cmp.t_Ord<s_String>
         {
-            public static s_String m_New() => new s_String(Array.Empty<byte>());
+            private mod_Vec.s_Vec<byte> _base;
 
-            internal s_String(byte[] data) : base(data, data.Length) { }
-            internal s_String(byte[] data, int length) : base(data, length)
-            {
-            }
+            public static s_String m_New() => new s_String(mod_Vec.s_Vec<byte>.m_New());
 
-            public RustStr m_AsStr() => this;
+            internal s_String(mod_Vec.s_Vec<byte> data) => _base = data;
 
-            public void m_Clear()
-            {
-                length = 0;
-            }
+            public RustStr m_AsStr() => new(_base.m_AsSlice().ToArray()); // TODO: optimize
+
+            public void m_Clear() => _base.m_Clear();
 
             public static s_String m_Default() => m_New();
 
-            public static explicit operator s_String(string cast) => new s_String(Encoding.UTF8.GetBytes(cast));
+            public static explicit operator s_String(string cast) => new s_String(new mod_Vec.s_Vec<byte>(Encoding.UTF8.GetBytes(cast)));
+            public static implicit operator RustStr(s_String cast) => cast.m_AsStr();
+
+            public RustStr m_IntoBoxedStr() => m_AsStr();
+
+            // str functions
+            public RustStr m_AsRef() => m_AsStr().m_AsRef();
+            public RustStr m_Trim() => m_AsStr().m_Trim();
+            public crt_Core.mod_Result.s_Result<ValueTuple, crt_Core.mod_Fmt.s_Error> DisplayFmt(crt_Core.mod_Fmt.s_Formatter p_0) => m_AsStr().DisplayFmt(p_0);
+            public crt_Core.mod_Result.s_Result<ValueTuple, crt_Core.mod_Fmt.s_Error> DebugFmt(crt_Core.mod_Fmt.s_Formatter p_0) => m_AsStr().DebugFmt(p_0);
+            public bool m_Eq(RustStr p_0) => m_AsStr().m_Eq(p_0);
+            public bool m_Eq(s_String p_0) => m_AsStr().m_Eq(p_0);
+            public override bool Equals(object? obj) => obj is RustStr other && this.m_Eq(other);
+            public static bool operator==(s_String lhs, RustStr rhs) => lhs.m_Eq(rhs);
+            public static bool operator!=(s_String lhs, RustStr rhs) => !lhs.m_Eq(rhs);
+            public static bool operator==(s_String lhs, s_String rhs) => lhs.m_Eq(rhs);
+            public static bool operator!=(s_String lhs, s_String rhs) => !lhs.m_Eq(rhs);
+            public crt_Core.mod_Option.s_Option<crt_Core.mod_Cmp.s_Ordering> m_PartialCmp(RustStr other) => m_AsStr().m_PartialCmp(other);
+            public crt_Core.mod_Option.s_Option<crt_Core.mod_Cmp.s_Ordering> m_PartialCmp(s_String other) => m_AsStr().m_PartialCmp(other);
+            public crt_Core.mod_Cmp.s_Ordering m_Cmp(RustStr p_0) => m_AsStr().m_Cmp(p_0);
+            public crt_Core.mod_Cmp.s_Ordering m_Cmp(s_String p_0) => m_AsStr().m_Cmp(p_0);
         }
     }
 }
@@ -36,9 +52,9 @@ public static partial class RustStrExtensions
         public crt_Alloc.mod_String.s_String m_Replace(Rune from, RustStr to) => 
             str.Replace(from.ToBytes(stackalloc byte[4]), to.Inner);
 
-        public crt_Alloc.mod_String.s_String m_ToOwned() => new(str.Inner.ToArray());
+        public crt_Alloc.mod_String.s_String m_ToOwned() => new(new crt_Alloc.mod_Vec.s_Vec<byte>(str.Inner.ToArray()));
 
-        public static RustStr m_From(crt_Alloc.mod_String.s_String s) => s;
+        public static RustStr m_From(crt_Alloc.mod_String.s_String s) => s.m_AsStr();
         public static RustStr m_From(RustStr s) => s;
         public static RustStr m_From(string s) => (crt_Alloc.mod_String.s_String)s; // TODO: remove
 
@@ -49,68 +65,38 @@ public static partial class RustStrExtensions
             if (from.Length == 0)
             {
                 // Special case: "": insert 'to' to every character boundary
-                byte[] result = new byte[data.Length * (1 + to.Length)];
-                var resultLen = 0;
+                var result1 = crt_Alloc.mod_Vec.s_Vec<byte>.m_WithCapacity((nuint)(data.Length * (1 + to.Length)));
                 for (var index = 0; index < data.Length; )
                 {
-                    to.CopyTo(result.AsSpan(resultLen));
-                    resultLen += to.Length;
+                    result1.ExtendFromSpan(to);
                     var len = Utf8Utility.Utf8Len(data[index]);
-                    data.Slice(index, len).CopyTo(result.AsSpan(resultLen));
-                    resultLen += len;
+                    result1.ExtendFromSpan(data.Slice(index, len));
                     index += len;
                 }
 
-                {
-                    to.CopyTo(result.AsSpan(resultLen));
-                    resultLen += to.Length;
-                }
+                result1.ExtendFromSpan(to);
 
-                return new crt_Alloc.mod_String.s_String(result, resultLen);
+                return new crt_Alloc.mod_String.s_String(result1);
             }
             else
             {
-
-                byte[] result = new byte[Math.Max(data.Length, data.Length - from.Length + to.Length)];
-                int resultLen = 0;
+                var result1 = crt_Alloc.mod_Vec.s_Vec<byte>.m_WithCapacity((nuint)(data.Length * (1 + to.Length)));
 
                 for (;;)
                 {
                     var index = data.IndexOf(from);
                     if (index < 0) break;
-                    var newLen = resultLen + index + to.Length;
+                    result1.m_Reserve((nuint)(index + to.Length));
 
-                    if (newLen > result.Length)
-                    {
-                        // extend
-                        var newBuf = new byte[Math.Max(result.Length * 2, newLen)];
-                        result.CopyTo(newBuf);
-                        result = newBuf;
-                    }
-
-                    data.Slice(0, index).CopyTo(result.AsSpan(resultLen));
+                    result1.ExtendFromSpan(data.Slice(0, index));
                     data = data.Slice(index + from.Length);
 
-                    to.CopyTo(result.AsSpan(resultLen + index));
-                    resultLen = newLen;
+                    result1.ExtendFromSpan(to);
                 }
 
-                {
-                    var newLen = resultLen + data.Length;
+                result1.ExtendFromSpan(data);
 
-                    if (newLen > result.Length)
-                    {
-                        // extend
-                        var newBuf = new byte[Math.Max(result.Length * 2, newLen)];
-                        result.CopyTo(newBuf);
-                        result = newBuf;
-                    }
-
-                    data.CopyTo(result.AsSpan(resultLen));
-                    resultLen = newLen;
-                }
-
-                return new crt_Alloc.mod_String.s_String(result, resultLen);
+                return new crt_Alloc.mod_String.s_String(result1);
             }
         }
     }
