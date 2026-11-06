@@ -3,31 +3,28 @@ using r2CsRuntime;
 
 namespace VrcGetVpm;
 
-public class RustStr : crt_Core.mod_Fmt.t_Display, crt_Core.mod_Fmt.t_Debug, crt_Core.mod_Cmp.t_Ord<RustStr>
+public struct RustStr : crt_Core.mod_Fmt.t_Display, crt_Core.mod_Fmt.t_Debug, crt_Core.mod_Cmp.t_Ord<RustStr>
 {
-    private protected byte[] data;
-    private protected int length;
-    public ReadOnlySpan<byte> Inner => data.AsSpan(0, length);
+    private Slice<byte> _slice;
 
-    private protected RustStr(byte[] data, int length)
-    {
-        this.data = data;
-        this.length = length;
-    }
+    public ReadOnlySpan<byte> Inner => _slice.AsSpan();
 
+    private RustStr(Slice<byte> data) => _slice = data;
     public RustStr(ReadOnlySpan<byte> data)
     {
-        this.data = data.ToArray();
-        this.length = data.Length;
+        _slice = (Slice<byte>)data.ToArray();
     }
 
-    public nuint m_Len() => (nuint)length;
-    public bool m_IsEmpty() => length == 0;
-    public IEnumerator<byte> m_Bytes() => data.Take(length).GetEnumerator();
-    public Slice<byte> m_AsBytes() => Slice<byte>.Of(data, 0, length);
-    public RustStr m_Trim() => new(TrimStart(TrimEnd(Inner)));
-    public RustStr m_TrimStart() => new(TrimStart(Inner));
-    private static ReadOnlySpan<byte> TrimStart(ReadOnlySpan<byte> s)
+    internal static RustStr FromUtf8Unsafe(Slice<byte> data) => new(data);
+
+    public nuint m_Len() => _slice.m_Len();
+    public bool m_IsEmpty() => _slice.m_IsEmpty();
+    public IEnumerator<byte> m_Bytes() => _slice.m_Iter();
+    public Slice<byte> m_AsBytes() => _slice;
+    public RustStr m_Trim() => new(TrimStart(TrimEnd(_slice)));
+    public RustStr m_TrimStart() => new(TrimStart(_slice));
+
+    private static Slice<byte> TrimStart(Slice<byte> s)
     {
         while (true)
         {
@@ -42,11 +39,11 @@ public class RustStr : crt_Core.mod_Fmt.t_Display, crt_Core.mod_Fmt.t_Debug, crt
                 _ => 0,
             };
             if (len == 0) return s;
-            s = s.Slice(len);
+            s = s.Index(Range<nuint>.NewRangeFrom((nuint)len));
         }
     }
 
-    private static ReadOnlySpan<byte> TrimEnd(ReadOnlySpan<byte> s)
+    private static Slice<byte> TrimEnd(Slice<byte> s)
     {
         while (true)
         {
@@ -61,13 +58,13 @@ public class RustStr : crt_Core.mod_Fmt.t_Display, crt_Core.mod_Fmt.t_Debug, crt
                 _ => 0,
             };
             if (len == 0) return s;
-            s = s.Slice(0, s.Length - len);
+            s = s.Index(Range<nuint>.NewRangeTo(s.m_Len() - (nuint)len));
         }
     }
 
     public crt_Core.mod_Option.s_Option<RustStr> m_StripPrefix(RustStr prefix) =>
-        this.length >= prefix.length && this.Inner.Slice(0, prefix.length).SequenceEqual(prefix.Inner)
-            ? crt_Core.mod_Option.s_Option<RustStr>.v_Some.ctor(new RustStr(this.Inner.Slice(prefix.length)))
+        this.m_Len() >= prefix.m_Len() && this._slice.Index(Range<nuint>.NewRange(0, prefix.m_Len())).SequenceEqual(prefix._slice)
+            ? crt_Core.mod_Option.s_Option<RustStr>.v_Some.ctor(new RustStr(this._slice.Index(Range<nuint>.NewRangeFrom(prefix.m_Len()))))
             : crt_Core.mod_Option.s_Option<RustStr>.v_None.instance;
 
     public crt_Core.mod_Option.s_Option<(RustStr, RustStr)> m_SplitOnce(Rune separator) => SplitOnceImpl(separator.ToBytes(stackalloc byte[4]));
@@ -76,18 +73,19 @@ public class RustStr : crt_Core.mod_Fmt.t_Display, crt_Core.mod_Fmt.t_Debug, crt
     {
         var index = Inner.IndexOf(separator);
         if (index < 0) return crt_Core.mod_Option.s_Option<(RustStr, RustStr)>.v_None.instance;
-        return crt_Core.mod_Option.s_Option<(RustStr, RustStr)>.v_Some.ctor(
-            (new RustStr(data, index), new RustStr(Inner.Slice(index + separator.Length))));
+        return crt_Core.mod_Option.s_Option<(RustStr, RustStr)>.v_Some.ctor((
+            new RustStr(_slice.Index(Range<nuint>.NewRangeTo((nuint)index))), 
+            new RustStr(_slice.Index(Range<nuint>.NewRangeFrom((nuint)(index + separator.Length))))));
     }
 
     public System.Collections.Generic.IEnumerator<RustStr> m_Split(Rune separator) => SplitImpl(separator.ToBytes(stackalloc byte[4]).ToArray());
-    public System.Collections.Generic.IEnumerator<RustStr> m_Split(RustStr separator) => SplitImpl(separator.data);
-    private System.Collections.Generic.IEnumerator<RustStr> SplitImpl(byte[] separator)
+    public System.Collections.Generic.IEnumerator<RustStr> m_Split(RustStr separator) => SplitImpl(separator._slice.AsMemory());
+    private System.Collections.Generic.IEnumerator<RustStr> SplitImpl(Memory<byte> separator)
     {
         var begin = 0;
         for(;;)
         {
-            var index = Inner.Slice(begin).IndexOf(separator);
+            var index = Inner.Slice(begin).IndexOf(separator.Span);
             if (index < 0) break;
             yield return new RustStr(Inner.Slice(begin, index - begin));
             begin = index + separator.Length;
@@ -106,14 +104,14 @@ public class RustStr : crt_Core.mod_Fmt.t_Display, crt_Core.mod_Fmt.t_Debug, crt
         var (begin, end) = range.GetIndexRage(m_Len());
         if (begin != m_Len() && !IsUtf8StartByte(Inner[(int)begin])) throw new PanicException("Begin Not At Char Boundary.");
         if (end != m_Len() && !IsUtf8StartByte(Inner[(int)end])) throw new PanicException("End Not At Char Boundary.");
-        return begin == 0 ? new RustStr(data, (int)end) : new RustStr(Inner.Slice((int)begin, (int)(end - begin)));
+        return new RustStr(_slice.Index(range));
     }
 
     public IEnumerator<Rune> m_Chars() => CharsWithIndex().m_Map(x => x.Item2);
 
     internal IEnumerator<(int index, Rune rune)> CharsWithIndex()
     {
-        for (int i = 0; i < length; )
+        for (int i = 0; (nuint)i < m_Len(); )
         {
             yield return (i, Utf8Utility.GetRune(Inner, ref i));
         }
@@ -150,6 +148,7 @@ public class RustStr : crt_Core.mod_Fmt.t_Display, crt_Core.mod_Fmt.t_Debug, crt
     }
 
     public bool m_Eq(RustStr p_0) => this == p_0;
+    public override bool Equals(object? obj) => obj is RustStr other && this == other;
 
     public crt_Core.mod_Option.s_Option<crt_Core.mod_Cmp.s_Ordering> m_PartialCmp(RustStr other) =>
         crt_Core.mod_Option.s_Option<crt_Core.mod_Cmp.s_Ordering>.v_Some.ctor(m_Cmp(other));
@@ -161,7 +160,12 @@ public class RustStr : crt_Core.mod_Fmt.t_Display, crt_Core.mod_Fmt.t_Debug, crt
         > 0 => crt_Core.mod_Cmp.s_Ordering.v_Greater.instance,
     };
 
-    public override string ToString() => Encoding.UTF8.GetString(data, 0, length);
+    public override string ToString()
+    {
+        var (array, offset, len) = _slice.AsArrayWithOffsets();
+        return Encoding.UTF8.GetString(array, offset, len);
+    }
+
     public crt_Core.mod_Result.s_Result<ValueTuple, crt_Core.mod_Fmt.s_Error> DisplayFmt(crt_Core.mod_Fmt.s_Formatter p_0) => p_0.m_WriteStr(this);
     public crt_Core.mod_Result.s_Result<ValueTuple, crt_Core.mod_Fmt.s_Error> DebugFmt(crt_Core.mod_Fmt.s_Formatter p_0) => p_0.m_WriteStr(this); // TODO: quote
 

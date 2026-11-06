@@ -26,6 +26,18 @@ public partial struct Slice<T> : IEnumerable<T>
 
     public bool m_IsEmpty() => _len == 0;
     public nuint m_Len() => (UIntPtr)_len;
+
+    public Memory<T> AsMemory() => _base switch
+    {
+        T[] ary => ary.AsMemory(_offset, _len),
+    };
+    public ReadOnlySpan<T> AsSpan() => AsMemory().Span;
+
+    public (T[] array, int offset, int len) AsArrayWithOffsets() => _base switch
+    {
+        T[] ary => (ary, _offset, _len),
+    };
+
     public IEnumerator<T> GetEnumerator() => m_Iter();
 
     public IEnumerator<T> m_Iter() => _base switch

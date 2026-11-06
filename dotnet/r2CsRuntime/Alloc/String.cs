@@ -14,7 +14,7 @@ public static partial class crt_Alloc
 
             internal s_String(mod_Vec.s_Vec<byte> data) => _base = data;
 
-            public RustStr m_AsStr() => new(_base.m_AsSlice().ToArray()); // TODO: optimize
+            public RustStr m_AsStr() => RustStr.FromUtf8Unsafe(_base.m_AsSlice()); // TODO: optimize
 
             public void m_Clear() => _base.m_Clear();
 
