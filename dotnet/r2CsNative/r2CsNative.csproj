@@ -11,9 +11,6 @@
     <!--<ProjectReference Include="../r2CsRuntime/r2CsRuntime.csproj" />-->
     <Compile Include="../r2CsRuntime/**/*.cs" Exclude="../r2CsRuntime/obj/**;../r2CsRuntime/bin/**" />
     <PackageReference Include="System.Memory" Version="4.6.3" />
-    <Compile Update="..\r2CsRuntime\Core\Rune.cs">
-      <Link>Core\Rune.cs</Link>
-    </Compile>
   </ItemGroup>
 
   <ItemGroup>

@@ -296,12 +296,6 @@ impl<'db> CodeGenerator<'db> {
     ) -> Option<String> {
         if Some(adt) == self.lang_items.Cow().map(Into::into) {
             Some(self.rust_type_to_cs(args.iter().flatten().nth(0).unwrap()))
-        } else if Some(adt) == self.lang_items.Vec().map(Into::into) {
-            let inner = args.first()?.as_ref()?;
-            Some(format!(
-                "System.Collections.Generic.List<{}>",
-                self.rust_type_to_cs(inner)
-            ))
         } else if Some(adt) == self.lang_items.OwnedBox().map(Into::into)
             || Some(adt) == self.lang_items.Arc().map(Into::into)
             || Some(adt) == self.lang_items.Rc().map(Into::into)

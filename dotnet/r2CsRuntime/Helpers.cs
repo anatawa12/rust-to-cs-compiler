@@ -59,6 +59,7 @@ public static class Helpers
 
     public static RustStr Str(ReadOnlySpan<byte> contents) => new(contents);
     public static crt_Alloc.mod_String.s_String Format(string contents) => (crt_Alloc.mod_String.s_String)(contents);
+    public static crt_Alloc.mod_Vec.s_Vec<T> NewVec<T>(params T[] contents) => new crt_Alloc.mod_Vec.s_Vec<T>(contents);
 }
 
 internal class ReturnException<T> : Exception

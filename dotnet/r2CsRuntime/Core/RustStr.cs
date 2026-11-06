@@ -104,8 +104,6 @@ public class RustStr : crt_Core.mod_Fmt.t_Display, crt_Core.mod_Fmt.t_Debug, crt
     public RustStr Index(Range<nuint> range)
     {
         var (begin, end) = range.GetIndexRage(m_Len());
-        if (begin > m_Len() || end > m_Len()) throw new IndexOutOfRangeException();
-        if (end < begin) throw new PanicException("Index inverse.");
         if (begin != m_Len() && !IsUtf8StartByte(Inner[(int)begin])) throw new PanicException("Begin Not At Char Boundary.");
         if (end != m_Len() && !IsUtf8StartByte(Inner[(int)end])) throw new PanicException("End Not At Char Boundary.");
         return begin == 0 ? new RustStr(data, (int)end) : new RustStr(Inner.Slice((int)begin, (int)end));

@@ -86,6 +86,8 @@ public static class RangeExt
                 default:
                     throw new ArgumentOutOfRangeException();
             }
+            if (lower > len || upper > len) throw new IndexOutOfRangeException();
+            if (upper < lower) throw new PanicException("Index inverse.");
 
             return (lower, upper);
         }

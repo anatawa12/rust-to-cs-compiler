@@ -1453,14 +1453,14 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 if elem_list.elements().next().is_some() {
                     let parts = elem_list.elements().map(|e| self.emit_expr_str_ast(e));
                     code!(
-                        "new List<",
+                        "NewVec<",
                         cg.rust_type_to_cs(&element),
-                        "> { ",
+                        ">(",
                         join(parts, ", "),
-                        " }"
+                        ")"
                     )
                 } else {
-                    code!("new List<", cg.rust_type_to_cs(&element), ">()")
+                    code!("NewVec<", cg.rust_type_to_cs(&element), ">()")
                 }
             }
             eir::Expr::RawCodeExpr(raw_cod) => raw_cod.code().clone(),

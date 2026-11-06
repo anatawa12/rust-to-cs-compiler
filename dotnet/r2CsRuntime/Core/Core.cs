@@ -264,7 +264,6 @@ public static partial class crt_Core
                 public interface t_IntoIterator<AItem>
                 {
                     public mod_Iterator.t_Iterator<AItem> m_IntoIter();
-                    //public static implicit operator t_IntoIterator<AItem>(List<AItem> list) => throw null;
                 }
 
                 public interface t_FromIterator<TSelf, TSelf_Statics, AItem>
@@ -894,98 +893,17 @@ public static class StringExt
         public static string m_New(RustStr str) => str.ToString();
         public static string m_WithCapacity(nuint cap) => "";
         public string m_AsOsStr() => self;
-        public string m_Trim() => self.Trim();
-        public string m_AsStr() => self;
-        public string m_IntoBoxedStr() => self;
-        public IEnumerator<char> m_Chars() => self.GetEnumerator();
-        public nuint m_AsPtr() => throw null;
+
 
         public nuint m_Len() => (nuint)UTF8.GetByteCount(self);
         public crt_Alloc.mod_String.s_String m_ToStringLossy() => (crt_Alloc.mod_String.s_String)self;
         public string m_ToString() => self;
         public string m_Clone() => self;
-        public bool m_Contains(char other) => self.Contains(other);
-        public bool m_Contains(string other) => self.Contains(other, StringComparison.Ordinal);
-        public bool m_EndsWith(string other) => self.EndsWith(other, StringComparison.Ordinal);
         public bool m_EndsWith(RustStr other) => self.EndsWith(other.ToString(), StringComparison.Ordinal);
-        public bool m_StartsWith(string other) => self.StartsWith(other, StringComparison.Ordinal);
         public bool m_StartsWith(RustStr other) => self.StartsWith(other.ToString(), StringComparison.Ordinal);
-        public bool m_EndsWith(char other) => self.EndsWith(other.ToString(), StringComparison.Ordinal);
-        public string m_Replace(char original, string replacement) => self.Replace(original.ToString(), replacement);
-        public string m_TrimStart() => self.TrimStart();
-
-        public System.Collections.Generic.IEnumerator<string> m_Split(char separator) => self.m_Split($"{separator}");
-        public System.Collections.Generic.IEnumerator<string> m_Split(string separator)
-        {
-            var begin = 0;
-            for(;;)
-            {
-                var index = self.IndexOf(separator, begin, StringComparison.Ordinal);
-                if (index < 0) break;
-                yield return self.Substring(begin, index - begin);
-                begin = index + separator.Length;
-            }
-            yield return self.Substring(begin);
-        }
-
-        public crt_Core.mod_Option.s_Option<(string, string)> m_SplitOnce(char separator) => self.m_SplitOnce($"{separator}");
-
-        public crt_Core.mod_Option.s_Option<(string, string)> m_SplitOnce(string separator)
-        {
-            var index = self.IndexOf(separator, StringComparison.Ordinal);
-            if (index < 0) return crt_Core.mod_Option.s_Option<(string, string)>.v_None.instance;
-            return crt_Core.mod_Option.s_Option<(string, string)>.v_Some.ctor((self.Substring(0, index),
-                self.Substring(index + separator.Length)));
-        }
-        public crt_Core.mod_Option.s_Option<nuint> m_Find(char[] chars) => self.m_Find(x => chars.Contains(x));
-        //public crt_Core.mod_Option.s_Option<nuint> m_Find(string subst) => throw null;
-        public crt_Core.mod_Option.s_Option<nuint> m_Find(Func<char, bool> check)
-        {
-            nuint index = 0;
-            foreach (var c in self)
-            {
-                if (check(c)) return crt_Core.mod_Option.s_Option<nuint>.v_Some.ctor(index);
-                index += Utf8Len(c);
-            }
-            return crt_Core.mod_Option.s_Option<nuint>.v_None.instance;
-        }
-
-        public (string, string) m_SplitAt(nuint index) {
-            nuint b = 0;
-            int idx = 0;
-            foreach (var c in self)
-            {
-                if (b == index) return (self.Substring(0, idx), self.Substring(idx));
-                b += Utf8Len(c);
-                idx++;
-            }
-            if (b == index) return (self.Substring(0, idx), self.Substring(idx));
-            throw new PanicException("Index out of bounds or at incorrect place");
-        }
-        public IEnumerator<byte> m_Bytes() => ((IList<byte>)UTF8.GetBytes(self)).GetEnumerator();
-
-        public crt_Core.mod_Option.s_Option<string> m_StripPrefix(string prefix) =>
-            self.StartsWith(prefix, StringComparison.Ordinal)
-                ? crt_Core.mod_Option.s_Option<string>.v_Some.ctor(self.Substring(prefix.Length))
-                : crt_Core.mod_Option.s_Option<string>.v_None.instance;
-
-        public Slice<byte> m_AsBytes() => UTF8.GetBytes(self);
-
-        //public crt_Core.mod_Result.s_Result<ValueTuple, crt_Core.mod_Fmt.s_Error> DisplayFmt(crt_Core.mod_Fmt.s_Formatter f) => f.m_WriteStr(self);
-
-        public string Index(Range<nuint> range) =>
-            UTF8.GetString(self.m_AsBytes().Index(range).ToArray());
 
         public string DebugStr() => self;
-        public string DisplayStr() => self;
     }
-    
-    private static nuint Utf8Len(char c) => c switch
-    {
-        <= '\u007F' => 1,
-        <= '\u07FF' => 2,
-        <= '\uFFFF' => 3,
-    };
 }
 
 public static class CharExt
