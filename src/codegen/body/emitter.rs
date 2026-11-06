@@ -730,11 +730,17 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
             //Expr::Missing => "/* missing */default!".into(),
             eir::Expr::Literal(lit) => {
                 let literal = self.emit_literal_ast(lit);
-                if let Some(ty) = self.eir_sem.type_of_expr_opt(expr) {
-                    let ty = self.rust_type_to_cs(&ty.adjusted());
-                    code!("((", ty, ")", literal, ")")
-                } else {
-                    literal
+                match lit.kind() {
+                    // Those literal are target-typed
+                    eir::LiteralKind::IntNumber(_) | eir::LiteralKind::FloatNumber(_) => {
+                        if let Some(ty) = self.eir_sem.type_of_expr_opt(expr) {
+                            let ty = self.rust_type_to_cs(&ty.adjusted());
+                            code!("((", ty, ")", literal, ")")
+                        } else {
+                            literal
+                        }
+                    }
+                    _ => literal,
                 }
             }
             eir::Expr::PathExpr(path) => match self.eir_sem.resolve_path_with_subst(path.path()) {
@@ -1409,7 +1415,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 "/* loop */ default!".into()
             }
             eir::Expr::FormatArgsExpr(args) => {
-                let mut result = code!(r##"$""##);
+                let mut result = code!(r##"Format($""##);
 
                 for segment in args.segments() {
                     match segment {
@@ -1423,7 +1429,7 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                     }
                 }
 
-                result.w("\"");
+                result.w("\")");
 
                 result
             }
@@ -1522,8 +1528,12 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
             eir::LiteralKind::Bool(b) => b.to_string().into(),
             eir::LiteralKind::IntNumber(v) => v.value().unwrap().to_string().into(),
             eir::LiteralKind::FloatNumber(v) => v.value_string().into(),
-            eir::LiteralKind::Char(c) => fcode!("'{}'", c.value().unwrap().escape_default()),
-            eir::LiteralKind::String(s) => fcode!("\"{}\"", s.value().unwrap().escape_default(),),
+            eir::LiteralKind::Char(c) => {
+                fcode!("((Rune)'{}')", c.value().unwrap().escape_default())
+            }
+            eir::LiteralKind::String(s) => {
+                fcode!("Str(\"{}\"u8)", s.value().unwrap().escape_default(),)
+            }
             eir::LiteralKind::Byte(b) => b.value().unwrap().to_string().into(),
             eir::LiteralKind::ByteString(_) => "/* byte string */ new byte[] {}".into(),
             eir::LiteralKind::CString(_) => "/* cstring */ \"\"".into(),
@@ -1893,9 +1903,32 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                     code!(cs_type_name, "{", join(pattern_codes, ","), "}")
                 }
             }
-            eir::Pat::LiteralPat(literal_pat) => {
-                self.emit_expr_str_ast(&eir::Expr::Literal(literal_pat.literal().clone()))
-            }
+            eir::Pat::LiteralPat(literal_pat) => match literal_pat.literal().kind() {
+                eir::LiteralKind::String(str) => {
+                    code!(
+                        "RustStr{Inner:[",
+                        join(
+                            str.value()
+                                .unwrap()
+                                .as_bytes()
+                                .iter()
+                                .map(|b| format!("{b}")),
+                            ","
+                        ),
+                        "] /*\"",
+                        str.value().unwrap().escape_default().to_string(),
+                        "\"*/}"
+                    )
+                }
+                eir::LiteralKind::Char(c) => {
+                    fcode!(
+                        "Rune{{Value:{int} /*'{c}'*/}}",
+                        int = c.value().unwrap() as u32,
+                        c = c.value().unwrap(),
+                    )
+                }
+                _ => self.emit_expr_str_ast(&eir::Expr::Literal(literal_pat.literal().clone())),
+            },
             eir::Pat::OrPat(or_pat) => {
                 let parts = or_pat.pats().map(|p| self.emit_pattern_ast(p));
                 code!("(", join(parts, " or "), ")")

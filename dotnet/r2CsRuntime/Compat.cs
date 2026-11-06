@@ -43,5 +43,15 @@ namespace System
         }
 
         public int ToIndex(int length) => IsFromEnd ? length - Value : Value; 
+        public int GetOffset(int length)
+        {
+            // https://github.com/dotnet/dotnet/blob/b0f34d51fccc69fd334253924abd8d6853fad7aa/src/runtime/src/libraries/System.Private.CoreLib/src/System/Index.cs#L109-L121
+            int offset = _value;
+            if (IsFromEnd)
+            {
+                offset += length + 1;
+            }
+            return offset;
+        }
     }
 }

@@ -29,20 +29,20 @@ public static partial class crt_Core
                 _builder = builder ?? new StringBuilder();
             }
 
-            public s_DebugStruct m_DebugStruct(string typeName) => new(_builder, typeName);
+            public s_DebugStruct m_DebugStruct(RustStr typeName) => new(_builder, typeName);
 
-            public mod_Result.s_Result<ValueTuple, s_Error> m_WriteChar(char c)
+            public mod_Result.s_Result<ValueTuple, s_Error> m_WriteChar(Rune c)
             {
-                _builder.Append(c);
+                _builder.Append(c.EncodeUtf8());
                 return mod_Result.s_Result<ValueTuple, s_Error>.v_Ok.ctor(default);
             }
 
-            public mod_Result.s_Result<ValueTuple, s_Error> m_WriteStr(string value)
+            public mod_Result.s_Result<ValueTuple, s_Error> m_WriteStr(RustStr value)
             {
                 _builder.Append(value);
                 return mod_Result.s_Result<ValueTuple, s_Error>.v_Ok.ctor(default);
             }
-            public mod_Result.s_Result<ValueTuple, s_Error> m_WriteFmt(string value) => m_WriteStr(value);
+            public mod_Result.s_Result<ValueTuple, s_Error> m_WriteFmt(RustStr value) => m_WriteStr(value);
         }
 
         public class s_DebugStruct
@@ -50,13 +50,13 @@ public static partial class crt_Core
             bool first = true;
             private readonly StringBuilder _builder;
 
-            public s_DebugStruct(StringBuilder builder, string typeName)
+            public s_DebugStruct(StringBuilder builder, RustStr typeName)
             {
                 _builder = builder;
                 builder.Append(typeName).Append(" {");
             }
 
-            public s_DebugStruct m_Field(string field, t_Debug debug)
+            public s_DebugStruct m_Field(RustStr field, t_Debug debug)
             {
                 if (!first) _builder.Append(", ");
                 first = false;
@@ -120,7 +120,7 @@ public static partial class crt_Core
 
             public s_Option<T> m_AsMut() => this;
             public s_Option<T> m_AsRef() => this;
-            public s_Option<T> m_AsDeref() => this;
+            //public s_Option<T> m_AsDeref() => this;
             public s_Option<T> m_Cloned() => this;
             public static s_Option<T> m_Default() => v_None.instance;
 
@@ -414,7 +414,7 @@ public static partial class crt_Core
                 }
             }
 
-            public T m_Unwrap() => m_UnwrapOrElse(() => throw new PanicException($"Unwrap on value: {(inner as mod_Fmt.t_Debug)?.DebugStr() ?? "value not implements Debug"}"));
+            public T m_Unwrap() => m_UnwrapOrElse(() => throw new PanicException($"Unwrap on value: {(inner as mod_Fmt.t_Debug)?.DebugStr() ?? new RustStr("value not implements Debug"u8)}"));
         }
     }
 
@@ -601,6 +601,8 @@ public static class NonZeroExt
     extension(crt_Core.mod_Num.mod_Nonzero.s_NonZero<byte, crt_Core.mod_Num.mod_NicheTypes.s_NonZeroU8Inner> self)
     {
         public static crt_Core.mod_Result.s_Result<crt_Core.mod_Num.mod_Nonzero.s_NonZero<byte, crt_Core.mod_Num.mod_NicheTypes.s_NonZeroU8Inner>,
+            crt_Core.mod_Num.mod_Error.s_ParseIntError> m_FromStr(RustStr data) => m_FromStr(data.ToString());
+        public static crt_Core.mod_Result.s_Result<crt_Core.mod_Num.mod_Nonzero.s_NonZero<byte, crt_Core.mod_Num.mod_NicheTypes.s_NonZeroU8Inner>,
                 crt_Core.mod_Num.mod_Error.s_ParseIntError> m_FromStr(string data)
         {
             if (byte.TryParse(data, out byte result) && result != 0)
@@ -742,7 +744,7 @@ public static partial class crt_Core
             {
                 public interface Statics
                 {
-                    public crt_Core.mod_Result.s_Result<T_Self, A_Error> m_FromStr(string l_s_0);
+                    public crt_Core.mod_Result.s_Result<T_Self, A_Error> m_FromStr(RustStr l_s_0);
                 }
             }
         }
@@ -782,15 +784,16 @@ public static partial class crt_Core
             public class s_Error : crt_Core.mod_Error.t_Error
             {
                 private s_ErrorKind error;
-                private string message;
+                private crt_Alloc.mod_String.s_String message;
 
-                public s_Error(s_ErrorKind error, string message)
+                public s_Error(s_ErrorKind error, crt_Alloc.mod_String.s_String message)
                 {
                     this.error = error;
                     this.message = message;
                 }
 
-                public static s_Error m_New(s_ErrorKind error, string message) => new s_Error(error, message);
+                public static s_Error m_New(s_ErrorKind error, crt_Alloc.mod_String.s_String message) => new s_Error(error, message);
+                public static s_Error m_New(s_ErrorKind error, string message) => new s_Error(error, (crt_Alloc.mod_String.s_String)message);
                 public static s_Error m_New<T>(s_ErrorKind error, T t)
                     where T : mod_Fmt.t_Display => m_New(error, t.m_ToString());
 
@@ -863,20 +866,20 @@ public static class DebugDisplayExt
 {
     extension(crt_Core.mod_Fmt.t_Debug self)
     {
-        public string DebugStr() => FormatterToString(self.DebugFmt);
+        public crt_Alloc.mod_String.s_String DebugStr() => FormatterToString(self.DebugFmt);
     }
     
     extension(crt_Core.mod_Fmt.t_Display self)
     {
-        public string m_ToString() => FormatterToString(self.DisplayFmt);
+        public crt_Alloc.mod_String.s_String m_ToString() => FormatterToString(self.DisplayFmt);
     }
 
-    private static string FormatterToString(Func<crt_Core.mod_Fmt.s_Formatter, crt_Core.mod_Result.s_Result<ValueTuple, crt_Core.mod_Fmt.s_Error>> fmt)
+    private static crt_Alloc.mod_String.s_String FormatterToString(Func<crt_Core.mod_Fmt.s_Formatter, crt_Core.mod_Result.s_Result<ValueTuple, crt_Core.mod_Fmt.s_Error>> fmt)
     {
         var builder = new StringBuilder();
         var result = fmt(new crt_Core.mod_Fmt.s_Formatter(builder));
         if (!result.m_IsOk()) throw new PanicException("Formatting");
-        return builder.ToString();
+        return (crt_Alloc.mod_String.s_String)builder.ToString();
     }
 }
 
@@ -887,9 +890,8 @@ public static class StringExt
     extension(string self)
     {
         public static string m_From(string _) => _;
-        //public static string m_FromUtf8Lossy(Slice<byte> _) => throw null;
-        public static string m_Default() => "";
-        public static string m_New() => "";
+        public static string m_From(RustStr str) => str.ToString();
+        public static string m_New(RustStr str) => str.ToString();
         public static string m_WithCapacity(nuint cap) => "";
         public string m_AsOsStr() => self;
         public string m_Trim() => self.Trim();
@@ -899,13 +901,15 @@ public static class StringExt
         public nuint m_AsPtr() => throw null;
 
         public nuint m_Len() => (nuint)UTF8.GetByteCount(self);
-        public string m_ToStringLossy() => self;
+        public crt_Alloc.mod_String.s_String m_ToStringLossy() => (crt_Alloc.mod_String.s_String)self;
         public string m_ToString() => self;
         public string m_Clone() => self;
         public bool m_Contains(char other) => self.Contains(other);
         public bool m_Contains(string other) => self.Contains(other, StringComparison.Ordinal);
         public bool m_EndsWith(string other) => self.EndsWith(other, StringComparison.Ordinal);
+        public bool m_EndsWith(RustStr other) => self.EndsWith(other.ToString(), StringComparison.Ordinal);
         public bool m_StartsWith(string other) => self.StartsWith(other, StringComparison.Ordinal);
+        public bool m_StartsWith(RustStr other) => self.StartsWith(other.ToString(), StringComparison.Ordinal);
         public bool m_EndsWith(char other) => self.EndsWith(other.ToString(), StringComparison.Ordinal);
         public string m_Replace(char original, string replacement) => self.Replace(original.ToString(), replacement);
         public string m_TrimStart() => self.TrimStart();
@@ -967,11 +971,10 @@ public static class StringExt
 
         public Slice<byte> m_AsBytes() => UTF8.GetBytes(self);
 
-        public crt_Core.mod_Result.s_Result<ValueTuple, crt_Core.mod_Fmt.s_Error> DisplayFmt(
-            crt_Core.mod_Fmt.s_Formatter f) => f.m_WriteStr(self);
+        //public crt_Core.mod_Result.s_Result<ValueTuple, crt_Core.mod_Fmt.s_Error> DisplayFmt(crt_Core.mod_Fmt.s_Formatter f) => f.m_WriteStr(self);
 
         public string Index(Range<nuint> range) =>
-            UTF8.GetString(self.m_AsBytes().Index(range).ToArray())
+            UTF8.GetString(self.m_AsBytes().Index(range).ToArray());
 
         public string DebugStr() => self;
         public string DisplayStr() => self;

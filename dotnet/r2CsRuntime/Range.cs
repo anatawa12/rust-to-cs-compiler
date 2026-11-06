@@ -53,5 +53,41 @@ public static class RangeExt
     extension(Range<nuint> self)
     {
         public IEnumerator<nuint> GetEnumerator() => throw null;
+
+        internal (nuint begin, nuint end) GetIndexRage(nuint len)
+        {
+            nuint lower;
+            switch (self.LowerBound)
+            {
+                case Range<nuint>.Bound.Unbounded:
+                    lower = 0;
+                    break;
+                case Range<nuint>.Bound.Inclusive:
+                    lower = self.Lower;
+                    break;
+                case Range<nuint>.Bound.Exclusive:
+                    lower = self.Lower + 1;
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException();
+            }
+            nuint upper;
+            switch (self.UpperBound)
+            {
+                case Range<nuint>.Bound.Unbounded:
+                    upper = len;
+                    break;
+                case Range<nuint>.Bound.Inclusive:
+                    upper = self.Upper + 1;
+                    break;
+                case Range<nuint>.Bound.Exclusive:
+                    upper = self.Upper;
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException();
+            }
+
+            return (lower, upper);
+        }
     }
 }

@@ -123,27 +123,6 @@ impl MutatingEirVisitor for ExpandMacroLikeFunctions<'_, '_> {
                         }))
                     }
                 );
-            } else if f.name(db).symbol().as_str() == "clear"
-                && (Some(f_adt) == self.lang_items.OsString().map(hir::Adt::Struct)
-                    || Some(f_adt) == self.lang_items.String().map(hir::Adt::Struct))
-            {
-                replace_node!(
-                    expr as Expr::CallExpr(call_expr) = {
-                        let method_call = call_expr.into_inner();
-                        let mut args = method_call.arg_list.into_inner().args.into_iter();
-                        let receiver = args.next().unwrap();
-                        Expr::from(new_eir_node!(BinExpr {
-                            lhs: receiver,
-                            rhs: Expr::from(new_eir_node!(RawCodeExpr {
-                                code: r##""""##.into(),
-                                divergent: false,
-                                node_info: NodeInfo::None,
-                            })),
-                            op_kind: BinaryOp::Assignment { op: None },
-                            node_info: method_call.node_info.cast(),
-                        }))
-                    }
-                );
             }
         }
 

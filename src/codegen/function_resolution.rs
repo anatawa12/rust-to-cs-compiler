@@ -168,18 +168,6 @@ impl<'db> CodeGenerator<'db> {
             };
         }
 
-        if f.name(self.db).as_str() == "new"
-            && let hir::ItemContainer::Impl(impl_) = f.container(self.db)
-            && let self_ty = impl_.self_ty(self.db)
-            && let Some(adt) = self_ty.as_adt()
-            && let hir::Adt::Struct(struct_) = adt
-            && Some(struct_) == lang_items.OsStr()
-        {
-            return ResolvedFunction::OmitCall {
-                comment: "/*omit OsStr::new method*/".into(),
-            };
-        }
-
         // Option<T>::unwrap_or_default() => Option<T>::unwrap_or_else(T::default)
         if f.name(self.db).as_str() == "unwrap_or_default"
             && let hir::ItemContainer::Impl(impl_) = f.container(self.db)

@@ -1,3 +1,5 @@
+using VrcGetVpm;
+
 namespace r2CsRuntime;
 
 public static class Helpers
@@ -54,6 +56,9 @@ public static class Helpers
             _ => throw new NotImplementedException()
         };
     }
+
+    public static RustStr Str(ReadOnlySpan<byte> contents) => new(contents);
+    public static crt_Alloc.mod_String.s_String Format(string contents) => (crt_Alloc.mod_String.s_String)(contents);
 }
 
 internal class ReturnException<T> : Exception

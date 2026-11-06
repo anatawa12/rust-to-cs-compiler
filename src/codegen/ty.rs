@@ -262,8 +262,8 @@ impl<'db> CodeGenerator<'db> {
         let name = builtin.name();
         match name.as_str() {
             "bool" => "bool",
-            "char" => "char",
-            "str" => "string",
+            "char" => "Rune",
+            "str" => "RustStr",
             "i8" => "sbyte",
             "i16" => "short",
             "i32" => "int",
@@ -296,8 +296,6 @@ impl<'db> CodeGenerator<'db> {
     ) -> Option<String> {
         if Some(adt) == self.lang_items.Cow().map(Into::into) {
             Some(self.rust_type_to_cs(args.iter().flatten().nth(0).unwrap()))
-        } else if Some(adt) == self.lang_items.String().map(Into::into) {
-            Some("string".to_string())
         } else if Some(adt) == self.lang_items.Vec().map(Into::into) {
             let inner = args.first()?.as_ref()?;
             Some(format!(
@@ -332,6 +330,7 @@ impl<'db> CodeGenerator<'db> {
         //|| Some(adt) == self.lang_items.CStr().map(Into::into)
         {
             Some("string".to_string())
+            // */
         } else if Some(adt) == self.lang_items.Url().map(Into::into) {
             Some("System.Uri".to_string())
         } else {

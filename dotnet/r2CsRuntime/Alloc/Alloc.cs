@@ -2,7 +2,7 @@ using r2CsRuntime;
 
 namespace VrcGetVpm;
 
-public static class crt_Alloc
+public static partial class crt_Alloc
 {
     public static class mod_Collections
     {
