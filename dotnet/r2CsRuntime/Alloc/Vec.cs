@@ -174,24 +174,9 @@ public static partial class crt_Alloc
                 }
             }
 
-            // slice functions?
-            public Slice<T> Index(Range<nuint> range)
-            {
-                var (idx, end) = range.GetIndexRage(m_Len());
-                return Slice<T>.Of(body, (int)idx, (int)(end - idx));
-            }
-
-            public IEnumerator<Slice<T>> m_Windows(nuint windowLen)
-            {
-                if (windowLen > int.MaxValue) throw new PanicException("Size Exceeds");
-                if (windowLen == 0) throw new PanicException("Window Len 0");
-                var windowLenInt = (int)windowLen;
-
-                for (int i = 0; i + windowLenInt <= length; i++)
-                {
-                    yield return Slice<T>.Of(body, i, windowLenInt);
-                }
-            }
+            // slice functions
+            public Slice<T> Index(Range<nuint> range) => m_AsSlice().Index(range);
+            public IEnumerator<Slice<T>> m_Windows(nuint windowLen) => m_AsSlice().m_Windows(windowLen);
         }
     }
 }

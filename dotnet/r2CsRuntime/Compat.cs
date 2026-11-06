@@ -21,6 +21,11 @@ namespace System.Runtime.CompilerServices
             
         }
     }
+
+    public interface IUnion
+    {
+        public object? Value { get; }
+    }
 }
 
 namespace System
