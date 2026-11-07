@@ -184,7 +184,6 @@ public static partial class crt_Alloc
 
             // slice functions
             public Slice<T> Index(Range<nuint> range) => m_AsSlice().Index(range);
-            public IEnumerator<Slice<T>> m_Windows(nuint windowLen) => m_AsSlice().m_Windows(windowLen);
         }
     }
 }
