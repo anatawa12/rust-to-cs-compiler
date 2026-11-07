@@ -19,3 +19,4 @@ artifacts/
 
 /r2CsRuntime/Core/Generated.cs
 /r2CsRuntime/Alloc/Generated.cs
+/r2CsRuntime/Std/Generated.cs

@@ -2,5 +2,6 @@
 members = [
     "exalloc",
     "excore",
+    "exstd",
 ]
 resolver = "3"
