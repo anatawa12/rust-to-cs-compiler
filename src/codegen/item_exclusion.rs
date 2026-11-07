@@ -120,7 +120,8 @@ fn cfg_disabled(attrs: hir::AttrsWithOwner, krate: hir::Crate, db: &dyn HirDatab
     }
 }
 
-pub trait R2csHasAttr: hir::HasCrate {
+pub trait R2csHasAttr: Copy {
+    fn krate0(self, db: &dyn HirDatabase) -> hir::Crate;
     fn attrs(self, db: &dyn HirDatabase) -> Option<impl Iterator<Item = syntax::ast::Attr>>;
 }
 trait R2csHasAttrBlanket {}
@@ -135,6 +136,10 @@ where
     T: hir::HasSource + hir::HasCrate + R2csHasAttrBlanket + Copy,
     <T as hir::HasSource>::Ast: syntax::ast::HasAttrs,
 {
+    fn krate0(self, db: &dyn HirDatabase) -> hir::Crate {
+        self.krate(db)
+    }
+
     fn attrs(self, db: &dyn HirDatabase) -> Option<impl Iterator<Item = syntax::ast::Attr>> {
         use syntax::ast::HasAttrs;
         Some(self.source(db)?.value.attrs())
@@ -142,6 +147,10 @@ where
 }
 
 impl R2csHasAttr for hir::Module {
+    fn krate0(self, db: &dyn HirDatabase) -> hir::Crate {
+        self.krate(db)
+    }
+
     fn attrs(self, db: &dyn HirDatabase) -> Option<impl Iterator<Item = syntax::ast::Attr>> {
         use syntax::ast::HasAttrs;
 
@@ -156,12 +165,22 @@ impl R2csHasAttr for hir::Module {
     }
 }
 
+impl R2csHasAttr for hir::Crate {
+    fn krate0(self, _: &dyn HirDatabase) -> hir::Crate {
+        self
+    }
+
+    fn attrs(self, db: &dyn HirDatabase) -> Option<impl Iterator<Item = syntax::ast::Attr>> {
+        R2csHasAttr::attrs(self.root_module(db), db)
+    }
+}
+
 fn collect_attrs<T>(f: T, db: &dyn HirDatabase) -> Vec<syntax::ast::Meta>
 where
     T: R2csHasAttr,
 {
     use syntax::ast::Meta;
-    let krate = f.krate(db);
+    let krate = f.krate0(db);
     let Some(attrs) = f.attrs(db) else {
         eprintln!("collect_attrs: attrs none",);
         return vec![];
@@ -207,6 +226,34 @@ where
         }
         _ => false,
     })
+}
+
+pub fn attr_value<T>(f: T, path: &str, db: &dyn HirDatabase) -> Option<String>
+where
+    T: R2csHasAttr,
+{
+    collect_attrs(f, db)
+        .into_iter()
+        .flat_map(|attr| match attr {
+            syntax::ast::Meta::KeyValueMeta(key_value) => {
+                let segments: Vec<_> = key_value.path().unwrap().segments().collect();
+                if let [segment] = segments.as_slice()
+                    && segment.name_ref().unwrap().text() == path
+                {
+                    let Some(syntax::ast::Expr::Literal(literal)) = key_value.expr() else {
+                        panic!("Invalid attr {path}")
+                    };
+                    let syntax::ast::LiteralKind::String(string) = literal.kind() else {
+                        panic!("Invalid attr {path}")
+                    };
+                    Some(string.value().unwrap().into_owned())
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        })
+        .next()
 }
 
 pub fn is_r2cs_native<T>(f: T, db: &dyn HirDatabase) -> bool

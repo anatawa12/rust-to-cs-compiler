@@ -154,12 +154,15 @@ impl CodeGenerator<'_> {
     }
     fn mod_simple_name_impl(&self, module: hir::Module, _child: Option<hir::Module>) -> String {
         if module.is_crate_root(self.db) {
-            let crate_name = module.krate(self.db).display_name(self.db);
+            let krate = module.krate(self.db);
+            let override_name =
+                crate::codegen::item_exclusion::attr_value(krate, "r2cs_crate_name", self.db);
+            let crate_name = krate.display_name(self.db);
             let crate_name = crate_name.as_ref().map(|x| x.as_str()).unwrap_or_else(|| {
                 eprintln!("Unsupported: module (crate) does not have a name");
                 "unnamed_crate"
             });
-            self::crate_name(crate_name)
+            self::crate_name(override_name.as_deref().unwrap_or(crate_name))
         } else {
             let Some(parent) = module.parent(self.db) else {
                 panic!(
