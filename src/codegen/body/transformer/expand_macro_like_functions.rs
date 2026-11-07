@@ -19,7 +19,11 @@ impl MutatingEirVisitor for ExpandMacroLikeFunctions<'_, '_> {
             def: hir::EnumVariant,
         ) -> bool {
             let db = visitor.db;
-            if visitor.lang_items.Cow() == Some(def.parent_enum(db)) {
+            if visitor
+                .lang_items
+                .CowBorrowed()
+                .is_some_and(|borrowed| def == borrowed)
+            {
                 return true;
             }
             if visitor.lang_items.Either() == Some(def.parent_enum(db))

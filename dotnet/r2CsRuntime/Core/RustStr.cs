@@ -3,7 +3,7 @@ using r2CsRuntime;
 
 namespace VrcGetVpm;
 
-public struct RustStr : crt_Core.mod_Fmt.t_Display, crt_Core.mod_Fmt.t_Debug, crt_Core.mod_Cmp.t_Ord<RustStr>
+public partial struct RustStr : crt_Core.mod_Fmt.t_Display, crt_Core.mod_Fmt.t_Debug, crt_Core.mod_Cmp.t_Ord<RustStr>
 {
     private Slice<byte> _slice;
 
@@ -173,6 +173,15 @@ public struct RustStr : crt_Core.mod_Fmt.t_Display, crt_Core.mod_Fmt.t_Debug, cr
     public static bool operator !=(RustStr a, RustStr b) => !(a == b);
 
     public nuint m_AsPtr() => throw null; // TODO: remove
+}
+
+public partial struct RustStr
+{
+    // Cow::Owned support. This is fake type
+    public static class v_Owned
+    {
+        public static RustStr ctor(crt_Alloc.mod_String.s_String data) => data.m_AsStr();
+    }
 }
 
 static class Utf8Utility
