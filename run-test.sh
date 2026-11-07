@@ -4,6 +4,10 @@ set -eu
 
 cargo build --release
 
+time RUST_BACKTRACE=1 ./target/release/rust-to-cs-compiler --manifest-path=exstd/excore --crate-name=excore > dotnet/r2CsRuntime/Core/Generated.cs.tmp \
+  && cat < dotnet/r2CsRuntime/Core/Generated.cs.tmp > dotnet/r2CsRuntime/Core/Generated.cs
+rm dotnet/r2CsRuntime/Core/Generated.cs.tmp
+
 time RUST_BACKTRACE=1 ./target/release/rust-to-cs-compiler --manifest-path=exstd/exalloc --crate-name=exalloc > dotnet/r2CsRuntime/Alloc/Generated.cs.tmp \
   && cat < dotnet/r2CsRuntime/Alloc/Generated.cs.tmp > dotnet/r2CsRuntime/Alloc/Generated.cs
 rm dotnet/r2CsRuntime/Alloc/Generated.cs.tmp

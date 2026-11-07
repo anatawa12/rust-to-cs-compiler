@@ -28,6 +28,17 @@ namespace System.Runtime.CompilerServices
     }
 }
 
+namespace System.Diagnostics.CodeAnalysis
+{
+    [AttributeUsage(AttributeTargets.Constructor)]
+    sealed class SetsRequiredMembersAttribute : Attribute
+    {
+        public SetsRequiredMembersAttribute()
+        {
+        }
+    }
+}
+
 namespace System
 {
     public struct Index

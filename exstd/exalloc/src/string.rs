@@ -18,6 +18,10 @@ impl String {
     pub fn clear(&mut self) {
         self.0.clear();
     }
+
+    pub fn push_str(&mut self, s: &str) {
+        self.0.extend_from_slice(s.as_bytes());
+    }
 }
 
 #[allow(clippy::derivable_impls)]
@@ -50,5 +54,12 @@ impl Ord for String {
 impl PartialEq<str> for String {
     fn eq(&self, other: &str) -> bool {
         self.as_str() == other
+    }
+}
+
+impl excore::fmt::Write for String {
+    fn write_str(&mut self, s: &str) -> excore::fmt::Result {
+        self.push_str(s);
+        Ok(())
     }
 }

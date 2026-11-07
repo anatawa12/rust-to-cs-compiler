@@ -2,6 +2,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Net.Mail;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -15,69 +16,10 @@ public static partial class crt_Core
 {
     public static partial class mod_Fmt
     {
-        public interface s_Error
+        public partial class s_Formatter
         {
-            
-        }
-
-        public class s_Formatter
-        {
-            private StringBuilder _builder;
-
-            public s_Formatter(StringBuilder? builder = null)
-            {
-                _builder = builder ?? new StringBuilder();
-            }
-
-            public s_DebugStruct m_DebugStruct(RustStr typeName) => new(_builder, typeName);
-
-            public mod_Result.s_Result<ValueTuple, s_Error> m_WriteChar(Rune c)
-            {
-                _builder.Append(c.EncodeUtf8());
-                return mod_Result.s_Result<ValueTuple, s_Error>.v_Ok.ctor(default);
-            }
-
-            public mod_Result.s_Result<ValueTuple, s_Error> m_WriteStr(RustStr value)
-            {
-                _builder.Append(value);
-                return mod_Result.s_Result<ValueTuple, s_Error>.v_Ok.ctor(default);
-            }
-            public mod_Result.s_Result<ValueTuple, s_Error> m_WriteFmt(RustStr value) => m_WriteStr(value);
+            public mod_Result.s_Result<ValueTuple, s_Error> m_WriteChar(Rune c) => m_WriteStr(c.EncodeUtf8());
             public mod_Result.s_Result<ValueTuple, s_Error> m_WriteFmt(crt_Alloc.mod_String.s_String value) => m_WriteStr(value.m_AsStr());
-        }
-
-        public class s_DebugStruct
-        {
-            bool first = true;
-            private readonly StringBuilder _builder;
-
-            public s_DebugStruct(StringBuilder builder, RustStr typeName)
-            {
-                _builder = builder;
-                builder.Append(typeName).Append(" {");
-            }
-
-            public s_DebugStruct m_Field(RustStr field, t_Debug debug)
-            {
-                if (!first) _builder.Append(", ");
-                first = false;
-                _builder.Append(field).Append(": ");
-                debug.DebugFmt(new s_Formatter(_builder));
-                return this;
-            }
-
-            public mod_Result.s_Result<ValueTuple, s_Error> m_Finish()
-            {
-                _builder.Append("}");
-                return mod_Result.s_Result<ValueTuple, s_Error>.v_Ok.ctor(default);
-            }
-        }
-
-        public interface t_Debug
-        {
-            public global::VrcGetVpm.crt_Core.mod_Result.s_Result<global::System.ValueTuple,
-                    global::VrcGetVpm.crt_Core.mod_Fmt.s_Error>
-                DebugFmt(global::VrcGetVpm.crt_Core.mod_Fmt.s_Formatter p_0);
         }
 
         public interface t_Display
@@ -86,50 +28,13 @@ public static partial class crt_Core
                     global::VrcGetVpm.crt_Core.mod_Fmt.s_Error>
                 DisplayFmt(global::VrcGetVpm.crt_Core.mod_Fmt.s_Formatter p_0);
         }
-
-        public interface t_Write
-        {
-        }
     }
 
     public static partial class mod_Option
     {
-        [Union]
-        public sealed class s_Option<T> : mod_Default.t_Default<s_Option<T>, s_Option<T>.Statics>, IEnumerable<T>
+        public sealed partial class s_Option<P_T> : IEnumerable<P_T>
         {
-            private object inner;
-            public object Value => inner;
-            public void set(s_Option<T> o) => inner = o.inner;
-            public s_Option(v_Some value) => inner = value;
-            public s_Option(v_None value) => inner = value;
-
-            public class v_Some
-            {
-                public T f_0;
-
-                public static s_Option<T> ctor(T f0) => new v_Some() { f_0 = f0 };
-            }
-
-            public class v_None
-            {
-                public static s_Option<T> instance = new v_None();
-
-                private v_None()
-                {
-                }
-            }
-
-            public s_Option<T> m_AsMut() => this;
-            public s_Option<T> m_AsRef() => this;
-            //public s_Option<T> m_AsDeref() => this;
-            public s_Option<T> m_Cloned() => this;
-            public static s_Option<T> m_Default() => v_None.instance;
-
-            public bool m_IsNone() => this is v_None;
-            public bool m_IsSome() => this is v_Some;
-            public T m_Unwrap() => this is v_Some some ? some.f_0 : throw new NullReferenceException();
-
-            public s_Option<T> m_Take()
+            public s_Option<P_T> m_Take()
             {
                 switch (this.inner)
                 {
@@ -141,76 +46,8 @@ public static partial class crt_Core
                     default: return this;
                 }
             }
-
-            public mod_Result.s_Result<T, E> m_OkOr<E>(E e) => this switch
-            {
-                v_Some ok => mod_Result.s_Result<T, E>.v_Ok.ctor(ok.f_0),
-                v_None _ => mod_Result.s_Result<T, E>.v_Err.ctor(e),
-                null => throw new NullReferenceException(),
-            };
-            public mod_Result.s_Result<T, E> m_OkOrElse<E>(Func<E> e) => this switch
-            {
-                v_Some ok => mod_Result.s_Result<T, E>.v_Ok.ctor(ok.f_0),
-                v_None _ => mod_Result.s_Result<T, E>.v_Err.ctor(e()),
-                null => throw new NullReferenceException(),
-            };
-
-            public s_Option<R> m_AndThen<R>(Func<T, s_Option<R>> f) => this switch
-            {
-                v_Some ok => f(ok.f_0),
-                v_None _ => s_Option<R>.v_None.instance,
-                null => throw new NullReferenceException(),
-            };
             
-            public s_Option<R> m_Map<R>(Func<T, R> f) => this switch
-            {
-                v_Some ok => s_Option<R>.v_Some.ctor(f(ok.f_0)),
-                v_None _ => s_Option<R>.v_None.instance,
-                null => throw new NullReferenceException(),
-            };
-
-            public s_Option<T> m_Or(s_Option<T> or) => this switch
-            {
-                v_Some ok => ok,
-                v_None _ => or,
-                null => throw new NullReferenceException(),
-            };
-
-            public s_Option<T> m_Filter(Func<T, bool> filter) => this switch
-            {
-                v_Some ok when filter(ok.f_0) => ok,
-                _ => v_None.instance,
-            };
-
-            public T m_UnwrapOr(T or) => this switch
-            {
-                v_Some ok => ok.f_0,
-                v_None _ => or,
-                null => throw new NullReferenceException(),
-            };
-
-            public T m_UnwrapOrElse(Func<T> or) => this switch
-            {
-                v_Some ok => ok.f_0,
-                v_None _ => or(),
-                null => throw new NullReferenceException(),
-            };
-
-            public s_Option<T> m_OrElse(Func<s_Option<T>> func)=> this switch
-            {
-                v_Some ok => ok,
-                v_None _ => func(),
-                null => throw new NullReferenceException(),
-            };
-
-            public bool m_IsSomeAnd(Func<T, bool> func) => this switch
-            {
-                v_Some ok => func(ok.f_0),
-                v_None _ => false,
-                null => throw new NullReferenceException(),
-            };
-            
-            public T m_GetOrInsertWith(Func<T> inner)
+            public P_T m_GetOrInsertWith(Func<P_T> inner)
             {
                 switch (this)
                 {
@@ -234,14 +71,9 @@ public static partial class crt_Core
             }
 #endif
 
-            public struct Statics : mod_Default.t_Default<s_Option<T>, Statics>.Statics
+            public IEnumerator<P_T> GetEnumerator()
             {
-                public s_Option<T> m_Default() => v_None.instance;
-            }
-
-            public IEnumerator<T> GetEnumerator()
-            {
-                throw new NotImplementedException();
+                if (this is v_Some some) yield return some.f_0;
             }
 
             IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
@@ -250,54 +82,12 @@ public static partial class crt_Core
 
     public static partial class mod_Iter
     {
-        public static partial class mod_Traits
-        {
-            public static partial class mod_Iterator
-            {
-                public interface t_Iterator<Item>
-                {
-                    mod_Option.s_Option<Item> m_Next();
-                }
-            }
-
-            public static class mod_Collect
-            {
-                public interface t_IntoIterator<AItem>
-                {
-                    public mod_Iterator.t_Iterator<AItem> m_IntoIter();
-                }
-
-                public interface t_FromIterator<TSelf, TSelf_Statics, AItem>
-                    where TSelf: t_FromIterator<TSelf, TSelf_Statics, AItem>
-                    where TSelf_Statics: struct, t_FromIterator<TSelf, TSelf_Statics, AItem>.Statics
-                {
-                    public interface Statics
-                    {
-                        public crt_VrcGetVpm.mod_Utils.mod_Json.s_JsonArray m_FromIter(
-                            System.Collections.Generic.IEnumerable<AItem> l_iter_0);
-                    }
-                }
-            }
-        }
-
-        public static partial class mod_Adapters
-        {
-            public static partial class mod_Fuse
-            {
-                public class s_Fuse<P_I>
-                {
-                    
-                }
-            }
-        }
-
         public static partial class mod_Sources
         {
             public static partial class mod_FromFn
             {
                 public static IEnumerator<T> m_FromFn<T>(Func<mod_Option.s_Option<T>> func)
                 {
-                    // TODO: this does not present double move
                     while (true)
                     {
                         if (func() is mod_Option.s_Option<T>.v_Some { f_0: var result })
@@ -312,96 +102,9 @@ public static partial class crt_Core
 
     public static partial class mod_Result
     {
-        [Union]
-        public sealed class s_Result<T, E>
+        public sealed partial class s_Result<P_T, P_E>
         {
-            private object inner;
-            public object Value => inner;
-            public void set(s_Result<T, E> o) => inner = o.inner;
-            public s_Result(v_Ok value) => inner = value;
-            public s_Result(v_Err value) => inner = value;
-
-            public mod_Option.s_Option<T> m_Ok() => this switch
-            {
-                v_Ok v => mod_Option.s_Option<T>.v_Some.ctor(v.f_0),
-                _ => mod_Option.s_Option<T>.v_None.instance
-            };
-
-            public mod_Option.s_Option<E> m_Err() => this switch
-            {
-                v_Err v => mod_Option.s_Option<E>.v_Some.ctor(v.f_0),
-                _ => mod_Option.s_Option<E>.v_None.instance
-            };
-
-            public bool m_IsOk() => this is v_Ok _;
-
-            public class v_Ok
-            {
-                public required T f_0;
-
-                public static s_Result<T, E> ctor(T f0) => new v_Ok { f_0 = f0 };
-            }
-            
-            public class v_Err
-            {
-                public required E f_0;
-
-                public static s_Result<T, E> ctor(E f0) => new v_Err { f_0 = f0 };
-            }
-
-            public s_Result<U, E> m_Map<U>(Func<T, U> f)
-            {
-                switch (this)
-                {
-                    case v_Ok ok:
-                        return s_Result<U, E>.v_Ok.ctor(f(ok.f_0));
-                    case v_Err err:
-                        return s_Result<U, E>.v_Err.ctor(err.f_0);
-                    case null:
-                        throw new NullReferenceException();
-                }
-            }
-
-            public s_Result<T, U> m_MapErr<U>(Func<E, U> f)
-            {
-                switch (this)
-                {
-                    case v_Ok ok:
-                        return s_Result<T, U>.v_Ok.ctor(ok.f_0);
-                    case v_Err err:
-                        return s_Result<T, U>.v_Err.ctor(f(err.f_0));
-                    case null:
-                        throw new NullReferenceException();
-                }
-            }
-
-            public s_Result<U, E> m_AndThen<U>(Func<T, s_Result<U, E>> f)
-            {
-                switch (this)
-                {
-                    case v_Ok ok:
-                        return f(ok.f_0);
-                    case v_Err err:
-                        return s_Result<U, E>.v_Err.ctor(err.f_0);
-                    case null:
-                        throw new NullReferenceException();
-                }
-            }
-
-            public T m_UnwrapOr(T value)
-            {
-                switch (this)
-                {
-                    case v_Ok ok:
-                        return ok.f_0;
-                    case v_Err _:
-                        return value;
-                    case null:
-                        throw new NullReferenceException();
-                }
-            }
-
-            public T m_UnwrapOrElse(Func<T> fallback)
+            public P_T m_UnwrapOrElse(Func<P_T> fallback)
             {
                 switch (this)
                 {
@@ -413,89 +116,22 @@ public static partial class crt_Core
                         throw new NullReferenceException();
                 }
             }
-
-            public T m_Unwrap() => m_UnwrapOrElse(() => throw new PanicException($"Unwrap on value: {(inner as mod_Fmt.t_Debug)?.DebugStr() ?? (crt_Alloc.mod_String.s_String)"value not implements Debug"}"));
-        }
-    }
-
-    public static partial class mod_Clone
-    {
-        public interface t_Clone<Self>
-        {
-            public Self m_Clone();
         }
     }
 
     public static partial class mod_Marker
     {
-        public interface t_Send {}
-        public interface t_Sync {}
-
-        public interface t_Copy<Self> : mod_Clone.t_Clone<Self>
-        {
-        }
-
         public class s_PhantomData<T>
         {
             public static s_PhantomData<T> instance = new();
             public static s_PhantomData<T> m_Default() => instance;
         }
-
-        public interface t_Unpin
-        {
-            
-        }
-    }
-
-    public static partial class mod_Default
-    {
-        public interface t_Default<Self, SelfStatics>
-            where SelfStatics : struct, t_Default<Self, SelfStatics>.Statics
-        {
-            // static members only
-            public interface Statics
-            {
-                public Self m_Default();
-            }
-        }
     }
 
     public static partial class mod_Cmp
     {
-        public interface t_PartialEq<TOther>
+        public partial class s_Ordering
         {
-            public bool m_Eq(TOther p_0);
-        }
-
-        public interface t_Eq<TSelf> : t_PartialEq<TSelf>
-        {
-        }
-
-        public interface t_PartialOrd<Rhs> : t_PartialEq<Rhs>
-        {
-            public mod_Option.s_Option<s_Ordering> m_PartialCmp(Rhs other);
-        }
-
-        public interface t_Ord<TSelf> : t_PartialOrd<TSelf>
-        {
-            s_Ordering m_Cmp(TSelf p_0);
-        }
-
-        public class s_Ordering
-        {
-            public bool m_IsEq() => this is v_Equal;
-            public bool m_IsNe() => this is not v_Equal;
-            public bool m_IsLt() => this is v_Less;
-            public bool m_IsLe() => this is v_Less or v_Equal;
-            public bool m_IsGt() => this is v_Greater;
-            public bool m_IsGe() => this is v_Greater or v_Equal;
-
-            public s_Ordering m_ThenWith(Func<s_Ordering> other) => this switch
-            {
-                v_Equal => other(),
-                _ => this,
-            };
-
             public int CsOrder() => this switch
             {
                 v_Equal => 0,
@@ -503,65 +139,6 @@ public static partial class crt_Core
                 v_Less => -1,
                 _ => throw new InvalidOperationException($"Bad Value: {this}"),
             };
-
-            public class v_Equal : s_Ordering
-            {
-                public static v_Equal instance = new v_Equal();
-            }
-
-            public class v_Greater : s_Ordering
-            {
-                public static v_Greater instance = new v_Greater();
-            }
-
-            public class v_Less : s_Ordering
-            {
-                public static v_Less instance = new v_Less();
-            }
-        }
-    }
-
-    public static partial class mod_Error
-    {
-        public interface t_Error: mod_Fmt.t_Display, mod_Fmt.t_Debug
-        {
-        }
-    }
-
-    public static partial class mod_Convert
-    {
-        public interface t_From<TSelf, TSelf_Statics, T>
-            where TSelf: t_From<TSelf, TSelf_Statics, T>
-            where TSelf_Statics: struct, t_From<TSelf, TSelf_Statics, T>.Statics 
-        {
-            interface Statics
-            {
-                public TSelf m_From(T p_0);
-            }
-        }
-        
-        public interface t_TryFrom<TSelf, TSelfStatics, T, A_Error>
-            where TSelf: t_TryFrom<TSelf, TSelfStatics, T, A_Error>
-            where TSelfStatics: struct, t_TryFrom<TSelf, TSelfStatics, T, A_Error>.Statics
-        {
-            interface Statics
-            {
-                public mod_Result.s_Result<TSelf, A_Error> m_TryFrom(T p_0);
-            }
-        }
-
-        public interface t_Into<TOut>
-        {
-            
-        }
-
-        public interface t_AsRef<TOut>
-        {
-            public TOut m_AsRef();
-        }
-
-        public class s_Infallible
-        {
         }
     }
 }
@@ -761,14 +338,6 @@ public static partial class crt_Core
         }
     }
 
-    public static class mod_Borrow
-    {
-        public interface t_Borrow<T>
-        {
-            public T m_Borrow();
-        }
-    }
-
     public static class mod_Future
     {
         public static partial class mod_Ready
@@ -777,76 +346,19 @@ public static partial class crt_Core
         }
     }
 
-    public static class mod_Io
+    public static partial class mod_Io
     {
-        public static class mod_Error
+        public static partial class mod_Error
         {
-            public class s_Error : crt_Core.mod_Error.t_Error
+            public partial class s_Error : crt_Core.mod_Error.t_Error
             {
-                private s_ErrorKind error;
-                private crt_Alloc.mod_String.s_String message;
-
-                public s_Error(s_ErrorKind error, crt_Alloc.mod_String.s_String message)
-                {
-                    this.error = error;
-                    this.message = message;
-                }
-
-                public static s_Error m_New(s_ErrorKind error, crt_Alloc.mod_String.s_String message) => new s_Error(error, message);
-                public static s_Error m_New(s_ErrorKind error, string message) => new s_Error(error, (crt_Alloc.mod_String.s_String)message);
-                public static s_Error m_New<T>(s_ErrorKind error, T t)
-                    where T : mod_Fmt.t_Display => m_New(error, t.m_ToString());
-
-                public s_ErrorKind m_Kind() => error;
-
-                public crt_Core.mod_Result.s_Result<ValueTuple, crt_Core.mod_Fmt.s_Error> DisplayFmt(
-                    crt_Core.mod_Fmt.s_Formatter f) => f.m_WriteStr(this.message.m_AsStr());
-
                 public crt_Core.mod_Result.s_Result<ValueTuple, crt_Core.mod_Fmt.s_Error> DebugFmt(crt_Core.mod_Fmt.s_Formatter p_0)
                 {
-                    return p_0.m_WriteStr(this.message.m_AsStr());
+                    return p_0.m_WriteStr(this.f_message.m_AsStr());
                 }
 
                 public static s_Error m_From(crt_SerdeJson.mod_Error.s_Error lValue0) =>
                     m_New(s_ErrorKind.v_InvalidData.instance, lValue0);
-            }
-
-            [Union]
-            public class s_ErrorKind
-            {
-                private object m_value;
-                public object Value => m_value;
-
-                public s_ErrorKind(v_Interrupted value) => m_value = value;
-                public class v_Interrupted
-                {
-                    public static s_ErrorKind instance = new v_Interrupted();
-                }
-                public s_ErrorKind(v_InvalidInput value) => m_value = value;
-                public class v_InvalidInput
-                {
-                    public static s_ErrorKind instance = new v_InvalidInput();
-                }
-                public s_ErrorKind(v_InvalidData value) => m_value = value;
-                public class v_InvalidData
-                {
-                    public static s_ErrorKind instance = new v_InvalidData();
-                }
-                public s_ErrorKind(v_UnexpectedEof value) => m_value = value;
-                public class v_UnexpectedEof
-                {
-                    public static s_ErrorKind instance = new v_UnexpectedEof();
-                }
-                public s_ErrorKind(v_NotFound value) => m_value = value;
-                public class v_NotFound
-                {
-                    public static s_ErrorKind instance = new v_NotFound();
-                }
-                public s_ErrorKind(v_AlreadyExists value) => m_value = value;
-                public class v_AlreadyExists
-                {
-                    public static s_ErrorKind instance = new v_AlreadyExists();
-                }
             }
         }
     }
@@ -876,10 +388,10 @@ public static class DebugDisplayExt
 
     private static crt_Alloc.mod_String.s_String FormatterToString(Func<crt_Core.mod_Fmt.s_Formatter, crt_Core.mod_Result.s_Result<ValueTuple, crt_Core.mod_Fmt.s_Error>> fmt)
     {
-        var builder = new StringBuilder();
-        var result = fmt(new crt_Core.mod_Fmt.s_Formatter(builder));
+        var builder = crt_Alloc.mod_String.s_String.m_New();
+        var result = fmt(new crt_Core.mod_Fmt.s_Formatter { f_write = builder });
         if (!result.m_IsOk()) throw new PanicException("Formatting");
-        return (crt_Alloc.mod_String.s_String)builder.ToString();
+        return builder;
     }
 }
 
@@ -904,13 +416,5 @@ public static class StringExt
         public bool m_StartsWith(RustStr other) => self.StartsWith(other.ToString(), StringComparison.Ordinal);
 
         public string DebugStr() => self;
-    }
-}
-
-public static class CharExt
-{
-    extension(char self)
-    {
-        public bool m_IsAsciiWhitespace() => self is '\t' or '\n' or '\x0C' or '\r' or ' ';
     }
 }

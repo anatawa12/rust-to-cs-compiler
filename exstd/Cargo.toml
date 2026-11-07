@@ -1,5 +1,6 @@
 [workspace]
 members = [
     "exalloc",
+    "excore",
 ]
 resolver = "3"

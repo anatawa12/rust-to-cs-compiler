@@ -263,7 +263,7 @@ impl<'db> CodeGenerator<'db> {
 
                 // Methods from all impl blocks
                 for &impl_ in impls {
-                    self.emit_impl_items(out, &cs_name, impl_);
+                    self.emit_impl_items(out, &cs_name, &generics, impl_);
                 }
 
                 out.close_brace();
@@ -310,7 +310,7 @@ impl<'db> CodeGenerator<'db> {
 
                 // Methods from all impl blocks
                 for &impl_ in impls {
-                    self.emit_impl_items(out, &cs_name, impl_);
+                    self.emit_impl_items(out, &cs_name, &generics, impl_);
                 }
 
                 out.close_brace();
@@ -387,7 +387,7 @@ impl<'db> CodeGenerator<'db> {
         impl_trait = ?impl_.trait_(self.db).as_ref().map(|x| x.debug_display(self.db)),
         impl_self = %impl_.self_ty(self.db).debug_display(self.db),
     ))]
-    fn emit_impl_items(&self, out: &mut Code, cs_name: &str, impl_: Impl) {
+    fn emit_impl_items(&self, out: &mut Code, cs_name: &str, generics: &str, impl_: Impl) {
         let db = self.db;
         if !should_emit(impl_, db) {
             return;
@@ -518,7 +518,7 @@ impl<'db> CodeGenerator<'db> {
                     &trait_ref,
                     f,
                     impl_,
-                    cs_name,
+                    &format!("{cs_name}{generics}"),
                     CsFunctionType::TraitStaticStruct,
                 );
             }

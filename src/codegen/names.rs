@@ -111,6 +111,10 @@ impl CodeGenerator<'_> {
     }
 
     pub fn function_name(&self, function: hir::Function) -> String {
+        if let Some(override_name) = r2cs_name_override(function, self.db) {
+            return override_name;
+        }
+
         // We name special name for some special trait implementation
         let db = self.db;
         match function.container(db) {

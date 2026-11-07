@@ -113,6 +113,8 @@ public static partial class crt_Alloc
                     m_Push(iteratorInner.Current);
             }
 
+            public void m_ExtendFromSlice(Slice<P_T> body) => ExtendFromSpan(body.AsSpan());
+
             public void ExtendFromSpan(ReadOnlySpan<P_T> data)
             {
                 m_Reserve((nuint)data.Length);
