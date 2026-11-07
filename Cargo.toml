@@ -26,6 +26,7 @@ workspace = true
 
 [workspace]
 members = [".", "ra_internal", "test_ra_analyze_only"]
+exclude = ["exstd"]
 
 [workspace.lints.clippy]
 disallowed_methods = "deny"

@@ -4,6 +4,10 @@ set -eu
 
 cargo build --release
 
+time RUST_BACKTRACE=1 ./target/release/rust-to-cs-compiler --manifest-path=exstd/exalloc --crate-name=exalloc > dotnet/r2CsRuntime/Alloc/Generated.cs.tmp \
+  && cat < dotnet/r2CsRuntime/Alloc/Generated.cs.tmp > dotnet/r2CsRuntime/Alloc/Generated.cs
+rm dotnet/r2CsRuntime/Alloc/Generated.cs.tmp
+
 time RUST_BACKTRACE=1 ./target/release/rust-to-cs-compiler \
   --manifest-path="./vrc-get/vrc-get-vpm/Cargo.toml" \
   --crate-name="vrc_get_vpm" \
