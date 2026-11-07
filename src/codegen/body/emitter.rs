@@ -1716,14 +1716,6 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
             .unwrap()
         }
 
-        fn is_string<'db>(cg: &CodeGenerator<'db>, ty: &hir::Type<'db>) -> bool {
-            ty.as_adt()
-                .is_some_and(|x| Some(x) == cg.lang_items.OsString().map(From::from))
-                || ty
-                    .as_adt()
-                    .is_some_and(|x| Some(x) == cg.lang_items.OsStr().map(From::from))
-        }
-
         fn is_slice<'db>(cg: &CodeGenerator<'db>, ty: &hir::Type<'db>) -> bool {
             ty.as_slice().is_some()
                 || ty
