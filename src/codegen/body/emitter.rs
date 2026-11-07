@@ -900,7 +900,9 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 let receiver_part = field_expr.expr();
                 let receiver_type = self.eir_sem.type_of_expr(receiver_part);
                 let receiver = self.emit_expr_str_ast(receiver_part);
-                let adjuster = self.emit_adjuster(receiver_type, field_expr.name_ref().text());
+                let adjuster = self.emit_adjuster(receiver_type, || {
+                    format!("access {}", field_expr.name_ref().text())
+                });
                 match self.eir_sem.resolve_field(field_expr) {
                     None => {
                         eprintln!("Unresolved field at {}", self.eir_sem.location(field_expr));
@@ -917,6 +919,17 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
             eir::Expr::CallExpr(call_expr) => {
                 let callee = call_expr.expr();
                 let args = call_expr.arg_list().args();
+                let args_codes = args.into_iter().enumerate().map(|(i, a)| {
+                    let adjuster = if let Some(ty) = self.eir_sem.type_of_expr_opt(a) {
+                        self.emit_adjuster(ty, || "calling".to_string())
+                    } else {
+                        ""
+                    };
+                    let mut code = self.emit_expr_str_ast(a);
+                    code.w(adjuster);
+                    code
+                });
+
                 if let eir::Expr::PathExpr(path_expr) = &callee {
                     match self.eir_sem.resolve_path_with_subst(path_expr.path()) {
                         Some((PathResolution::Def(def), _))
@@ -926,16 +939,12 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                             let generic_args = expr_type.expect_adt_of(def.adt(self.db));
                             let callee_type =
                                 self.constructable_name_cs(&Constructable::new(def, generic_args));
-                            let args_str = args.map(|a| self.emit_expr_str_ast(a));
-                            return code!(callee_type, ".ctor(", join(args_str, ", "), ")");
+                            return code!(callee_type, ".ctor(", join(args_codes, ", "), ")");
                         }
                         _ if let eir::Path::BuiltinItem(builtin) = path_expr.path()
                             && let Some(resolved) = self.resolve_builtin_function(builtin) =>
                         {
-                            return self.emit_call_expr(
-                                resolved,
-                                args.into_iter().map(|a| self.emit_expr_str_ast(a)),
-                            );
+                            return self.emit_call_expr(resolved, args_codes);
                         }
                         Some((PathResolution::Def(ModuleDef::Function(f)), subst)) => {
                             let generics = subst
@@ -949,31 +958,14 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                                     }
                                 });
                             let resolved = self.resolve_function(f, generics);
-                            return self.emit_call_expr(
-                                resolved,
-                                args.into_iter().enumerate().map(|(i, a)| {
-                                    let adjuster = if i == 0 {
-                                        if let Some(ty) = self.eir_sem.type_of_expr_opt(a) {
-                                            self.emit_adjuster(ty, f.name(self.db).as_str())
-                                        } else {
-                                            ""
-                                        }
-                                    } else {
-                                        ""
-                                    };
-                                    let mut code = self.emit_expr_str_ast(a);
-                                    code.w(adjuster);
-                                    code
-                                }),
-                            );
+                            return self.emit_call_expr(resolved, args_codes);
                         }
                         _ => {}
                     }
                 }
 
                 let callee_str = self.emit_expr_str_ast(callee);
-                let args_str = args.map(|a| self.emit_expr_str_ast(a));
-                code!(callee_str, "(", join(args_str, ", "), ")")
+                code!(callee_str, "(", join(args_codes, ", "), ")")
             }
             eir::Expr::AwaitExpr(await_expr) => {
                 let inner_str = self.emit_expr_str_ast(await_expr.expr());
@@ -1045,8 +1037,27 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
             }
             eir::Expr::PrefixExpr(prefix_expr) => {
                 let inner_str = self.emit_expr_str_ast(prefix_expr.expr());
+
                 match prefix_expr.op_kind() {
-                    UnaryOp::Deref => code!("(/* deref_op */", inner_str, ")"),
+                    UnaryOp::Deref => code!(
+                        "(/* deref_op */",
+                        inner_str,
+                        self.emit_adjuster(
+                            {
+                                let outer_type = self.eir_sem.type_of_expr(expr);
+                                let inner_type = self.eir_sem.type_of_expr(prefix_expr.expr());
+                                hir::TypeInfo {
+                                    adjusted: Some(
+                                        outer_type.adjusted.unwrap_or(outer_type.original),
+                                    )
+                                    .take_if(|adjusted| adjusted != &inner_type.original),
+                                    original: inner_type.original,
+                                }
+                            },
+                            || "deref".to_string()
+                        ),
+                        ")"
+                    ),
                     UnaryOp::Not => code!("!(", inner_str, ")"),
                     UnaryOp::Neg => code!("-(", inner_str, ")"),
                 }
@@ -1686,7 +1697,11 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
         }
     }
 
-    fn emit_adjuster(&self, receiver_type: hir::TypeInfo<'db>, name: &str) -> &'static str {
+    fn emit_adjuster(
+        &self,
+        receiver_type: hir::TypeInfo<'db>,
+        reason: impl FnOnce() -> String,
+    ) -> &'static str {
         fn ref_removed<'db>(cg: &CodeGenerator<'db>, ty: hir::Type<'db>) -> hir::Type<'db> {
             std::iter::successors(Some(ty), |c| {
                 c.as_reference().map(|x| x.0).or_else(|| {
@@ -1703,14 +1718,10 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
 
         fn is_string<'db>(cg: &CodeGenerator<'db>, ty: &hir::Type<'db>) -> bool {
             ty.as_adt()
-                .is_some_and(|x| Some(x) == cg.lang_items.String().map(From::from))
-                || ty
-                    .as_adt()
-                    .is_some_and(|x| Some(x) == cg.lang_items.OsString().map(From::from))
+                .is_some_and(|x| Some(x) == cg.lang_items.OsString().map(From::from))
                 || ty
                     .as_adt()
                     .is_some_and(|x| Some(x) == cg.lang_items.OsStr().map(From::from))
-                || ty.as_builtin().is_some_and(|x| x.is_str())
         }
 
         fn is_slice<'db>(cg: &CodeGenerator<'db>, ty: &hir::Type<'db>) -> bool {
@@ -1732,16 +1743,21 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
             && let original_ref_removed = ref_removed(self.cg, receiver_type.original.clone())
             && let adjusted_ref_removed = ref_removed(self.cg, adjusted.clone())
             && original_ref_removed != adjusted_ref_removed
+            && self.cg.rust_type_to_cs(&original_ref_removed)
+                != self.cg.rust_type_to_cs(&adjusted_ref_removed)
             && !(is_string(self.cg, &original_ref_removed)
                 && is_string(self.cg, &adjusted_ref_removed))
             && !(is_slice(self.cg, &original_ref_removed)
                 && is_slice(self.cg, &adjusted_ref_removed))
             && !(is_path(self.cg, &original_ref_removed) && is_path(self.cg, &adjusted_ref_removed))
+            && !adjusted_ref_removed.is_fn()
+            && adjusted_ref_removed.as_dyn_trait().is_none()
         {
             tracing::trace!(
-                "adjusted type {original} to {adjusted} to access {name}\n{original_debug:?}\n{adjusted_debug:?}",
+                "adjusted type {original} to {adjusted} to {reason}\n{original_debug:?}\n{adjusted_debug:?}",
                 original = receiver_type.original.debug_display(self.db),
                 adjusted = adjusted.debug_display(self.db),
+                reason = reason(),
                 original_debug = receiver_type.original,
                 adjusted_debug = adjusted,
             );
