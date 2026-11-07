@@ -5,7 +5,15 @@ namespace r2CsRuntime;
 
 public partial struct Slice<T> : IEnumerable<T>
 {
-    private union Base(T[]);
+    private union Base(T[])
+    {
+        public static bool operator ==(Base a, Base b) => (a, b) switch
+        {
+            (T[] aReal, T[] bReal) => aReal == bReal,
+            _ => false
+        };
+        public static bool operator !=(Base a, Base b) => !(a == b); 
+    }
 
     private Base _base;
     private int _offset;
@@ -86,5 +94,18 @@ public partial struct Slice<T> : IEnumerable<T>
         {
             yield return new (_base, _offset + i, windowLenInt);
         }
+    }
+
+    public crt_Core.mod_Option.s_Option<(nuint f_start, nuint f_end)> m_SubsliceRange(Slice<T> subslice)
+    {
+        if (subslice._base != this._base)
+            return crt_Core.mod_Option.s_Option<(nuint f_start, nuint f_end)>.v_None.instance;
+        // return None if the subslice is larger than me
+        if (subslice._offset < this._offset) return crt_Core.mod_Option.s_Option<(nuint f_start, nuint f_end)>.v_None.instance;
+        var subsliceEnd = subslice._offset + subslice._len;
+        var thisEnd = this._offset + this._len;
+        if (thisEnd < subsliceEnd) return crt_Core.mod_Option.s_Option<(nuint f_start, nuint f_end)>.v_None.instance;
+        return crt_Core.mod_Option.s_Option<(nuint f_start, nuint f_end)>.v_Some.ctor((
+            (nuint)(subslice._offset - this._offset), (nuint)(subsliceEnd - this._offset)));
     }
 }

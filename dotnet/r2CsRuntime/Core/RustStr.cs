@@ -174,7 +174,7 @@ public partial struct RustStr : crt_Core.mod_Fmt.t_Display, crt_Core.mod_Fmt.t_D
     public static bool operator==(RustStr a, RustStr b) => a.Inner.SequenceEqual(b.Inner);
     public static bool operator !=(RustStr a, RustStr b) => !(a == b);
 
-    public nuint m_AsPtr() => throw null; // TODO: remove
+    public crt_Core.mod_Option.s_Option<(nuint f_start, nuint f_end)> m_SubstrRange(RustStr substr) => m_AsBytes().m_SubsliceRange(substr.m_AsBytes());
 }
 
 public partial struct RustStr
