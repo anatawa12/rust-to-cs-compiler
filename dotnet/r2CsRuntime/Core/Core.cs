@@ -43,6 +43,7 @@ public static partial class crt_Core
                 return mod_Result.s_Result<ValueTuple, s_Error>.v_Ok.ctor(default);
             }
             public mod_Result.s_Result<ValueTuple, s_Error> m_WriteFmt(RustStr value) => m_WriteStr(value);
+            public mod_Result.s_Result<ValueTuple, s_Error> m_WriteFmt(crt_Alloc.mod_String.s_String value) => m_WriteStr(value.m_AsStr());
         }
 
         public class s_DebugStruct
@@ -413,7 +414,7 @@ public static partial class crt_Core
                 }
             }
 
-            public T m_Unwrap() => m_UnwrapOrElse(() => throw new PanicException($"Unwrap on value: {(inner as mod_Fmt.t_Debug)?.DebugStr() ?? new RustStr("value not implements Debug"u8)}"));
+            public T m_Unwrap() => m_UnwrapOrElse(() => throw new PanicException($"Unwrap on value: {(inner as mod_Fmt.t_Debug)?.DebugStr() ?? (crt_Alloc.mod_String.s_String)"value not implements Debug"}"));
         }
     }
 
@@ -799,11 +800,11 @@ public static partial class crt_Core
                 public s_ErrorKind m_Kind() => error;
 
                 public crt_Core.mod_Result.s_Result<ValueTuple, crt_Core.mod_Fmt.s_Error> DisplayFmt(
-                    crt_Core.mod_Fmt.s_Formatter f) => f.m_WriteStr(this.message);
+                    crt_Core.mod_Fmt.s_Formatter f) => f.m_WriteStr(this.message.m_AsStr());
 
                 public crt_Core.mod_Result.s_Result<ValueTuple, crt_Core.mod_Fmt.s_Error> DebugFmt(crt_Core.mod_Fmt.s_Formatter p_0)
                 {
-                    return p_0.m_WriteStr(this.message);
+                    return p_0.m_WriteStr(this.message.m_AsStr());
                 }
 
                 public static s_Error m_From(crt_SerdeJson.mod_Error.s_Error lValue0) =>
@@ -896,7 +897,7 @@ public static class StringExt
 
 
         public nuint m_Len() => (nuint)UTF8.GetByteCount(self);
-        public crt_Alloc.mod_String.s_String m_ToStringLossy() => (crt_Alloc.mod_String.s_String)self;
+        public RustStr m_ToStringLossy() => ((crt_Alloc.mod_String.s_String)self).m_AsStr(); // Since Cow is mapped to str
         public string m_ToString() => self;
         public string m_Clone() => self;
         public bool m_EndsWith(RustStr other) => self.EndsWith(other.ToString(), StringComparison.Ordinal);

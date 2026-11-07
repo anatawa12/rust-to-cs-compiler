@@ -41,7 +41,8 @@ public static partial class crt_Alloc
 
             public nuint m_Len() => (nuint)length;
             public bool m_IsEmpty() => length == 0;
-            public static implicit operator Slice<T>(s_Vec<T> self) => self.m_AsSlice();
+            //public static implicit operator Slice<T>(s_Vec<T> self) => self.m_AsSlice();
+            public Slice<T> m_Deref() => m_AsSlice();
 
             public IEnumerator<T> m_Iter() => body.Take(length).GetEnumerator();
             public IEnumerator<T> m_IntoIter() => m_Iter();
@@ -103,11 +104,6 @@ public static partial class crt_Alloc
                 length -= 1;
                 return result;
             }
-            
-            public crt_Core.mod_Option.s_Option<T> m_GetMut(nuint index) =>
-                index < m_Len()
-                    ? crt_Core.mod_Option.s_Option<T>.v_Some.ctor(body[index])
-                    : crt_Core.mod_Option.s_Option<T>.v_None.instance;
 
             public void m_Extend(IEnumerable<T> iterator) => m_Extend(iterator.GetEnumerator());
             public void m_Extend(IEnumerator<T> iterator)

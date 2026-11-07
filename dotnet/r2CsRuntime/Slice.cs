@@ -54,6 +54,8 @@ public partial struct Slice<T> : IEnumerable<T>
             }
             : crt_Core.mod_Option.s_Option<T>.v_None.instance;
 
+    public crt_Core.mod_Option.s_Option<T> m_GetMut(nuint index) => m_Get(index);
+
     public (Slice<T>, Slice<T>) m_SplitAt(nuint index)
     {
         if (index > (nuint)_len) throw  new IndexOutOfRangeException();
