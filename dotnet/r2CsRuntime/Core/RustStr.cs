@@ -80,15 +80,15 @@ public partial struct RustStr : crt_Core.mod_Fmt.t_Display, crt_Core.mod_Fmt.t_D
 
     public System.Collections.Generic.IEnumerator<RustStr> m_Split(Rune separator) => SplitImpl(separator.ToBytes(stackalloc byte[4]).ToArray());
     public System.Collections.Generic.IEnumerator<RustStr> m_Split(RustStr separator) => SplitImpl(separator._slice.AsMemory());
-    private System.Collections.Generic.IEnumerator<RustStr> SplitImpl(Memory<byte> separator)
+    private System.Collections.Generic.IEnumerator<RustStr> SplitImpl(Memory<byte> separator, bool inclusive = false)
     {
         var begin = 0;
         for(;;)
         {
             var index = Inner.Slice(begin).IndexOf(separator.Span);
             if (index < 0) break;
-            yield return new RustStr(Inner.Slice(begin, index - begin));
-            begin = index + separator.Length;
+            yield return new RustStr(Inner.Slice(begin, index + (inclusive ? separator.Length : 0)));
+            begin += index + separator.Length;
         }
         yield return new RustStr(Inner.Slice(begin));
     }
@@ -159,6 +159,8 @@ public partial struct RustStr : crt_Core.mod_Fmt.t_Display, crt_Core.mod_Fmt.t_D
         0 => crt_Core.mod_Cmp.s_Ordering.v_Equal.instance,
         > 0 => crt_Core.mod_Cmp.s_Ordering.v_Greater.instance,
     };
+
+    public IEnumerator<RustStr> m_Lines() => SplitImpl("\n"u8.ToArray(), inclusive: true);
 
     public override string ToString()
     {
