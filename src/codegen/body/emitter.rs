@@ -1716,13 +1716,6 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
             .unwrap()
         }
 
-        fn is_slice<'db>(cg: &CodeGenerator<'db>, ty: &hir::Type<'db>) -> bool {
-            ty.as_slice().is_some()
-                || ty
-                    .as_adt()
-                    .is_some_and(|x| Some(x) == cg.lang_items.Vec().map(From::from))
-        }
-
         fn is_path<'db>(cg: &CodeGenerator<'db>, ty: &hir::Type<'db>) -> bool {
             ty.as_adt()
                 .is_some_and(|x| Some(x) == cg.lang_items.Path().map(From::from))
@@ -1737,8 +1730,6 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
             && original_ref_removed != adjusted_ref_removed
             && self.cg.rust_type_to_cs(&original_ref_removed)
                 != self.cg.rust_type_to_cs(&adjusted_ref_removed)
-            && !(is_slice(self.cg, &original_ref_removed)
-                && is_slice(self.cg, &adjusted_ref_removed))
             && !(is_path(self.cg, &original_ref_removed) && is_path(self.cg, &adjusted_ref_removed))
             && !adjusted_ref_removed.is_fn()
             && adjusted_ref_removed.as_dyn_trait().is_none()
