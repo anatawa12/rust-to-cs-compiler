@@ -5,6 +5,7 @@ mod codegen;
 use crate::codegen::output::Code;
 use cfg::{CfgAtom, CfgDiff};
 use hir::db::HirDatabase;
+use hir::sym::as_str;
 use hir::{Crate, Symbol};
 use ide_db::base_db::{SourceDatabase, all_crates};
 use ide_db::{FxHashMap, RootDatabase};
@@ -74,6 +75,43 @@ fn load_workspace_from_cargo(
     (db, vfs, crates)
 }
 
+struct Args {
+    manifest_path: String,
+    crate_name: String,
+}
+
+fn parse_args() -> Result<Args, lexopt::Error> {
+    use lexopt::prelude::*;
+
+    let mut manifest_path = None;
+    let mut crate_name = None;
+
+    let mut parser = lexopt::Parser::from_env();
+    while let Some(arg) = parser.next()? {
+        match arg {
+            Long("manifest-path") => {
+                manifest_path = Some(parser.value()?.parse()?);
+            }
+            Long("crate-name") => {
+                crate_name = Some(parser.value()?.parse()?);
+            }
+            Long("help") => {
+                println!(
+                    "Usage: {} --manifest-path=MANIFEST-PATH",
+                    std::env::args().next().unwrap()
+                );
+                std::process::exit(0);
+            }
+            _ => return Err(arg.unexpected()),
+        }
+    }
+
+    Ok(Args {
+        manifest_path: manifest_path.ok_or("missing argument --manifest-path")?,
+        crate_name: crate_name.ok_or("missing argument --crate-name")?,
+    })
+}
+
 fn main() {
     tracing_subscriber::registry()
         .with(
@@ -91,7 +129,10 @@ fn main() {
         .init();
     std::panic::set_hook(Box::new(tracing_panic::panic_hook));
 
-    let manifest_path = std::path::Path::new("./vrc-get/vrc-get-vpm/Cargo.toml")
+    // parse args
+    let args = parse_args().unwrap();
+
+    let manifest_path = std::path::Path::new(&args.manifest_path)
         .canonicalize()
         .unwrap();
 
@@ -107,10 +148,11 @@ fn main() {
         for &krate in &crates {
             let name = krate.display_name(db);
             //println!("crate map: {name:?}: {krate:?}");
-            if !matches!(
-                name.as_ref().map(|x| x.crate_name().as_str()),
-                Some("vrc_get_vpm")
-            ) {
+            if name
+                .as_ref()
+                .map(|x| x.crate_name().as_str())
+                .is_none_or(|x| x != args.crate_name.as_str())
+            {
                 continue;
             }
             eprintln!("Transpiling crate: {}", name.unwrap());
