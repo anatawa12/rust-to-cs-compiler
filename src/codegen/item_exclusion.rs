@@ -262,3 +262,10 @@ where
 {
     has_attr(f, "r2cs_native", db)
 }
+
+pub fn r2cs_name_override<T>(f: T, db: &dyn HirDatabase) -> Option<String>
+where
+    T: R2csHasAttr,
+{
+    attr_value(f, "r2cs_name_override", db)
+}

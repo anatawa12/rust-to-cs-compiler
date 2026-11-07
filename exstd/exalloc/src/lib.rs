@@ -1,4 +1,4 @@
-#![cfg_attr(r2cs, r2cs_crate_name = "alloc")]
+#![cfg_attr(r2cs, r2cs_name_override = "crt_Alloc")]
 
 mod string;
 mod vec;
