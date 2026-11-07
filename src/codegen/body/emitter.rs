@@ -349,6 +349,11 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                 if let Some(value_expr) = ret_expr.expr() {
                     out.w("return ")
                         .w(self.emit_expr_str_ast(value_expr))
+                        .w(
+                            self.emit_adjuster(self.eir_sem.type_of_expr(value_expr), || {
+                                "return".to_string()
+                            }),
+                        )
                         .wln(";");
                     EmittedExprInfo::diverging()
                 } else {
@@ -1357,7 +1362,13 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
             eir::Expr::ReturnExpr(return_expr) => {
                 let val = return_expr
                     .expr()
-                    .map(|e| self.emit_expr_str_ast(e))
+                    .map(|e| {
+                        self.emit_expr_str_ast(e)
+                            .w(self.emit_adjuster(self.eir_sem.type_of_expr(e), || {
+                                "return".to_string()
+                            }))
+                            .take()
+                    })
                     .unwrap_or_else(|| "0 /* unit */".into());
                 code!(
                     "/* return-expr */ throw r2CsRuntime.Helpers.Returns<object>(",

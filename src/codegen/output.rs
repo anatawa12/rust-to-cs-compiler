@@ -56,6 +56,10 @@ impl Code {
         self.w("\n")
     }
 
+    pub fn take(&mut self) -> Self {
+        std::mem::take(self)
+    }
+
     fn write_str(&mut self, s: &str) -> &mut Self {
         if self.pending_indent == 0 {
             self.buf.push_str(s);
