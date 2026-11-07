@@ -1745,8 +1745,6 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
             && original_ref_removed != adjusted_ref_removed
             && self.cg.rust_type_to_cs(&original_ref_removed)
                 != self.cg.rust_type_to_cs(&adjusted_ref_removed)
-            && !(is_string(self.cg, &original_ref_removed)
-                && is_string(self.cg, &adjusted_ref_removed))
             && !(is_slice(self.cg, &original_ref_removed)
                 && is_slice(self.cg, &adjusted_ref_removed))
             && !(is_path(self.cg, &original_ref_removed) && is_path(self.cg, &adjusted_ref_removed))
