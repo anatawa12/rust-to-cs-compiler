@@ -294,6 +294,26 @@ impl<'g, 'db> LowerToEirCtx<'g, 'db> {
         }
     }
 
+    pub(super) fn expand_pat_macro(&self, macro_expr: ast::MacroPat) -> eir::Pat {
+        let macro_call = &macro_expr.macro_call().unwrap();
+
+        if self.should_inline_macro(macro_call) {
+            // Macro that expands
+            let expanded = self.eir_sem.expand_macro_call(macro_call).unwrap().value;
+            if let Some(expr) = ast::Pat::cast(expanded.clone()) {
+                self.lower(expr)
+            } else {
+                panic!("{:?} at {}", expanded, self.eir_sem.location(macro_call))
+            }
+        } else {
+            panic!(
+                "unsupported macro {macro_path} at {loc}",
+                macro_path = macro_call.path().unwrap().syntax().text(),
+                loc = self.eir_sem.location(macro_call),
+            );
+        }
+    }
+
     pub(super) fn should_inline_macro(&self, macro_call: &ast::MacroCall) -> bool {
         let Some(macro_) = self.eir_sem.resolve_macro_call(macro_call) else {
             panic!(

@@ -463,6 +463,7 @@ def_eir!(
 
     fn lower_to_eir(self, ctx: &LowerToEirCtx) -> Eir {
         match self {
+            ast::Pat::MacroPat(macro_pat) => ctx.expand_pat_macro(macro_pat),
             test => panic!("unsupported: {:?}", test),
         }
     }
