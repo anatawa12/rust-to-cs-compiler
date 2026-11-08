@@ -1,5 +1,5 @@
 use crate::codegen::body::eir::*;
-use crate::codegen::body::transformer::has_stmt_in_expr;
+use crate::codegen::body::transformer::{has_stmt_in_expr, take_eir};
 use crate::new_eir_node;
 use std::convert::Infallible;
 use std::mem::{replace, take};
@@ -48,6 +48,23 @@ impl MutatingEirVisitor for ExpandBlockExpr<'_, '_> {
             );
         }
         stmt.accept_children_mut(self)
+    }
+
+    fn visit_expr(&mut self, expr: &mut Expr) -> ControlFlow<Self::Break> {
+        if let Expr::BinExpr(bin_expr) = expr
+            && bin_expr.op_kind() == (BinaryOp::Assignment { op: None })
+            && has_stmt_in_expr(bin_expr.rhs())
+        {
+            replace_node!(
+                expr as Expr::BinExpr(mut bin_expr) = {
+                    let mut initializer = take_eir(&mut bin_expr.as_mut().rhs);
+                    tail_expr_to_assignment(&mut initializer, bin_expr.lhs());
+                    initializer
+                }
+            );
+        }
+
+        expr.accept_children_mut(self)
     }
 }
 
