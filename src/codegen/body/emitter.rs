@@ -1080,6 +1080,9 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
             eir::Expr::IfExpr(if_expr) => self.emit_if_expr_as_expr(if_expr, expr),
             eir::Expr::BlockExpr(block_expr) => match block_expr.modifier() {
                 None => self.emit_simple_block_as_expr(block_expr, expr),
+                Some(eir::BlockModifier::Unsafe) => {
+                    self.emit_simple_block_as_expr(block_expr, expr)
+                }
                 Some(eir::BlockModifier::Async) => {
                     let mut body_code = Code::new();
                     let return_type = (self.eir_sem.type_of_expr(expr))
