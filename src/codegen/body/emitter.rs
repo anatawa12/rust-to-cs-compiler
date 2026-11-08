@@ -1550,9 +1550,14 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
             eir::LiteralKind::Bool(b) => b.to_string().into(),
             eir::LiteralKind::IntNumber(v) => v.value().unwrap().to_string().into(),
             eir::LiteralKind::FloatNumber(v) => v.value_string().into(),
-            eir::LiteralKind::Char(c) => {
-                fcode!("((Rune)'{}')", c.value().unwrap().escape_default())
-            }
+            eir::LiteralKind::Char(c) => match c.value().unwrap() {
+                '\t' => fcode!(r#"((Rune)'\t')"#),
+                '\r' => fcode!(r#"((Rune)'\r')"#),
+                '\n' => fcode!(r#"((Rune)'\n')"#),
+                c @ ('\\' | '\'' | '\"') => fcode!(r#"((Rune)'\{c}')"#),
+                c @ ('\x20'..='\x7e') => fcode!(r#"((Rune)'{c}')"#),
+                c => fcode!(r#"((Rune)'\u{:04x}')"#, c as u32),
+            },
             eir::LiteralKind::String(s) => {
                 fcode!("Str(\"{}\"u8)", s.value().unwrap().escape_default(),)
             }
