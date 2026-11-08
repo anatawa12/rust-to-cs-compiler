@@ -1951,12 +1951,21 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
             }
             eir::Pat::SlicePat(slice_pat) => {
                 let components = slice_pat.components();
-                assert!(components.slice().is_none());
-                code!(
-                    "[",
-                    join(components.prefix().map(|p| self.emit_pattern_ast(p)), ","),
-                    "]"
-                )
+                if let Some(slice) = components.slice() {
+                    assert!(matches!(slice, eir::Pat::RestPat(_)));
+                    assert!(components.suffix().next().is_none());
+                    code!(
+                        "[",
+                        join(components.prefix().map(|p| self.emit_pattern_ast(p)), ","),
+                        ", ..]"
+                    )
+                } else {
+                    code!(
+                        "[",
+                        join(components.prefix().map(|p| self.emit_pattern_ast(p)), ","),
+                        "]"
+                    )
+                }
             }
             eir::Pat::TuplePat(tuple_pat) => {
                 let type_ = self.eir_sem.type_of_pat(pat).unwrap();
