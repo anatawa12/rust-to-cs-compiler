@@ -143,18 +143,20 @@ fn tail_expr_to_assignment(expr: &mut Expr, target: &Expr) {
         }
         Expr::MatchExpr(match_expr) => {
             for arm in match_expr.as_mut().match_arm_list.as_mut().arms.as_mut() {
-                let expr_place = &mut arm.as_mut().expr;
-                replace_node!(
-                    expr_place as expr = {
-                        Expr::BinExpr(new_eir_node!(BinExpr {
-                            lhs: target.clone(),
-                            rhs: expr,
-                            op_kind: BinaryOp::Assignment { op: None },
-                            node_info: NodeInfo::None,
-                        }))
-                    }
-                );
+                tail_expr_to_assignment(&mut arm.as_mut().expr, target);
             }
+        }
+        _ => {
+            replace_node!(
+                expr as inner_expr = {
+                    Expr::BinExpr(new_eir_node!(BinExpr {
+                        lhs: target.clone(),
+                        rhs: inner_expr,
+                        op_kind: BinaryOp::Assignment { op: None },
+                        node_info: NodeInfo::None,
+                    }))
+                }
+            )
         }
         _ => unreachable!(),
     }
