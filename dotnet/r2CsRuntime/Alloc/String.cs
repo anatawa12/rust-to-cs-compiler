@@ -19,6 +19,7 @@ public static partial class crt_Alloc
             public crt_Core.mod_Result.s_Result<ValueTuple, crt_Core.mod_Fmt.s_Error> DisplayFmt(crt_Core.mod_Fmt.s_Formatter p_0) => m_AsStr().DisplayFmt(p_0);
             public crt_Core.mod_Result.s_Result<ValueTuple, crt_Core.mod_Fmt.s_Error> DebugFmt(crt_Core.mod_Fmt.s_Formatter p_0) => m_AsStr().DebugFmt(p_0);
             public RustStr m_Deref() => m_AsStr();
+            public void m_Push(Rune rune) => m_PushStr(rune.EncodeUtf8());
         }
     }
 }

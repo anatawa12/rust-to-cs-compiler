@@ -186,6 +186,16 @@ public static partial class crt_Alloc
 
             // slice functions
             public Slice<P_T> Index(Range<nuint> range) => m_AsSlice().Index(range);
+
+            public s_Vec<P_T> m_Clone() => new s_Vec<P_T>(m_AsSlice().AsSpan().ToArray());
         }
+    }
+}
+
+public static partial class SliceExtensions
+{
+    extension<T>(Slice<T> self)
+    {
+        public crt_Alloc.mod_Vec.s_Vec<T> m_ToVec() => new(self.AsSpan().ToArray());
     }
 }

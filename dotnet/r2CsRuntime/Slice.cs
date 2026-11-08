@@ -108,4 +108,24 @@ public partial struct Slice<T> : IEnumerable<T>
         return crt_Core.mod_Option.s_Option<(nuint f_start, nuint f_end)>.v_Some.ctor((
             (nuint)(subslice._offset - this._offset), (nuint)(subsliceEnd - this._offset)));
     }
+
+    public bool m_StartsWith(Slice<T> slice)
+    {
+        if (slice.Length > Length) return false;
+        for (var i = 0; i < slice.Length; i++)
+        {
+            if (!Equals(slice.AsSpan()[i], this.AsSpan()[i])) return false;
+        }
+        return true;
+    }
+
+    public bool m_EndsWith(Slice<T> slice)
+    {
+        if (slice.Length > Length) return false;
+        for (var i = 0; i < slice.Length; i++)
+        {
+            if (!Equals(slice.AsSpan()[i], this.AsSpan()[Length - slice.Length + i])) return false;
+        }
+        return true;
+    }
 }

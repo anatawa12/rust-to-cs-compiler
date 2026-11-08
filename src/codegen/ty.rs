@@ -318,13 +318,6 @@ impl<'db> CodeGenerator<'db> {
                 "System.Collections.Generic.HashSet<{}>",
                 self.rust_type_to_cs(inner)
             ))
-        } else if Some(adt) == self.lang_items.OsString().map(Into::into)
-            || Some(adt) == self.lang_items.OsStr().map(Into::into)
-        //|| Some(adt) == self.lang_items.CString().map(Into::into)
-        //|| Some(adt) == self.lang_items.CStr().map(Into::into)
-        {
-            Some("string".to_string())
-            // */
         } else if Some(adt) == self.lang_items.Url().map(Into::into) {
             Some("System.Uri".to_string())
         } else {

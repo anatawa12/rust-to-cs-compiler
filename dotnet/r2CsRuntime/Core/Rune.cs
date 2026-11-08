@@ -48,4 +48,10 @@ public struct Rune : IEquatable<Rune>
     public override int GetHashCode() => Value.GetHashCode();
 
     public static Rune Of(int b) => new Rune { Value = b };
+
+    public static crt_Core.mod_Option.s_Option<Rune> m_FromU32(uint c) => c switch
+    {
+        (>= 0x0000 and <= 0xD7FF) or >= 0xE000 and <= 0x10FFFF => crt_Core.mod_Option.s_Option<Rune>.v_Some.ctor(new Rune { Value = (int)c }),
+        _ => crt_Core.mod_Option.s_Option<Rune>.v_None.instance,
+    };
 }
