@@ -1283,7 +1283,12 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
                         if let eir::Pat::IdentPat(ident_pat) = p.pat()
                             && let Some(local) = self.eir_sem.to_def(ident_pat)
                         {
-                            self.alloc_binding_ast(&local)
+                            if p.with_ty() {
+                                let t = self.rust_type_to_cs(&local.ty(self.db));
+                                format!("{t} {}", self.alloc_binding_ast(&local))
+                            } else {
+                                self.alloc_binding_ast(&local)
+                            }
                         } else {
                             format!("__cp{}", i)
                         }

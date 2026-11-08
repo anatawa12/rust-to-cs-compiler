@@ -324,11 +324,25 @@ def_eir!(
 );
 
 def_eir!(
+    #[manual_construct]
     pub struct Param {
         pat: Pat,
+        with_ty: bool,
         // ty: Option<Ty>, // resolution is important
     }
 );
+
+impl LowerToEir for ast::Param {
+    type Eir = Param;
+
+    fn lower_to_eir(self, ctx: &LowerToEirCtx) -> Self::Eir {
+        new_eir_node!(Param {
+            pat: LowerCast::lower_cast(self.pat().lower_to_eir(ctx), "pat"),
+            with_ty: self.ty().is_some(),
+            node_info: CommonInfoFrom::common_info_from(self),
+        })
+    }
+}
 
 def_eir!(
     pub enum Stmt {
