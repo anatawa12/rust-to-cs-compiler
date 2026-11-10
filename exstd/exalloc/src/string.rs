@@ -22,6 +22,10 @@ impl String {
     pub fn push_str(&mut self, s: &str) {
         self.0.extend_from_slice(s.as_bytes());
     }
+
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.0
+    }
 }
 
 #[allow(clippy::derivable_impls)]

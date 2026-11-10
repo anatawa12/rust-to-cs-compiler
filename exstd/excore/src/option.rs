@@ -90,6 +90,13 @@ impl<T> Option<T> {
         }
     }
 
+    pub fn and<U>(self, other: Option<U>) -> Option<U> {
+        match self {
+            Option::None => Option::None,
+            Option::Some(_) => other,
+        }
+    }
+
     pub fn filter(self, f: impl FnOnce(&T) -> bool) -> Option<T> {
         match self {
             Option::Some(value) if f(&value) => Option::Some(value),

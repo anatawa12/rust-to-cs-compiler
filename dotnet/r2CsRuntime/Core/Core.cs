@@ -395,6 +395,14 @@ public static class DebugDisplayExt
     }
 }
 
+public static class ArrayExt
+{
+    extension<T>(T[] self)
+    {
+        public Slice<T> m_Deref() => self;
+    }
+}
+
 public static class StringExt
 {
     private static UTF8Encoding UTF8 = new UTF8Encoding(false);

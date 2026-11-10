@@ -184,10 +184,25 @@ public static partial class crt_Alloc
                 length = 0;
             }
 
+            public s_Vec<P_T> m_Clone() => new s_Vec<P_T>(m_AsSlice().AsSpan().ToArray());
+
+            public void m_Truncate(nuint len)
+            {
+                if (len > m_Len()) throw new PanicException("Length out of range");
+                length = (int)len;
+            }
+            
+            public crt_Core.mod_Option.s_Option<P_T> m_Pop()
+            {
+                if (m_IsEmpty()) return crt_Core.mod_Option.s_Option<P_T>.v_None.instance;
+                var value = body[length - 1];
+                length -= 1;
+                return crt_Core.mod_Option.s_Option<P_T>.v_Some.ctor(value);
+            }
+
             // slice functions
             public Slice<P_T> Index(Range<nuint> range) => m_AsSlice().Index(range);
-
-            public s_Vec<P_T> m_Clone() => new s_Vec<P_T>(m_AsSlice().AsSpan().ToArray());
+            public P_T Index(nuint index) => m_AsSlice().Index(index);
         }
     }
 }

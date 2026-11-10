@@ -28,6 +28,7 @@ public partial struct Slice<T> : IEnumerable<T>
 
     public int Length => _len;
     public T this[Index index] => m_Get((nuint)index.ToIndex(Length)).m_Unwrap();
+    public T this[int index] => m_Get((nuint)index).m_Unwrap();
 
     public static Slice<T> Of(T[] list, int offset, int len) => new Slice<T>(list, offset, len);
     public static implicit operator Slice<T>(T[] list) => new Slice<T>(list, 0, list.Length);
@@ -53,6 +54,10 @@ public partial struct Slice<T> : IEnumerable<T>
         T[] ary => ary.Skip(_offset).Take(_len).GetEnumerator(),
     };
     public crt_Core.mod_Option.s_Option<T> m_First() => this.m_Iter().m_Next();
+
+    public crt_Core.mod_Option.s_Option<T> m_Last() => m_IsEmpty()
+        ? crt_Core.mod_Option.s_Option<T>.v_None.instance
+        : crt_Core.mod_Option.s_Option<T>.v_Some.ctor(this.Index(this.m_Len() - 1));
 
     public crt_Core.mod_Option.s_Option<T> m_Get(nuint index) =>
         index < (nuint)_len
@@ -127,5 +132,39 @@ public partial struct Slice<T> : IEnumerable<T>
             if (!Equals(slice.AsSpan()[i], this.AsSpan()[Length - slice.Length + i])) return false;
         }
         return true;
+    }
+
+    public IEnumerator<Slice<T>> m_Splitn(nuint maxCount, Func<T, bool> func)
+    {
+        int before = 0;
+        nuint count = 0;
+        for (int i = 0; i < Length; i++)
+        {
+            if (func(this[i]))
+            {
+                yield return Index(Range<nuint>.NewRange((nuint)before, (nuint)i));
+                before = i + 1;
+                count++;
+                if (count >= maxCount - 1) break;
+            }
+        }
+        yield return Index(Range<nuint>.NewRangeFrom((nuint)before));
+    }
+    
+    public IEnumerator<Slice<T>> m_Rsplitn(nuint maxCount, Func<T, bool> func)
+    {
+        int before = Length - 1;
+        nuint count = 0;
+        for (int i = Length - 1; i >= 0; i--)
+        {
+            if (func(this[i]))
+            {
+                yield return Index(Range<nuint>.NewRange((nuint)(i + 1), (nuint)before));
+                before = i;
+                count++;
+                if (count >= maxCount - 1) break;
+            }
+        }
+        yield return Index(Range<nuint>.NewRangeTo((nuint)before));
     }
 }

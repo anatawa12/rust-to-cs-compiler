@@ -7,7 +7,7 @@ pub struct OsStr([u8]);
 impl OsStr {
     #[cfg_attr(r2cs, r2cs_native)]
     #[allow(clippy::unconditional_recursion)]
-    pub fn from_encoded_bytes_unchecked(bytes: &[u8]) -> &OsStr {
+    pub fn from_encoded_bytes_unchecked<'a>(bytes: &'a [u8]) -> &'a OsStr {
         OsStr::from_encoded_bytes_unchecked(bytes)
     }
 }
@@ -15,6 +15,10 @@ impl OsStr {
 impl OsStr {
     pub fn new(str: &str) -> &Self {
         OsStr::from_encoded_bytes_unchecked(str.as_bytes())
+    }
+
+    pub fn as_encoded_bytes(&self) -> &[u8] {
+        &self.0
     }
 
     pub fn len(&self) -> usize {
@@ -79,12 +83,22 @@ impl OsStr {
     }
 }
 
+impl PartialEq for OsStr {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
 pub struct OsString(Vec<u8>);
 
 /// Native functions
 impl OsString {}
 
 impl OsString {
+    pub fn new() -> Self {
+        OsString(Vec::new())
+    }
+
     pub fn with_capacity(capacity: usize) -> Self {
         OsString(Vec::with_capacity(capacity))
     }
@@ -92,11 +106,32 @@ impl OsString {
     pub fn push(&mut self, other: &OsStr) {
         self.0.extend_from_slice(&other.0);
     }
+
+    pub(crate) fn truncate(&mut self, position: usize) {
+        if position != self.len() && (self.0[position] as i8) < -64 {
+            panic!("attempt to truncate to a non-utf8 position");
+        }
+        self.0.truncate(position);
+    }
+
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
+
+    pub fn reserve(&mut self, p0: usize) {
+        self.0.reserve(p0);
+    }
 }
 
 impl From<&str> for OsString {
     fn from(value: &str) -> Self {
         OsString(value.as_bytes().to_vec())
+    }
+}
+
+impl From<String> for OsString {
+    fn from(value: String) -> Self {
+        Self(value.into_bytes())
     }
 }
 

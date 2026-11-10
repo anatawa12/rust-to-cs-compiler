@@ -1740,21 +1740,12 @@ impl<'g, 'db> EirEmitter<'g, 'db> {
             .unwrap()
         }
 
-        fn is_path<'db>(cg: &CodeGenerator<'db>, ty: &hir::Type<'db>) -> bool {
-            ty.as_adt()
-                .is_some_and(|x| Some(x) == cg.lang_items.Path().map(From::from))
-                || ty
-                    .as_adt()
-                    .is_some_and(|x| Some(x) == cg.lang_items.PathBuf().map(From::from))
-        }
-
         if let Some(adjusted) = receiver_type.adjusted.clone()
             && let original_ref_removed = ref_removed(self.cg, receiver_type.original.clone())
             && let adjusted_ref_removed = ref_removed(self.cg, adjusted.clone())
             && original_ref_removed != adjusted_ref_removed
             && self.cg.rust_type_to_cs(&original_ref_removed)
                 != self.cg.rust_type_to_cs(&adjusted_ref_removed)
-            && !(is_path(self.cg, &original_ref_removed) && is_path(self.cg, &adjusted_ref_removed))
             && !adjusted_ref_removed.is_fn()
             && adjusted_ref_removed.as_dyn_trait().is_none()
         {
