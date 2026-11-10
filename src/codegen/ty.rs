@@ -1,7 +1,7 @@
 pub mod generic_params;
 pub mod trait_assoc_types;
 
-use super::{CodeGenerator, generic_args, names};
+use super::{CodeGenerator, generic_args, item_exclusion, names};
 use crate::codegen::constructable::{Constructable, ConstructableDef};
 use crate::codegen::names::const_name;
 use crate::codegen::simple_extensions::*;
@@ -101,7 +101,13 @@ impl<'db> CodeGenerator<'db> {
         // after resolve_associated_type
         let ty = &ty.resolve_associated_type(db);
 
-        if !option.is_static_access && !option.is_static_container && !option.is_constructing {
+        if !option.is_static_access
+            && !option.is_static_container
+            && !option.is_constructing
+            && !ty
+                .as_adt()
+                .is_some_and(|adt| item_exclusion::has_attr(adt, "r2cs_no_trait_first", db))
+        {
             for &trait_ in &self.trait_first_traits {
                 if ty.impls_trait(db, trait_, &[]) {
                     return self.cs_path_with_args(trait_, [ty.clone()]);
